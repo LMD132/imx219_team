@@ -14,7 +14,7 @@ Status legend:
 |---|---|---|---|---|---|---|
 | `median_thr090.bit` | median filter | `11'd90` | `fdf3b5f` | `median-threshold-sweep` | `FABEE8D1C353A262FFAF0674ABB222EFCF9659760FEF17DA89F3C8D5875552BB` | built |
 | `median_adaptive.bit` | median filter | `11'd24` floor + shift 1 | `14daf58` | `median-threshold-sweep` | `78CB73BA88A0BAC8793CB64A2CFCE3C56A7422874A3CCEF4BA183B3442A39AC4` | flashed |
-| `uart_banner.bit` | +UART banner | `11'd24` floor + shift 1 | `d679b53` | `uart-bringup` | `A313E617F1D012E1320B1EC171787D7C050F4198DFE25AFB807BC6CCE9AAC164` | built |
+| `uart_banner.bit` | +UART banner | `11'd24` floor + shift 1 | `eab9c0a` | `uart-bringup` | `1A6682E1CA2D3CFFDE6FF4B23763B66703FE1952BDFC59439020C1C9FEA78313` | flashed |
 
 ## uart_banner.bit
 
@@ -34,6 +34,16 @@ from the 25 MHz `CLK_25M` gclk input, so the effective baud is
 Purpose: in one flash, confirm the pin assignment, the baud generator, the
 FT4232H channel mapping (channel C, expected on `COM5`) and that the channel
 is usable for later numeric telemetry.
+
+Result: confirmed. `COM5` reads `TI60 UART OK\r\n` every 100 ms (~138 bytes/s,
+clean `0D 0A`), `COM6` stays silent, and a 6 s baseline before flashing read
+0 bytes on both ports. See `docs/uart_bringup.md`.
+
+The first build of this candidate (`d679b53`,
+SHA256 `A313E617...E9AAC164`) sent only the even message indices
+(`T 6 sp A T O CR`) because the banner pacer re-fired during the two clocks
+before `uart_tx.o_busy` went high. `eab9c0a` fixes the pacer; the archived file
+above is the fixed build that was verified on the board.
 
 ## median_thr090.bit
 
