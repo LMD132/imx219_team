@@ -146,6 +146,9 @@ module ti60f225_oob_top #(
        //LED
        output [7:0] led,
 
+       // UART debug channel (FT4232H channel C, board UART header J8)
+       output wire o_uart_txd,
+
        // MIPI DSI
        input	wire	                     i_mipi_tx_pclk		,
        output	wire	                     mipi_dp_clk_LP_P_OUT		,
@@ -344,6 +347,23 @@ begin
        cnt <= cnt + 1'b1;
 end
 assign led[0]  = cal_done ? cnt[24] : 1'b0;
+
+//========================================================================================================
+//UART debug banner
+//
+// Emits "TI60 UART OK\r\n" every 100 ms at 115200 8N1 so the host can
+// confirm the pin assignment, the baud generator and the COM port mapping
+// without needing a camera pointing at the panel.
+//========================================================================================================
+uart_status_tx #(
+       .CLK_HZ (25000000),
+       .BAUD   (115200),
+       .GAP_MS (100)
+) u_uart_status_tx (
+       .i_clk  (CLK_25M),
+       .i_rstn (w_arstn),
+       .o_txd  (o_uart_txd)
+);
 
 //========================================================================================================
 //MIPI RX

@@ -10,10 +10,30 @@ Status legend:
 - `flashed` - downloaded over JTAG and looked at on the monitor
 - `accepted` - board holder confirmed the picture, safe to merge upstream
 
-| File | EDGE_THRESHOLD | Source commit | Branch | SHA256 | Status |
-|---|---|---|---|---|---|
-| `median_thr090.bit` | `11'd90` | `fdf3b5f` | `median-threshold-sweep` | `FABEE8D1C353A262FFAF0674ABB222EFCF9659760FEF17DA89F3C8D5875552BB` | built |
-| `median_adaptive.bit` | `11'd24` floor + shift 1 | `14daf58` | `median-threshold-sweep` | `78CB73BA88A0BAC8793CB64A2CFCE3C56A7422874A3CCEF4BA183B3442A39AC4` | built |
+| File | Feature | EDGE_THRESHOLD | Source commit | Branch | SHA256 | Status |
+|---|---|---|---|---|---|---|
+| `median_thr090.bit` | median filter | `11'd90` | `fdf3b5f` | `median-threshold-sweep` | `FABEE8D1C353A262FFAF0674ABB222EFCF9659760FEF17DA89F3C8D5875552BB` | built |
+| `median_adaptive.bit` | median filter | `11'd24` floor + shift 1 | `14daf58` | `median-threshold-sweep` | `78CB73BA88A0BAC8793CB64A2CFCE3C56A7422874A3CCEF4BA183B3442A39AC4` | flashed |
+| `uart_banner.bit` | +UART banner | `11'd24` floor + shift 1 | `_pending_` | `uart-bringup` | `A313E617F1D012E1320B1EC171787D7C050F4198DFE25AFB807BC6CCE9AAC164` | built |
+
+## uart_banner.bit
+
+Same edge-detection RTL as `median_adaptive.bit`, plus a minimal UART
+banner transmitter so the host PC can see board state as text instead of
+relying on someone describing the picture.
+
+New RTL:
+
+- `rtl/uart_tx.v` - 8N1 byte transmitter, `DIV = round(CLK_HZ / BAUD)`.
+- `rtl/uart_status_tx.v` - emits `"TI60 UART OK\r\n"` every 100 ms.
+
+Wiring: `o_uart_txd -> GPIOR_28` (pin R14, BR bank, 3.3 V LVCMOS), clocked
+from the 25 MHz `CLK_25M` gclk input, so the effective baud is
+25000000 / 217 = 115207 (+0.006 %).
+
+Purpose: in one flash, confirm the pin assignment, the baud generator, the
+FT4232H channel mapping (channel C, expected on `COM5`) and that the channel
+is usable for later numeric telemetry.
 
 ## median_thr090.bit
 
