@@ -13,6 +13,10 @@
 // logic independent of how long the button is held down (a held key must not
 // keep stepping a counter).
 //
+// o_level exposes the debounced level itself (high while the key is held),
+// which is what threshold_ctrl.v uses for its short-press / long-press split
+// on KEY3.
+//
 // The input is synchronised with two flops and the counter only starts once
 // the raw pin disagrees with the stored level, so contact bounce simply
 // restarts the timer.
@@ -26,7 +30,8 @@ module key_debounce #(
     input  wire clk,
     input  wire rst_n,
     input  wire i_key,      // raw pin, active low
-    output reg  o_press     // one-clock pulse per debounced press
+    output reg  o_press,    // one-clock pulse per debounced press
+    output wire o_level     // debounced level, high while held
 );
 
     // 25 MHz * 20 ms = 500000. The counter is 32 bits wide so the module
@@ -36,6 +41,10 @@ module key_debounce #(
     reg [1:0]  sync;
     reg        stable;
     reg [31:0] cnt;
+
+    // The stored level is high when the key is released, so the held state is
+    // simply its inverse.
+    assign o_level = ~stable;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin

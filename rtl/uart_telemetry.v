@@ -5,11 +5,15 @@
 // Numeric status line over the board UART, replacing the fixed banner of
 // uart_status_tx.v (which stays in the tree as the record of the bring-up).
 //
-// Two 14-byte messages are emitted at 115200 8N1:
+// Two messages are emitted at 115200 8N1:
 //
-//   power-up, once : "TI60 UART OK\r\n"
-//   after that     : "THR=nnn SH=n\r\n"  every PERIOD_MS, or immediately
-//                    whenever i_update pulses (a key changed a threshold)
+//   power-up, once : "TI60 UART OK\r\n"                       (14 bytes)
+//   after that     : "THR=nnn SH=n DS=k\r\n"                  (19 bytes)
+//                    every PERIOD_MS, or immediately whenever i_update
+//                    pulses (a key changed something)
+//
+// DS is the despeckle neighbour threshold of edge_overlay_720p.v, so the
+// serial log records which filter setting a given picture was taken with.
 //
 // Keeping the bring-up banner as the first line means the UART evidence from
 // the previous verified bitstream still appears, and the host script does not
@@ -32,12 +36,16 @@ module uart_telemetry #(
     input  wire        rst_n,
     input  wire [10:0] i_threshold,
     input  wire [3:0]  i_shift,
+    input  wire [3:0]  i_despeckle,
     input  wire        i_update,    // push a fresh line as soon as the line is free
     output wire        o_txd
 );
 
-    localparam integer MSG_LEN  = 14;   // both messages are exactly this long
-    localparam integer GAP_CLKS = (CLK_HZ / 1000) * PERIOD_MS;
+    // The banner and the status line no longer have the same length, so the
+    // pacer works from a per-message length instead of one constant.
+    localparam [4:0] MSG_LEN_BANNER = 5'd14;
+    localparam [4:0] MSG_LEN_STATUS = 5'd19;
+    localparam integer GAP_CLKS       = (CLK_HZ / 1000) * PERIOD_MS;
 
     // ---------------------------------------------------------------
     // Decimal digits for the floor. Only 0..255 is reachable, so three
@@ -53,7 +61,7 @@ module uart_telemetry #(
     function [7:0] msg_byte;
         input        banner_sel;
         input [4:0]  idx;
-        input [3:0]  dh, dt, du, ds;
+        input [3:0]  dh, dt, du, ds, dk;
         begin
             if (banner_sel) begin
                 case (idx)
@@ -86,7 +94,12 @@ module uart_telemetry #(
                     5'd9:    msg_byte = "H";
                     5'd10:   msg_byte = "=";
                     5'd11:   msg_byte = 8'h30 + {4'b0, ds};
-                    5'd12:   msg_byte = 8'h0D;   // CR
+                    5'd12:   msg_byte = " ";
+                    5'd13:   msg_byte = "D";
+                    5'd14:   msg_byte = "S";
+                    5'd15:   msg_byte = "=";
+                    5'd16:   msg_byte = 8'h30 + {4'b0, dk};
+                    5'd17:   msg_byte = 8'h0D;   // CR
                     default: msg_byte = 8'h0A;   // LF
                 endcase
             end
@@ -107,8 +120,12 @@ module uart_telemetry #(
     reg        pending;
     // Snapshot of the values used for the line currently being sent, so a key
     // press in the middle of a message cannot mix two readings in one line.
-    reg [3:0]  d_h_reg, d_t_reg, d_u_reg, d_s_reg;
+    reg [3:0]  d_h_reg, d_t_reg, d_u_reg, d_s_reg, d_k_reg;
     wire       tx_busy;
+
+    // The banner is shorter than a status line, so the end-of-message test in
+    // S_SEND has to look at the length of the message being sent.
+    wire [4:0] msg_len = banner ? MSG_LEN_BANNER : MSG_LEN_STATUS;
 
     uart_tx #(
         .CLK_HZ (CLK_HZ),
@@ -135,6 +152,7 @@ module uart_telemetry #(
             d_t_reg  <= 4'd0;
             d_u_reg  <= 4'd0;
             d_s_reg  <= 4'd1;
+            d_k_reg  <= 4'd3;
         end else begin
             tx_valid <= 1'b0;       // i_valid is a one-clock pulse
 
@@ -153,6 +171,7 @@ module uart_telemetry #(
                             d_t_reg  <= d_t[3:0];
                             d_u_reg  <= d_u[3:0];
                             d_s_reg  <= i_shift;
+                            d_k_reg  <= i_despeckle;
                             state    <= S_LOAD;
                         end else begin
                             gap_cnt <= gap_cnt + 32'd1;
@@ -164,7 +183,8 @@ module uart_telemetry #(
                 S_LOAD: begin
                     tx_valid <= 1'b1;
                     tx_byte  <= msg_byte(banner, char_idx,
-                                         d_h_reg, d_t_reg, d_u_reg, d_s_reg);
+                                         d_h_reg, d_t_reg, d_u_reg,
+                                         d_s_reg, d_k_reg);
                     state    <= S_START;
                 end
 
@@ -176,7 +196,7 @@ module uart_telemetry #(
                 // Frame is on the wire; wait for it to finish, then advance.
                 S_SEND: begin
                     if (!tx_busy) begin
-                        if (char_idx == (MSG_LEN - 1)) begin
+                        if (char_idx == (msg_len - 5'd1)) begin
                             banner <= 1'b0;     // the banner is a one-shot
                             state  <= S_GAP;
                         end else begin

@@ -8,6 +8,7 @@
         <efx:top_module name="ti60f225_oob_top" />
         <efx:design_file name="rtl/ti60f225_oob_top.v" version="default" library="default" />
         <efx:design_file name="rtl/edge_display_720p.v" version="default" library="default" />
+<efx:design_file name="rtl/edge_overlay_720p.v" version="default" library="default" />
         <efx:design_file name="rtl/median_filter_3x3_720p.v" version="default" library="default" />
 <efx:design_file name="rtl/uart_tx.v" version="default" library="default" />
 <efx:design_file name="rtl/uart_status_tx.v" version="default" library="default" />

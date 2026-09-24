@@ -97,3 +97,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\FPGA_Project\imx219_team\
 | KEY2/KEY1 交替 | `THR=016/024/032` | 继续正确 ✅ |
 
 **每次按下正好走一步**，没有丢按键、没有重复步进 → 20 ms 消抖有效。
+
+## 8. 后续变化（`overlay_box.bit`）
+
+本文档描述的是 `keys_threshold.bit` 的行为，位流本身没有改动，所以上面所有
+记录仍然有效。之后的 `overlay_box.bit` 在此基础上改了两点：
+
+- KEY3 变成**短按 / 长按两用**：短按（松开时 <1 s）切自适应档，按住 >=1 s
+  切去噪档 `{3,5,0,2}`。这样在不增加按键的前提下，去噪也能实时演示。
+- UART 报文从 `THR=nnn SH=n\r\n`（14 字节）变成 `THR=nnn SH=n DS=k\r\n`
+  （19 字节），多出的 `DS` 是去噪档位。
+
+细节见 `docs/edge_overlay.md`。

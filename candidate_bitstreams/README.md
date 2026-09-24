@@ -16,6 +16,7 @@ Status legend:
 | `median_adaptive.bit` | median filter | `11'd24` floor + shift 1 | `14daf58` | `median-threshold-sweep` | `78CB73BA88A0BAC8793CB64A2CFCE3C56A7422874A3CCEF4BA183B3442A39AC4` | flashed |
 | `uart_banner.bit` | +UART banner | `11'd24` floor + shift 1 | `eab9c0a` | `uart-bringup` | `1A6682E1CA2D3CFFDE6FF4B23763B66703FE1952BDFC59439020C1C9FEA78313` | flashed |
 | `keys_threshold.bit` | +runtime keys +UART telemetry | `11'd24` floor, shift 1, both live | `7e7e6e1` | `uart-bringup` | `92F2E33DC0DFD2DF173F0E9E43876A6A5E6491652188D904754DE96E32534DFC` | flashed |
+| `overlay_box.bit` | +despeckle +target box | `11'd24` floor, shift 1, despeckle 3, all live | SOURCECOMMIT | `uart-bringup` | `0A0355FC6624CD3107454CC5C5858FE6C1FF41D549EF38A10623B628B921FD88` | flashed |
 
 ## keys_threshold.bit
 
@@ -65,6 +66,60 @@ exact) and every key press showed up as a single step:
 No missed presses and no double steps, so the debouncer behaves. The picture on
 the monitor was not described by the board holder, so the threshold values are
 verified but the visual effect of each step is not.
+
+## overlay_box.bit
+
+Adds a post-processing stage between the split-screen stage and the DVI encoder:
+`rtl/edge_overlay_720p.v`. Two features, both on the binary right half.
+
+1. **Despeckle by neighbour count.** A textbook 3x3 erosion (9-input AND) is
+   wrong here: Sobel edges are 1-2 pixels wide and a one-pixel-wide line has
+   exactly three set pixels inside its own 3x3 window, so a 9-input AND would
+   erase the whole edge map. The rule used instead is "keep the centre pixel
+   when the centre is set and at least `i_despeckle_min` of its eight
+   neighbours are set".
+
+   | pattern | set pixels in the 3x3 | min=2 | min=3 (default) | min=5 |
+   |---|---|---|---|---|
+   | isolated speck | 1 | removed | removed | removed |
+   | two-pixel speck | 2 | kept | removed | removed |
+   | one-pixel-wide line | 3 | kept | kept | removed |
+
+   `i_despeckle_min = 0` bypasses the filter, which is the A/B reference arm.
+
+2. **Target bounding box** (competition task 6). Min/max of the despeckled edge
+   pixels over one frame, latched at the frame boundary and drawn in red over
+   the next frame, so no extra frame buffer is needed.
+
+   Honest limitation: a plain min/max over all edge pixels expands to the whole
+   frame as soon as the background carries any texture. It is only meaningful
+   for a mostly uniform scene. If the box always fills the panel, the fix is a
+   row/column projection with a relative threshold, not a different min/max.
+
+New RTL: `rtl/edge_overlay_720p.v` (327 SRL8 = two 1280-bit binary line stores,
+no BRAM). Changed RTL: `key_debounce.v` gained `o_level`, `threshold_ctrl.v`
+gained the despeckle table and the KEY3 short/long split, `uart_telemetry.v`
+gained the `DS` field, `ti60f225_oob_top.v` wires the stage in and re-times the
+stream by one pixel clock.
+
+Key map is now: KEY1 floor +8, KEY2 floor -8, KEY3 **short press** next adaptive
+weight, KEY3 **hold >= 1 s** next despeckle window `{3,5,0,2}`. The short action
+fires on release and only when the hold was short, so a long hold cannot also
+step the threshold. See `docs/edge_overlay.md`.
+
+Telemetry changed from `"THR=nnn SH=n\r\n"` to `"THR=nnn SH=n DS=k\r\n"`, so the
+serial log records which filter setting a picture was taken with.
+
+Result: compiled clean, all timing slack positive (worst **0.408 ns**), and
+flashed as `Device ID read from JTAG: 0x10660A79`. A 5 s listen on COM5 read
+171 bytes of
+
+    THR=024 SH=1 DS=3
+
+matching the reset defaults (floor 24, shift 1, despeckle 3). The picture itself
+has not been described by the board holder yet, so the despeckle and box are
+**not visually accepted** - flash `keys_threshold.bit` to go back to the
+previous behaviour.
 
 ## uart_banner.bit
 

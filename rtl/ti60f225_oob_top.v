@@ -359,22 +359,23 @@ assign led[0]  = cal_done ? cnt[24] : 1'b0;
 //========================================================================================================
 //Runtime edge-threshold control + UART telemetry
 //
-// Three board keys change the Sobel threshold while the design runs:
-//   KEY1 (GPIOR_22 / P14) - raise the floor
-//   KEY2 (GPIOR_21 / N14) - lower the floor
-//   KEY3 (GPIOL_03 / A3)  - cycle the adaptive weight {off, /8, /4, /2, /1}
+// Three board keys change the edge detector while the design runs:
+//   KEY1 (GPIOR_22 / P14) - raise the gradient floor
+//   KEY2 (GPIOR_21 / N14) - lower the gradient floor
+//   KEY3 (GPIOL_03 / A3)  - short press: next adaptive weight {off,/8,/4,/2,/1}
+//                           hold >=1 s : next despeckle window {3,5,0,2}
 //
-// Every key press, and every 500 ms in between, the current pair of values is
-// printed on the board UART as "THR=nnn SH=n\r\n". The first line after reset
-// is still "TI60 UART OK\r\n", which keeps the UART bring-up evidence from the
+// Every key action, and every 500 ms in between, the current values are printed
+// on the board UART as "THR=nnn SH=n DS=k\r\n". The first line after reset is
+// still "TI60 UART OK\r\n", which keeps the UART bring-up evidence from the
 // verified bitstream and lets tools/uart_listen.ps1 work unchanged.
 //
-// Everything here runs on CLK_25M. The two threshold values are re-sampled
-// into the HDMI pixel clock domain further down (see thr_meta/thr_sync).
+// Everything here runs on CLK_25M. The three values are re-sampled into the
+// HDMI pixel clock domain further down (see thr_meta/sh_meta/ds_meta).
 //========================================================================================================
 wire w_key_thr_up;
 wire w_key_thr_dn;
-wire w_key_mode;
+wire w_key_mode_level;
 
 key_debounce #(
        .CLK_HZ      (25000000),
@@ -396,6 +397,9 @@ key_debounce #(
        .o_press (w_key_thr_dn)
 );
 
+// KEY3 is consumed as a debounced LEVEL, not as a press pulse: threshold_ctrl.v
+// uses the hold time to tell a short press (next adaptive weight) from a long
+// press (next despeckle window), so o_press is left unconnected here.
 key_debounce #(
        .CLK_HZ      (25000000),
        .DEBOUNCE_MS (20)
@@ -403,26 +407,31 @@ key_debounce #(
        .clk     (CLK_25M),
        .rst_n   (w_arstn),
        .i_key   (i_key_mode),
-       .o_press (w_key_mode)
+       .o_level (w_key_mode_level)
 );
 
 wire [10:0] w_edge_threshold;
 wire [3:0]  w_edge_shift;
+wire [3:0]  w_edge_despeckle;
 wire        w_edge_changed;
 
 threshold_ctrl #(
-       .THRESHOLD_INIT (11'd24),
-       .STEP_THRESHOLD (8),
-       .MODE_INIT      (3'd3)      // shift = 1, what the previous bitstream used
+       .THRESHOLD_INIT  (11'd24),
+       .STEP_THRESHOLD  (8),
+       .MODE_INIT       (3'd3),    // shift = 1, what the previous bitstream used
+       .DESPECKLE_INIT  (2'd2),    // index 2 -> despeckle window 3, the default
+       .CLK_HZ          (25000000),
+       .LONG_PRESS_MS   (1000)
 ) u_threshold_ctrl (
-       .clk         (CLK_25M),
-       .rst_n       (w_arstn),
-       .i_up        (w_key_thr_up),
-       .i_down      (w_key_thr_dn),
-       .i_mode      (w_key_mode),
-       .o_threshold (w_edge_threshold),
-       .o_shift     (w_edge_shift),
-       .o_changed   (w_edge_changed)
+       .clk           (CLK_25M),
+       .rst_n         (w_arstn),
+       .i_up          (w_key_thr_up),
+       .i_down        (w_key_thr_dn),
+       .i_mode_level  (w_key_mode_level),
+       .o_threshold   (w_edge_threshold),
+       .o_shift       (w_edge_shift),
+       .o_despeckle   (w_edge_despeckle),
+       .o_changed     (w_edge_changed)
 );
 
 uart_telemetry #(
@@ -434,6 +443,7 @@ uart_telemetry #(
        .rst_n       (w_arstn),
        .i_threshold (w_edge_threshold),
        .i_shift     (w_edge_shift),
+       .i_despeckle (w_edge_despeckle),
        .i_update    (w_edge_changed),
        .o_txd       (o_uart_txd)
 );
@@ -950,17 +960,23 @@ reg [10:0] thr_meta;
 reg [10:0] thr_sync;
 reg [3:0]  sh_meta;
 reg [3:0]  sh_sync;
+reg [3:0]  ds_meta;
+reg [3:0]  ds_sync;
 always @(posedge hdmi_tx_slow_clk or negedge vid_rst_n) begin
     if (!vid_rst_n) begin
         thr_meta <= 11'd24;
         thr_sync <= 11'd24;
         sh_meta  <= 4'd1;
         sh_sync  <= 4'd1;
+        ds_meta  <= 4'd3;
+        ds_sync  <= 4'd3;
     end else begin
         thr_meta <= w_edge_threshold;
         thr_sync <= thr_meta;
         sh_meta  <= w_edge_shift;
         sh_sync  <= sh_meta;
+        ds_meta  <= w_edge_despeckle;
+        ds_sync  <= ds_meta;
     end
 end
 
@@ -984,6 +1000,41 @@ edge_display_720p #(
     .out_r(edge_r),
     .out_g(edge_g),
     .out_b(edge_b)
+);
+
+//==============================================================================
+// Edge overlay: despeckle + target bounding box
+//==============================================================================
+// Sits between the split-screen stage and the DVI encoder. It re-times the
+// stream by exactly one pixel clock (vs/hs/de and the RGB data all move
+// together), which the DVI encoder does not care about.
+wire ov_vs;
+wire ov_hs;
+wire ov_de;
+wire [7:0] ov_r;
+wire [7:0] ov_g;
+wire [7:0] ov_b;
+
+edge_overlay_720p #(
+    .IMAGE_WIDTH(1280),
+    .IMAGE_HEIGHT(720),
+    .BOX_THICKNESS(2)
+) edge_overlay_inst (
+    .clk(hdmi_tx_slow_clk),
+    .rst_n(vid_rst_n),
+    .in_vs(edge_vs),
+    .in_hs(edge_hs),
+    .in_de(edge_de),
+    .in_r(edge_r),
+    .in_g(edge_g),
+    .in_b(edge_b),
+    .i_despeckle_min(ds_sync),
+    .out_vs(ov_vs),
+    .out_hs(ov_hs),
+    .out_de(ov_de),
+    .out_r(ov_r),
+    .out_g(ov_g),
+    .out_b(ov_b)
 );
 //==============================================================================
 // MIPI DSI
@@ -1170,12 +1221,12 @@ dvi_encoder dvi_encoder_m0
 (
 	.pixelclk      		(hdmi_tx_slow_clk          ),// system clock
 	.rst_p         		(~vid_rst_n      ),// reset
-	.i_bdata       (edge_b),
-	.i_gdata       (edge_g),
-	.i_rdata       (edge_r),
-  .i_de          (edge_de),
-	.i_hs          (edge_hs),
-	.i_vs          (edge_vs),
+	.i_bdata       (ov_b),
+	.i_gdata       (ov_g),
+	.i_rdata       (ov_r),
+  .i_de          (ov_de),
+	.i_hs          (ov_hs),
+	.i_vs          (ov_vs),
 	
   .video_format     (video_format), //// 00 = RGB, 01 = YCbCr 4:2:2, 10 = YCbCr 4:4:4
   .video_VIC        (0),
