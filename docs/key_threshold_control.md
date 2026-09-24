@@ -105,7 +105,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\FPGA_Project\imx219_team\
 
 - KEY3 变成**短按 / 长按两用**：短按（松开时 <1 s）切自适应档，按住 >=1 s
   切去噪档 `{3,5,0,2}`。这样在不增加按键的前提下，去噪也能实时演示。
-- UART 报文从 `THR=nnn SH=n\r\n`（14 字节）变成 `THR=nnn SH=n DS=k\r\n`
-  （19 字节），多出的 `DS` 是去噪档位。
+- UART 报文从 `THR=nnn SH=n\r\n`（14 字节）变成
+  `THR=nnn SH=n DS=k PIX=nnnnnn\r\n`（30 字节），多出的 `DS` 是去噪档位，
+  `PIX` 是上一帧的有效像素计数（干净 720p 恒为 921600，用来证明整帧无丢
+  像素）。
 
 细节见 `docs/edge_overlay.md`。

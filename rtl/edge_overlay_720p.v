@@ -76,7 +76,12 @@ module edge_overlay_720p #(
     output reg         out_de,
     output reg  [7:0]  out_r,
     output reg  [7:0]  out_g,
-    output reg  [7:0]  out_b
+    output reg  [7:0]  out_b,
+    // Active pixels counted in the last frame, plus a per-frame toggle. The
+    // value stays stable for a whole frame, so a slower clock domain can
+    // capture it after synchronising the toggle (see ti60f225_oob_top.v).
+    output reg  [19:0] o_frame_pix,
+    output reg         o_frame_tog
 );
 
     // Column of the white separator drawn by edge_display_720p. Everything to
@@ -241,6 +246,27 @@ module edge_overlay_720p #(
     wire box_x_edge = inside_y && (near_x_lo || near_x_hi);
     wire box_y_edge = inside_x && (near_y_lo || near_y_hi);
     wire box_draw   = box_valid && (s_x > HALF_X) && (box_x_edge || box_y_edge);
+
+    // ---------------------------------------------------------------
+    // Frame activity counter. A clean 720p stream counts exactly 1280 x 720
+    // active pixels, so the host gets a single number that proves the pixel
+    // timing is complete. Blanking does not contribute: only in_de counts.
+    // ---------------------------------------------------------------
+    reg [19:0] frame_pix;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            frame_pix   <= 20'd0;
+            o_frame_pix <= 20'd0;
+            o_frame_tog <= 1'b0;
+        end else if (frame_start) begin
+            o_frame_pix <= frame_pix;
+            o_frame_tog <= ~o_frame_tog;
+            frame_pix   <= 20'd0;
+        end else if (in_de) begin
+            frame_pix <= frame_pix + 20'd1;
+        end
+    end
 
     // ---------------------------------------------------------------
     // Output register. prev_de is the in_de of the pixel being presented, so

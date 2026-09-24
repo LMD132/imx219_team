@@ -7,23 +7,29 @@
 //
 // Two messages are emitted at 115200 8N1:
 //
-//   power-up, once : "TI60 UART OK\r\n"                       (14 bytes)
-//   after that     : "THR=nnn SH=n DS=k\r\n"                  (19 bytes)
-//                    every PERIOD_MS, or immediately whenever i_update
-//                    pulses (a key changed something)
+//   power-up, once : "TI60 UART OK\r\n"                    (14 bytes)
+//   after that     : "THR=nnn SH=n DS=k PIX=nnnnnn\r\n"    (30 bytes)
+//                    every PERIOD_MS, or immediately whenever i_update pulses
 //
-// DS is the despeckle neighbour threshold of edge_overlay_720p.v, so the
-// serial log records which filter setting a given picture was taken with.
+// DS  is the despeckle neighbour threshold of edge_overlay_720p.v, so the log
+//     records which filter setting a picture was taken with.
+// PIX is the number of active pixels counted in the last video frame. A clean
+//     720p stream gives exactly 1280 x 720 = 921600, so this one number is the
+//     on-board evidence that the pixel pipeline sees complete frames and does
+//     not drop or displace lines.
 //
-// Keeping the bring-up banner as the first line means the UART evidence from
-// the previous verified bitstream still appears, and the host script does not
-// need to change to confirm the channel is alive.
+// PIX is 20 bits wide and is converted to six decimal digits with a sequential
+// double-dabble (20 shift-and-add-3 steps, one per clock). A constant division
+// on a 20-bit value would infer a wide multiplier instead.
 //
 // The four-state pacer is copied from uart_status_tx.v on purpose: uart_tx's
 // o_busy is registered, so there are two clocks between "offer a byte" and
 // "busy is high". A two-state pacer that only tests !tx_busy fires twice in
 // that window and drops every other byte. Do not simplify it back to two
 // states.
+//
+// The banner and the status line have different lengths, so the pacer works
+// from a per-message length instead of one constant.
 //
 ////////////////////////////////////////////////////////////////////////////
 
@@ -37,15 +43,14 @@ module uart_telemetry #(
     input  wire [10:0] i_threshold,
     input  wire [3:0]  i_shift,
     input  wire [3:0]  i_despeckle,
-    input  wire        i_update,    // push a fresh line as soon as the line is free
+    input  wire [19:0] i_frame_pix,  // active pixels in the last video frame
+    input  wire        i_update,     // push a fresh line as soon as the line is free
     output wire        o_txd
 );
 
-    // The banner and the status line no longer have the same length, so the
-    // pacer works from a per-message length instead of one constant.
-    localparam [4:0] MSG_LEN_BANNER = 5'd14;
-    localparam [4:0] MSG_LEN_STATUS = 5'd19;
-    localparam integer GAP_CLKS       = (CLK_HZ / 1000) * PERIOD_MS;
+    localparam [4:0]  MSG_LEN_BANNER = 5'd14;
+    localparam [4:0]  MSG_LEN_STATUS = 5'd30;
+    localparam integer GAP_CLKS      = (CLK_HZ / 1000) * PERIOD_MS;
 
     // ---------------------------------------------------------------
     // Decimal digits for the floor. Only 0..255 is reachable, so three
@@ -62,6 +67,7 @@ module uart_telemetry #(
         input        banner_sel;
         input [4:0]  idx;
         input [3:0]  dh, dt, du, ds, dk;
+        input [23:0] pix_bcd;
         begin
             if (banner_sel) begin
                 case (idx)
@@ -99,19 +105,32 @@ module uart_telemetry #(
                     5'd14:   msg_byte = "S";
                     5'd15:   msg_byte = "=";
                     5'd16:   msg_byte = 8'h30 + {4'b0, dk};
-                    5'd17:   msg_byte = 8'h0D;   // CR
+                    5'd17:   msg_byte = " ";
+                    5'd18:   msg_byte = "P";
+                    5'd19:   msg_byte = "I";
+                    5'd20:   msg_byte = "X";
+                    5'd21:   msg_byte = "=";
+                    5'd22:   msg_byte = 8'h30 + pix_bcd[23:20];
+                    5'd23:   msg_byte = 8'h30 + pix_bcd[19:16];
+                    5'd24:   msg_byte = 8'h30 + pix_bcd[15:12];
+                    5'd25:   msg_byte = 8'h30 + pix_bcd[11:8];
+                    5'd26:   msg_byte = 8'h30 + pix_bcd[7:4];
+                    5'd27:   msg_byte = 8'h30 + pix_bcd[3:0];
+                    5'd28:   msg_byte = 8'h0D;   // CR
                     default: msg_byte = 8'h0A;   // LF
                 endcase
             end
         end
     endfunction
 
-    localparam [1:0] S_GAP   = 2'd0,
-                     S_LOAD  = 2'd1,
-                     S_START = 2'd2,
-                     S_SEND  = 2'd3;
+    localparam [2:0] S_GAP   = 3'd0,
+                     S_CONV  = 3'd1,
+                     S_LATCH = 3'd2,
+                     S_LOAD  = 3'd3,
+                     S_START = 3'd4,
+                     S_SEND  = 3'd5;
 
-    reg [1:0]  state;
+    reg [2:0]  state;
     reg [31:0] gap_cnt;
     reg [4:0]  char_idx;
     reg        tx_valid;
@@ -121,11 +140,29 @@ module uart_telemetry #(
     // Snapshot of the values used for the line currently being sent, so a key
     // press in the middle of a message cannot mix two readings in one line.
     reg [3:0]  d_h_reg, d_t_reg, d_u_reg, d_s_reg, d_k_reg;
+    reg [23:0] pix_bcd_reg;
     wire       tx_busy;
 
     // The banner is shorter than a status line, so the end-of-message test in
     // S_SEND has to look at the length of the message being sent.
     wire [4:0] msg_len = banner ? MSG_LEN_BANNER : MSG_LEN_STATUS;
+
+    // Sequential double-dabble state: 20 binary bits -> six BCD digits.
+    reg [19:0] bcd_bin;
+    reg [23:0] bcd_out;
+    reg [4:0]  conv_cnt;
+
+    // "Add three" adjustment applied to every digit that is five or more
+    // before each shift. No digit can overflow its nibble (9 + 3 = 12), so the
+    // six nibbles can be summed as one 24-bit value without carries leaking
+    // between digits.
+    wire [3:0] adj5 = (bcd_out[23:20] >= 4'd5) ? 4'd3 : 4'd0;
+    wire [3:0] adj4 = (bcd_out[19:16] >= 4'd5) ? 4'd3 : 4'd0;
+    wire [3:0] adj3 = (bcd_out[15:12] >= 4'd5) ? 4'd3 : 4'd0;
+    wire [3:0] adj2 = (bcd_out[11:8]  >= 4'd5) ? 4'd3 : 4'd0;
+    wire [3:0] adj1 = (bcd_out[7:4]   >= 4'd5) ? 4'd3 : 4'd0;
+    wire [3:0] adj0 = (bcd_out[3:0]   >= 4'd5) ? 4'd3 : 4'd0;
+    wire [23:0] bcd_dab = bcd_out + {adj5, adj4, adj3, adj2, adj1, adj0};
 
     uart_tx #(
         .CLK_HZ (CLK_HZ),
@@ -141,18 +178,22 @@ module uart_telemetry #(
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state   <= S_GAP;
-            gap_cnt <= 32'd0;
-            char_idx <= 5'd0;
-            tx_valid <= 1'b0;
-            tx_byte  <= 8'h00;
-            banner   <= 1'b1;
-            pending  <= 1'b1;       // send the banner straight after reset
-            d_h_reg  <= 4'd0;
-            d_t_reg  <= 4'd0;
-            d_u_reg  <= 4'd0;
-            d_s_reg  <= 4'd1;
-            d_k_reg  <= 4'd3;
+            state     <= S_GAP;
+            gap_cnt   <= 32'd0;
+            char_idx  <= 5'd0;
+            tx_valid  <= 1'b0;
+            tx_byte   <= 8'h00;
+            banner    <= 1'b1;
+            pending   <= 1'b1;      // send the banner straight after reset
+            d_h_reg   <= 4'd0;
+            d_t_reg   <= 4'd0;
+            d_u_reg   <= 4'd0;
+            d_s_reg   <= 4'd1;
+            d_k_reg   <= 4'd3;
+            pix_bcd_reg <= 24'd0;
+            bcd_bin   <= 20'd0;
+            bcd_out   <= 24'd0;
+            conv_cnt  <= 5'd0;
         end else begin
             tx_valid <= 1'b0;       // i_valid is a one-clock pulse
 
@@ -172,11 +213,30 @@ module uart_telemetry #(
                             d_u_reg  <= d_u[3:0];
                             d_s_reg  <= i_shift;
                             d_k_reg  <= i_despeckle;
-                            state    <= S_LOAD;
+                            bcd_bin  <= i_frame_pix;
+                            bcd_out  <= 24'd0;
+                            conv_cnt <= 5'd0;
+                            // The banner has no PIX field, so it can skip the
+                            // conversion entirely.
+                            state    <= banner ? S_LOAD : S_CONV;
                         end else begin
                             gap_cnt <= gap_cnt + 32'd1;
                         end
                     end
+                end
+
+                // 20 shift-and-add-3 steps turn 20 binary bits into six digits.
+                S_CONV: begin
+                    bcd_out <= {bcd_dab[22:0], bcd_bin[19]};
+                    bcd_bin <= {bcd_bin[18:0], 1'b0};
+                    if (conv_cnt == 5'd19) state    <= S_LATCH;
+                    else                   conv_cnt <= conv_cnt + 5'd1;
+                end
+
+                // bcd_out settles one clock after the last shift.
+                S_LATCH: begin
+                    pix_bcd_reg <= bcd_out;
+                    state       <= S_LOAD;
                 end
 
                 // Present one byte; it is latched by uart_tx next clock.
@@ -184,7 +244,7 @@ module uart_telemetry #(
                     tx_valid <= 1'b1;
                     tx_byte  <= msg_byte(banner, char_idx,
                                          d_h_reg, d_t_reg, d_u_reg,
-                                         d_s_reg, d_k_reg);
+                                         d_s_reg, d_k_reg, pix_bcd_reg);
                     state    <= S_START;
                 end
 

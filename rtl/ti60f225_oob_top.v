@@ -444,9 +444,42 @@ uart_telemetry #(
        .i_threshold (w_edge_threshold),
        .i_shift     (w_edge_shift),
        .i_despeckle (w_edge_despeckle),
+       .i_frame_pix (w_frame_pix),
        .i_update    (w_edge_changed),
        .o_txd       (o_uart_txd)
 );
+
+//========================================================================================================
+//Frame activity counter (HDMI pixel clock -> CLK_25M)
+//
+// edge_overlay_720p.v counts the active pixels of every frame and flips a flag
+// at the frame boundary. The count is stable for the whole next frame, so this
+// side only has to synchronise the flag and grab the value on its edge: a
+// multi-bit two-flop synchroniser would be the wrong tool here.
+//
+// A clean 720p stream reads back exactly 1280 x 720 = 921600, which is the
+// on-board evidence that the pixel pipeline sees whole frames.
+//========================================================================================================
+wire        ov_frame_tog;      // driven by edge_overlay_inst
+wire [19:0] ov_frame_pix;
+
+reg [1:0]  fp_tog_sync;
+reg        fp_tog_prev;
+reg [19:0] w_frame_pix;
+
+always @(posedge CLK_25M or negedge w_arstn) begin
+    if (!w_arstn) begin
+        fp_tog_sync <= 2'b00;
+        fp_tog_prev <= 1'b0;
+        w_frame_pix <= 20'd0;
+    end else begin
+        fp_tog_sync <= {fp_tog_sync[0], ov_frame_tog};
+        fp_tog_prev <= fp_tog_sync[1];
+        if (fp_tog_sync[1] != fp_tog_prev) begin
+            w_frame_pix <= ov_frame_pix;
+        end
+    end
+end
 
 //========================================================================================================
 //MIPI RX
@@ -1034,7 +1067,9 @@ edge_overlay_720p #(
     .out_de(ov_de),
     .out_r(ov_r),
     .out_g(ov_g),
-    .out_b(ov_b)
+    .out_b(ov_b),
+    .o_frame_pix(ov_frame_pix),
+    .o_frame_tog(ov_frame_tog)
 );
 //==============================================================================
 // MIPI DSI
