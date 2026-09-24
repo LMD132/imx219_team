@@ -55,8 +55,13 @@ module uart_status_tx #(
         end
     endfunction
 
-    localparam [1:0] S_GAP  = 2'd0,
-                     S_SEND = 2'd1;
+    // Four states, not two: uart_tx's o_busy is registered, so there are two
+    // clocks between "offer a byte" and "busy is high". A pacer that only
+    // tests !tx_busy would fire twice per frame and skip every other byte.
+    localparam [1:0] S_GAP   = 2'd0,
+                     S_LOAD  = 2'd1,
+                     S_START = 2'd2,
+                     S_SEND  = 2'd3;
 
     reg [1:0]        state;
     reg [31:0]       gap_cnt;
@@ -95,22 +100,33 @@ module uart_status_tx #(
                         if (gap_cnt >= GAP_CLKS) begin
                             gap_cnt  <= 32'd0;
                             char_idx <= 5'd0;
-                            state    <= S_SEND;
+                            state    <= S_LOAD;
                         end else begin
                             gap_cnt <= gap_cnt + 32'd1;
                         end
                     end
                 end
 
+                // Present one byte; it is latched by uart_tx next clock.
+                S_LOAD: begin
+                    tx_valid <= 1'b1;
+                    tx_byte  <= msg_byte(char_idx);
+                    state    <= S_START;
+                end
+
+                // Hold until the transmitter actually reports busy.
+                S_START: begin
+                    if (tx_busy) state <= S_SEND;
+                end
+
+                // Frame is on the wire; wait for it to finish, then advance.
                 S_SEND: begin
-                    // Offer one byte whenever the transmitter is idle.
                     if (!tx_busy) begin
-                        tx_valid <= 1'b1;
-                        tx_byte  <= msg_byte(char_idx);
                         if (char_idx == (MSG_LEN - 1)) begin
                             state <= S_GAP;
                         end else begin
                             char_idx <= char_idx + 5'd1;
+                            state    <= S_LOAD;
                         end
                     end
                 end
