@@ -15,6 +15,8 @@
 *.bit
 !/known_good/
 !/known_good/*.bit
+!/candidate_bitstreams/
+!/candidate_bitstreams/*.bit
 
 # Editor and OS noise
 .vscode/
