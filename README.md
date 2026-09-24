@@ -30,6 +30,8 @@
 - `ti60f225_oob.peri.xml`、`ti60f225_oob.sdc`：引脚/接口与时序约束；改引脚前必须核对开发板资料。
 - `piv2_720p_7M_2L_reg.mem`：IMX219 的 720p 摄像头配置。
 - `rtl/edge_display_720p.v`：灰度、Sobel、阈值及分屏。主线阈值在顶层实例中设为 `180`。
+- `tools/uart_listen.ps1`：监听板载串口（COM5）读遥测报文。
+- `tools/capture_hdmi.py`、`tools/analyze_capture.py`：HDMI 采集卡录屏 + 在 PC 上复算板内整数流水线，把"画面好不好"变成数字。见 `docs/capture_and_quantify.md`。
 - `known_good/edge_detect_720p_verified.bit`：恢复画面的已验证 JTAG 位流；不要覆盖。
   SHA-256：`146D627FF082B7DF383068A9511EAE1B5758CDEABE6B7562E0DA2A6755D0A355`。
 

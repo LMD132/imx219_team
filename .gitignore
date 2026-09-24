@@ -1,5 +1,6 @@
 # Efinity build products and temporary state
 /outflow/
+/work/
 /work_syn/
 /work_pnr/
 /work_dbg/
