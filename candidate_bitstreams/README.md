@@ -135,10 +135,15 @@ wide multiplier.
   frames with no missing or extra pixels, and the double-dabble conversion is
   correct (a broken one would print random digits).
 
-Two things this build does **not** prove: how the picture actually looks (nobody
-has described it yet) and whether the despeckle or the red box is doing
-something visible. Flash `keys_threshold.bit` to go back to the previous
-behaviour, or hold KEY3 for a second to switch the despeckle off.
+The board holder has since looked at the picture (2026-09-24) and confirmed that
+the **red box does frame the target** at the reset defaults, so the per-frame
+min/max box is good enough in a real scene and the projection-based replacement
+stays a fallback (see `docs/edge_overlay.md` section 4 for when it is needed).
+
+Still undescribed: how visible the despeckle step is when KEY3 is held to change
+`DS`, and whether the outline of a dark target survives. Flash
+`keys_threshold.bit` to go back to the previous behaviour, or hold KEY3 for a
+second to switch the despeckle off.
 
 Superseded build: the first `overlay_box.bit` (`7903df0`, SHA256
 `0A0355FC...B921FD88`) had no `PIX` field and was replaced in place by the build
