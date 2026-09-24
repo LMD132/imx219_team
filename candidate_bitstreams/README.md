@@ -16,7 +16,7 @@ Status legend:
 | `median_adaptive.bit` | median filter | `11'd24` floor + shift 1 | `14daf58` | `median-threshold-sweep` | `78CB73BA88A0BAC8793CB64A2CFCE3C56A7422874A3CCEF4BA183B3442A39AC4` | flashed |
 | `uart_banner.bit` | +UART banner | `11'd24` floor + shift 1 | `eab9c0a` | `uart-bringup` | `1A6682E1CA2D3CFFDE6FF4B23763B66703FE1952BDFC59439020C1C9FEA78313` | flashed |
 | `keys_threshold.bit` | +runtime keys +UART telemetry | `11'd24` floor, shift 1, both live | `7e7e6e1` | `uart-bringup` | `92F2E33DC0DFD2DF173F0E9E43876A6A5E6491652188D904754DE96E32534DFC` | flashed |
-| `overlay_box.bit` | +despeckle +target box | `11'd24` floor, shift 1, despeckle 3, all live | SOURCECOMMIT | `uart-bringup` | `0A0355FC6624CD3107454CC5C5858FE6C1FF41D549EF38A10623B628B921FD88` | flashed |
+| `overlay_box.bit` | +despeckle +target box | `11'd24` floor, shift 1, despeckle 3, all live | `7903df0` | `uart-bringup` | `0A0355FC6624CD3107454CC5C5858FE6C1FF41D549EF38A10623B628B921FD88` | flashed |
 
 ## keys_threshold.bit
 
