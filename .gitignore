@@ -1,0 +1,28 @@
+# Efinity build products and temporary state
+/outflow/
+/work_syn/
+/work_pnr/
+/work_dbg/
+/ip/
+/ooc/
+/.lock
+*.log
+*.vcd
+*.gtkw
+*.wlf
+
+# Keep the one explicitly verified recovery bitstream under known_good/.
+*.bit
+!/known_good/
+!/known_good/*.bit
+
+# Editor and OS noise
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+
+# Vendor reference documents are not needed to compile; share separately
+# only after checking redistribution rights.
+/rtl/cam/doc/
+/rtl/cam_i2c_ctrl/*.docx

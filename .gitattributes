@@ -1,0 +1,12 @@
+# A bitstream must be byte-for-byte identical after a clone or checkout.
+*.bit binary
+
+# Source files may be checked out with the platform's preferred line endings.
+*.v text
+*.vh text
+*.sv text
+*.xml text
+*.sdc text
+*.mem text
+*.memh text
+*.md text
