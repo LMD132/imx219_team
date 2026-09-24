@@ -13,6 +13,7 @@ module edge_display_720p #(
     input  wire [7:0] in_r,
     input  wire [7:0] in_g,
     input  wire [7:0] in_b,
+    input  wire [7:0] in_edge_gray,
     output reg        out_vs,
     output reg        out_hs,
     output reg        out_de,
@@ -61,15 +62,16 @@ reg s0_bank;
 reg [10:0] s0_x;
 reg [9:0]  s0_y;
 reg [7:0] s0_gray;
+reg [7:0] s0_edge_gray;
 
 always @(posedge clk) begin
     if (rst_n && in_de && pixel_x < IMAGE_WIDTH) begin
         read_a <= line_a[pixel_x];
         read_b <= line_b[pixel_x];
         if (pixel_bank)
-            line_b[pixel_x] <= gray_now;
+            line_b[pixel_x] <= in_edge_gray;
         else
-            line_a[pixel_x] <= gray_now;
+            line_a[pixel_x] <= in_edge_gray;
     end
 end
 
@@ -88,6 +90,7 @@ always @(posedge clk or negedge rst_n) begin
         s0_x       <= 11'd0;
         s0_y       <= 10'd0;
         s0_gray    <= 8'd0;
+        s0_edge_gray <= 8'd0;
     end else begin
         prev_de <= in_de;
         prev_vs <= in_vs;
@@ -99,6 +102,7 @@ always @(posedge clk or negedge rst_n) begin
             s0_y <= pixel_y;
             s0_bank <= pixel_bank;
             s0_gray <= gray_now;
+            s0_edge_gray <= in_edge_gray;
             if (line_start) begin
                 first_line <= 1'b0;
                 y_count <= pixel_y;
@@ -119,11 +123,11 @@ reg [7:0] bot_left, bot_center;
 
 // Each unsigned side of Gx or Gy is at most 4*255 = 1020.
 wire [10:0] gx_positive = {3'b0, top_now} + {2'b0, mid_now, 1'b0}
-                        + {3'b0, s0_gray};
+                        + {3'b0, s0_edge_gray};
 wire [10:0] gx_negative = {3'b0, top_left} + {2'b0, mid_left, 1'b0}
                         + {3'b0, bot_left};
 wire [10:0] gy_positive = {3'b0, bot_left} + {2'b0, bot_center, 1'b0}
-                        + {3'b0, s0_gray};
+                        + {3'b0, s0_edge_gray};
 wire [10:0] gy_negative = {3'b0, top_left} + {2'b0, top_center, 1'b0}
                         + {3'b0, top_now};
 
@@ -168,7 +172,7 @@ always @(posedge clk or negedge rst_n) begin
             mid_left <= mid_center;
             mid_center <= mid_now;
             bot_left <= bot_center;
-            bot_center <= s0_gray;
+            bot_center <= s0_edge_gray;
             s1_gx_positive <= gx_positive;
             s1_gx_negative <= gx_negative;
             s1_gy_positive <= gy_positive;

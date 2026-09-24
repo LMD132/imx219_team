@@ -821,8 +821,28 @@ begin
   hdmi_tx_de <= rgb_de;
 end
 
-// Competition task 4: grayscale, 3x3 Sobel, and side-by-side output.
+// Competition task 4: grayscale, 3x3 median, 3x3 Sobel, and split output.
 // Camera capture, DDR buffering, and HDMI timing remain unchanged.
+wire median_vs;
+wire median_hs;
+wire median_de;
+wire [7:0] raw_gray;
+wire [7:0] median_gray;
+median_filter_3x3_720p #(.IMAGE_WIDTH(1280)) median_filter_inst (
+    .clk(hdmi_tx_slow_clk),
+    .rst_n(vid_rst_n),
+    .in_vs(hdmi_tx_vs),
+    .in_hs(hdmi_tx_hs),
+    .in_de(hdmi_tx_de),
+    .in_r(hdmi_tx_rdata),
+    .in_g(hdmi_tx_gdata),
+    .in_b(hdmi_tx_bdata),
+    .out_vs(median_vs),
+    .out_hs(median_hs),
+    .out_de(median_de),
+    .out_raw_gray(raw_gray),
+    .out_median_gray(median_gray)
+);
 wire edge_vs;
 wire edge_hs;
 wire edge_de;
@@ -835,12 +855,13 @@ edge_display_720p #(
 ) edge_display_inst (
     .clk(hdmi_tx_slow_clk),
     .rst_n(vid_rst_n),
-    .in_vs(hdmi_tx_vs),
-    .in_hs(hdmi_tx_hs),
-    .in_de(hdmi_tx_de),
-    .in_r(hdmi_tx_rdata),
-    .in_g(hdmi_tx_gdata),
-    .in_b(hdmi_tx_bdata),
+    .in_vs(median_vs),
+    .in_hs(median_hs),
+    .in_de(median_de),
+    .in_r(raw_gray),
+    .in_g(raw_gray),
+    .in_b(raw_gray),
+    .in_edge_gray(median_gray),
     .out_vs(edge_vs),
     .out_hs(edge_hs),
     .out_de(edge_de),
