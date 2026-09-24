@@ -15,7 +15,7 @@ Status legend:
 | `median_thr090.bit` | median filter | `11'd90` | `fdf3b5f` | `median-threshold-sweep` | `FABEE8D1C353A262FFAF0674ABB222EFCF9659760FEF17DA89F3C8D5875552BB` | built |
 | `median_adaptive.bit` | median filter | `11'd24` floor + shift 1 | `14daf58` | `median-threshold-sweep` | `78CB73BA88A0BAC8793CB64A2CFCE3C56A7422874A3CCEF4BA183B3442A39AC4` | flashed |
 | `uart_banner.bit` | +UART banner | `11'd24` floor + shift 1 | `eab9c0a` | `uart-bringup` | `1A6682E1CA2D3CFFDE6FF4B23763B66703FE1952BDFC59439020C1C9FEA78313` | flashed |
-| `keys_threshold.bit` | +runtime keys +UART telemetry | `11'd24` floor, shift 1, both live | `pending` | `uart-bringup` | `92F2E33DC0DFD2DF173F0E9E43876A6A5E6491652188D904754DE96E32534DFC` | built |
+| `keys_threshold.bit` | +runtime keys +UART telemetry | `11'd24` floor, shift 1, both live | `7e7e6e1` | `uart-bringup` | `92F2E33DC0DFD2DF173F0E9E43876A6A5E6491652188D904754DE96E32534DFC` | flashed |
 
 ## keys_threshold.bit
 
@@ -47,7 +47,24 @@ reset input. See `docs/key_threshold_control.md`.
 
 Result: compiled clean (0 errors, 0 warnings), all timing slack positive
 (worst 0.471 ns), and the pin report lists `A3 / N14 / P14` as inputs with a
-weak pullup. Not yet looked at on the monitor.
+weak pullup.
+
+Key control and telemetry are confirmed on hardware. A 90 s listen on `COM5`
+captured 2590 bytes (28.8 B/s = 14 B/line x 2 lines/s, so the 500 ms period is
+exact) and every key press showed up as a single step:
+
+    THR=024 SH=1   baseline after reset
+    THR=032        KEY1 pressed once (+8)
+    THR=024        KEY2 (-8)
+    THR=016        KEY2 (-8)
+    THR=024        KEY1 (+8)
+    SH=0           KEY3 (shift 1 -> 0)
+    SH=8           KEY3 (shift 0 -> 8, wrapped)
+    THR=016/024/032 more KEY2/KEY1 presses
+
+No missed presses and no double steps, so the debouncer behaves. The picture on
+the monitor was not described by the board holder, so the threshold values are
+verified but the visual effect of each step is not.
 
 ## uart_banner.bit
 

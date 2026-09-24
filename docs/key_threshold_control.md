@@ -76,3 +76,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -File D:\FPGA_Project\imx219_team\
 `w_edge_threshold` / `w_edge_shift` 被 2 级触发器重新采样进
 `hdmi_tx_slow_clk`（HDMI 像素时钟）后才送进 `edge_display_720p`。
 值只在按键时变化，最坏情况也就是一帧用旧值。
+
+## 6. 上板验证记录（2026-09-24）
+
+位流 `keys_threshold.bit`，SHA256
+`92F2E33DC0DFD2DF173F0E9E43876A6A5E6491652188D904754DE96E32534DFC`
+
+证据等级：**JTAG 下载 + 串口观测**（画面观感尚未收集）。
+
+90 秒监听 `COM5` 收到 2590 字节 = **28.8 B/s**，与 14 字节/行 × 2 行/秒
+（500 ms 周期）完全吻合，说明节拍精确。实测按键轨迹：
+
+| 操作 | COM5 输出 | 判定 |
+|---|---|---|
+| 复位后 | `THR=024 SH=1` | 默认值正确（与前一位流一致） |
+| KEY1 ×1 | `THR=032` | +8 ✅ |
+| KEY2 ×2 | `THR=024`、`THR=016` | −8，无连跳 ✅ |
+| KEY1 ×1 | `THR=024` | +8 ✅ |
+| KEY3 ×2 | `SH=0`、`SH=8` | 1→0→8，循环正确 ✅ |
+| KEY2/KEY1 交替 | `THR=016/024/032` | 继续正确 ✅ |
+
+**每次按下正好走一步**，没有丢按键、没有重复步进 → 20 ms 消抖有效。
