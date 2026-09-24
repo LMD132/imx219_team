@@ -16,7 +16,7 @@ Status legend:
 | `median_adaptive.bit` | median filter | `11'd24` floor + shift 1 | `14daf58` | `median-threshold-sweep` | `78CB73BA88A0BAC8793CB64A2CFCE3C56A7422874A3CCEF4BA183B3442A39AC4` | flashed |
 | `uart_banner.bit` | +UART banner | `11'd24` floor + shift 1 | `eab9c0a` | `uart-bringup` | `1A6682E1CA2D3CFFDE6FF4B23763B66703FE1952BDFC59439020C1C9FEA78313` | flashed |
 | `keys_threshold.bit` | +runtime keys +UART telemetry | `11'd24` floor, shift 1, both live | `7e7e6e1` | `uart-bringup` | `92F2E33DC0DFD2DF173F0E9E43876A6A5E6491652188D904754DE96E32534DFC` | flashed |
-| `overlay_box.bit` | +despeckle +target box | `11'd24` floor, shift 1, despeckle 3, all live | `7903df0` | `uart-bringup` | `0A0355FC6624CD3107454CC5C5858FE6C1FF41D549EF38A10623B628B921FD88` | flashed |
+| `overlay_box.bit` | +despeckle +target box +frame counter | `11'd24` floor, shift 1, despeckle 3, all live | `bcaff39` | `uart-bringup` | `E2E1D205F0344BCB7A2D088976BD05203B63A136EAA9E1A684D5707251AC85F5` | flashed |
 
 ## keys_threshold.bit
 
@@ -107,19 +107,42 @@ weight, KEY3 **hold >= 1 s** next despeckle window `{3,5,0,2}`. The short action
 fires on release and only when the hold was short, so a long hold cannot also
 step the threshold. See `docs/edge_overlay.md`.
 
-Telemetry changed from `"THR=nnn SH=n\r\n"` to `"THR=nnn SH=n DS=k\r\n"`, so the
-serial log records which filter setting a picture was taken with.
+Telemetry changed from `"THR=nnn SH=n\r\n"` to
 
-Result: compiled clean, all timing slack positive (worst **0.408 ns**), and
-flashed as `Device ID read from JTAG: 0x10660A79`. A 5 s listen on COM5 read
-171 bytes of
+    "THR=nnn SH=n DS=k PIX=nnnnnn\r\n"      (30 bytes, was 14)
 
-    THR=024 SH=1 DS=3
+so the log records which filter setting a picture was taken with, and how many
+active pixels the last video frame had. `PIX` comes from a counter in
+`edge_overlay_720p.v` that is handed to the 25 MHz domain through a per-frame
+toggle (the count is stable for a whole frame, so a multi-bit 2FF synchroniser
+would be the wrong tool). The 20-bit value is turned into six digits with a
+sequential double-dabble, because a constant division on 20 bits would infer a
+wide multiplier.
 
-matching the reset defaults (floor 24, shift 1, despeckle 3). The picture itself
-has not been described by the board holder yet, so the despeckle and box are
-**not visually accepted** - flash `keys_threshold.bit` to go back to the
-previous behaviour.
+### Evidence
+
+- compiled clean, all timing slack positive (setup worst **0.438 ns**, hold
+  worst 0.026 ns)
+- flashed as `Device ID read from JTAG: 0x10660A79`
+- a 6 s listen on COM5 read 360 bytes (60 B/s = 30 B/line x 2 lines/s, so the
+  500 ms period is still exact) and every line was
+
+      THR=024 SH=1 DS=3 PIX=921600
+
+  matching the reset defaults (floor 24, shift 1, despeckle 3) and the exact
+  720p frame size, 1280 x 720 = 921600 active pixels. Twelve consecutive frames
+  all read the same value, so at frame level the pixel pipeline sees complete
+  frames with no missing or extra pixels, and the double-dabble conversion is
+  correct (a broken one would print random digits).
+
+Two things this build does **not** prove: how the picture actually looks (nobody
+has described it yet) and whether the despeckle or the red box is doing
+something visible. Flash `keys_threshold.bit` to go back to the previous
+behaviour, or hold KEY3 for a second to switch the despeckle off.
+
+Superseded build: the first `overlay_box.bit` (`7903df0`, SHA256
+`0A0355FC...B921FD88`) had no `PIX` field and was replaced in place by the build
+above, which is the one that was verified on the board.
 
 ## uart_banner.bit
 
