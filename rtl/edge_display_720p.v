@@ -2,9 +2,7 @@
 // Left half: grayscale video. Right half: binary Sobel edges.
 // The two line stores are read before being overwritten by the current row.
 module edge_display_720p #(
-    parameter integer IMAGE_WIDTH = 1280,
-    parameter [10:0] EDGE_THRESHOLD = 11'd180,
-    parameter integer EDGE_THRESHOLD_SHIFT = 1
+    parameter integer IMAGE_WIDTH = 1280
 ) (
     input  wire       clk,
     input  wire       rst_n,
@@ -15,6 +13,11 @@ module edge_display_720p #(
     input  wire [7:0] in_g,
     input  wire [7:0] in_b,
     input  wire [7:0] in_edge_gray,
+    // Runtime threshold, driven by threshold_ctrl.v. i_threshold is the noise
+    // floor (0..255) and i_threshold_shift selects the weight of the adaptive
+    // term: shift = 8 disables it, shift = 0 gives it full weight.
+    input  wire [10:0] i_threshold,
+    input  wire [3:0]  i_threshold_shift,
     output reg        out_vs,
     output reg        out_hs,
     output reg        out_de,
@@ -196,11 +199,11 @@ wire [11:0] magnitude = {1'b0, gx_abs} + {1'b0, gy_abs};
 // absolute brightness. A fixed threshold therefore loses low contrast objects
 // (a person in dim light) while a bright source (a phone screen) clears it
 // easily. Scale the threshold with the gray level at the window centre and use
-// EDGE_THRESHOLD as a noise floor. EDGE_THRESHOLD_SHIFT = 8 disables the
-// adaptive term and restores a purely fixed threshold.
-wire [10:0] local_threshold = {3'b0, s1_center} >> EDGE_THRESHOLD_SHIFT;
-wire [10:0] active_threshold = (local_threshold > EDGE_THRESHOLD)
-                             ? local_threshold : EDGE_THRESHOLD;
+// i_threshold as a noise floor. i_threshold_shift = 8 disables the adaptive
+// term and restores a purely fixed threshold.
+wire [10:0] local_threshold = {3'b0, s1_center} >> i_threshold_shift;
+wire [10:0] active_threshold = (local_threshold > i_threshold)
+                             ? local_threshold : i_threshold;
 wire edge_pixel = s1_window_valid && magnitude >= {1'b0, active_threshold};
 
 // Stage 2: synchronized HDMI pixel. The split is intentionally simple for

@@ -149,6 +149,14 @@ module ti60f225_oob_top #(
        // UART debug channel (FT4232H channel C, board UART header J8)
        output wire o_uart_txd,
 
+       // User push buttons. They are active low with external pull-ups on the
+       // demo board (see the vendor key demo, which tests ~i_key).
+       // key_i[0] is GPIOL_07 / C4 and is already taken by i_arstn, so only
+       // the remaining three keys are brought out here.
+       input  wire i_key_thr_up,   // key_i[1] = GPIOR_22 / P14
+       input  wire i_key_thr_dn,   // key_i[2] = GPIOR_21 / N14
+       input  wire i_key_mode,     // key_i[3] = GPIOL_03  / A3
+
        // MIPI DSI
        input	wire	                     i_mipi_tx_pclk		,
        output	wire	                     mipi_dp_clk_LP_P_OUT		,
@@ -349,20 +357,85 @@ end
 assign led[0]  = cal_done ? cnt[24] : 1'b0;
 
 //========================================================================================================
-//UART debug banner
+//Runtime edge-threshold control + UART telemetry
 //
-// Emits "TI60 UART OK\r\n" every 100 ms at 115200 8N1 so the host can
-// confirm the pin assignment, the baud generator and the COM port mapping
-// without needing a camera pointing at the panel.
+// Three board keys change the Sobel threshold while the design runs:
+//   KEY1 (GPIOR_22 / P14) - raise the floor
+//   KEY2 (GPIOR_21 / N14) - lower the floor
+//   KEY3 (GPIOL_03 / A3)  - cycle the adaptive weight {off, /8, /4, /2, /1}
+//
+// Every key press, and every 500 ms in between, the current pair of values is
+// printed on the board UART as "THR=nnn SH=n\r\n". The first line after reset
+// is still "TI60 UART OK\r\n", which keeps the UART bring-up evidence from the
+// verified bitstream and lets tools/uart_listen.ps1 work unchanged.
+//
+// Everything here runs on CLK_25M. The two threshold values are re-sampled
+// into the HDMI pixel clock domain further down (see thr_meta/thr_sync).
 //========================================================================================================
-uart_status_tx #(
-       .CLK_HZ (25000000),
-       .BAUD   (115200),
-       .GAP_MS (100)
-) u_uart_status_tx (
-       .i_clk  (CLK_25M),
-       .i_rstn (w_arstn),
-       .o_txd  (o_uart_txd)
+wire w_key_thr_up;
+wire w_key_thr_dn;
+wire w_key_mode;
+
+key_debounce #(
+       .CLK_HZ      (25000000),
+       .DEBOUNCE_MS (20)
+) u_key_thr_up (
+       .clk     (CLK_25M),
+       .rst_n   (w_arstn),
+       .i_key   (i_key_thr_up),
+       .o_press (w_key_thr_up)
+);
+
+key_debounce #(
+       .CLK_HZ      (25000000),
+       .DEBOUNCE_MS (20)
+) u_key_thr_dn (
+       .clk     (CLK_25M),
+       .rst_n   (w_arstn),
+       .i_key   (i_key_thr_dn),
+       .o_press (w_key_thr_dn)
+);
+
+key_debounce #(
+       .CLK_HZ      (25000000),
+       .DEBOUNCE_MS (20)
+) u_key_mode (
+       .clk     (CLK_25M),
+       .rst_n   (w_arstn),
+       .i_key   (i_key_mode),
+       .o_press (w_key_mode)
+);
+
+wire [10:0] w_edge_threshold;
+wire [3:0]  w_edge_shift;
+wire        w_edge_changed;
+
+threshold_ctrl #(
+       .THRESHOLD_INIT (11'd24),
+       .STEP_THRESHOLD (8),
+       .MODE_INIT      (3'd3)      // shift = 1, what the previous bitstream used
+) u_threshold_ctrl (
+       .clk         (CLK_25M),
+       .rst_n       (w_arstn),
+       .i_up        (w_key_thr_up),
+       .i_down      (w_key_thr_dn),
+       .i_mode      (w_key_mode),
+       .o_threshold (w_edge_threshold),
+       .o_shift     (w_edge_shift),
+       .o_changed   (w_edge_changed)
+);
+
+uart_telemetry #(
+       .CLK_HZ    (25000000),
+       .BAUD      (115200),
+       .PERIOD_MS (500)
+) u_uart_telemetry (
+       .clk         (CLK_25M),
+       .rst_n       (w_arstn),
+       .i_threshold (w_edge_threshold),
+       .i_shift     (w_edge_shift),
+       .i_update    (w_edge_changed),
+       .o_txd       (o_uart_txd)
 );
 
 //========================================================================================================
@@ -869,10 +942,30 @@ wire edge_de;
 wire [7:0] edge_r;
 wire [7:0] edge_g;
 wire [7:0] edge_b;
+
+// threshold_ctrl.v runs on CLK_25M; re-sample its outputs into the HDMI pixel
+// clock domain. The values only move when a key is pressed, so two flops per
+// value is plenty and a torn read is at worst one frame of a stale threshold.
+reg [10:0] thr_meta;
+reg [10:0] thr_sync;
+reg [3:0]  sh_meta;
+reg [3:0]  sh_sync;
+always @(posedge hdmi_tx_slow_clk or negedge vid_rst_n) begin
+    if (!vid_rst_n) begin
+        thr_meta <= 11'd24;
+        thr_sync <= 11'd24;
+        sh_meta  <= 4'd1;
+        sh_sync  <= 4'd1;
+    end else begin
+        thr_meta <= w_edge_threshold;
+        thr_sync <= thr_meta;
+        sh_meta  <= w_edge_shift;
+        sh_sync  <= sh_meta;
+    end
+end
+
 edge_display_720p #(
-    .IMAGE_WIDTH(1280),
-    .EDGE_THRESHOLD(11'd24),
-    .EDGE_THRESHOLD_SHIFT(1)
+    .IMAGE_WIDTH(1280)
 ) edge_display_inst (
     .clk(hdmi_tx_slow_clk),
     .rst_n(vid_rst_n),
@@ -883,6 +976,8 @@ edge_display_720p #(
     .in_g(raw_gray),
     .in_b(raw_gray),
     .in_edge_gray(median_gray),
+    .i_threshold(thr_sync),
+    .i_threshold_shift(sh_sync),
     .out_vs(edge_vs),
     .out_hs(edge_hs),
     .out_de(edge_de),

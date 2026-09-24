@@ -15,6 +15,39 @@ Status legend:
 | `median_thr090.bit` | median filter | `11'd90` | `fdf3b5f` | `median-threshold-sweep` | `FABEE8D1C353A262FFAF0674ABB222EFCF9659760FEF17DA89F3C8D5875552BB` | built |
 | `median_adaptive.bit` | median filter | `11'd24` floor + shift 1 | `14daf58` | `median-threshold-sweep` | `78CB73BA88A0BAC8793CB64A2CFCE3C56A7422874A3CCEF4BA183B3442A39AC4` | flashed |
 | `uart_banner.bit` | +UART banner | `11'd24` floor + shift 1 | `eab9c0a` | `uart-bringup` | `1A6682E1CA2D3CFFDE6FF4B23763B66703FE1952BDFC59439020C1C9FEA78313` | flashed |
+| `keys_threshold.bit` | +runtime keys +UART telemetry | `11'd24` floor, shift 1, both live | `pending` | `uart-bringup` | `92F2E33DC0DFD2DF173F0E9E43876A6A5E6491652188D904754DE96E32534DFC` | built |
+
+## keys_threshold.bit
+
+Same edge-detection RTL as `uart_banner.bit`, but the threshold is now driven
+from the board keys instead of being a compile-time parameter, and the UART
+prints the live values so the picture can be correlated with a number.
+
+New RTL:
+
+- `rtl/key_debounce.v` - two-flop synchroniser + 20 ms counter, emits one pulse
+  per debounced press. Keys are active low (external pull-ups).
+- `rtl/threshold_ctrl.v` - holds the floor (0..255, step 8) and the adaptive
+  weight, cycled by KEY3 through `{off, /8, /4, /2, /1}`.
+- `rtl/uart_telemetry.v` - emits `"TI60 UART OK\r\n"` once after reset, then
+  `"THR=nnn SH=n\r\n"` every 500 ms and immediately on any key press.
+
+Changed RTL:
+
+- `rtl/edge_display_720p.v` - `EDGE_THRESHOLD` and `EDGE_THRESHOLD_SHIFT` are
+  now input ports (`i_threshold`, `i_threshold_shift`) instead of parameters.
+- `rtl/ti60f225_oob_top.v` - three debounced key inputs, the control block, a
+  2-FF re-sample of the two values into the HDMI pixel clock domain, plus the
+  `design_file` entries in `ti60f225_oob.xml` and the pin constraints in
+  `ti60f225_oob.peri.xml`.
+
+Keys: KEY1 `GPIOR_22` (P14) floor up, KEY2 `GPIOR_21` (N14) floor down,
+KEY3 `GPIOL_03` (A3) adaptive weight. KEY0 is `GPIOL_07` and is already the
+reset input. See `docs/key_threshold_control.md`.
+
+Result: compiled clean (0 errors, 0 warnings), all timing slack positive
+(worst 0.471 ns), and the pin report lists `A3 / N14 / P14` as inputs with a
+weak pullup. Not yet looked at on the monitor.
 
 ## uart_banner.bit
 
