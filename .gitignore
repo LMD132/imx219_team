@@ -21,6 +21,7 @@
 .idea/
 Thumbs.db
 Desktop.ini
+~$*.docx
 
 # Vendor reference documents are not needed to compile; share separately
 # only after checking redistribution rights.
