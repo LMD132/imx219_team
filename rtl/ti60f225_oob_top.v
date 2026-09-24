@@ -851,7 +851,7 @@ wire [7:0] edge_g;
 wire [7:0] edge_b;
 edge_display_720p #(
     .IMAGE_WIDTH(1280),
-    .EDGE_THRESHOLD(11'd180)
+    .EDGE_THRESHOLD(11'd90)
 ) edge_display_inst (
     .clk(hdmi_tx_slow_clk),
     .rst_n(vid_rst_n),
