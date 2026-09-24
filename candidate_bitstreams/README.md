@@ -13,6 +13,7 @@ Status legend:
 | File | EDGE_THRESHOLD | Source commit | Branch | SHA256 | Status |
 |---|---|---|---|---|---|
 | `median_thr090.bit` | `11'd90` | `fdf3b5f` | `median-threshold-sweep` | `FABEE8D1C353A262FFAF0674ABB222EFCF9659760FEF17DA89F3C8D5875552BB` | built |
+| `median_adaptive.bit` | `11'd24` floor + shift 1 | `14daf58` | `median-threshold-sweep` | `78CB73BA88A0BAC8793CB64A2CFCE3C56A7422874A3CCEF4BA183B3442A39AC4` | built |
 
 ## median_thr090.bit
 
