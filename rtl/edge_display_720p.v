@@ -3,7 +3,8 @@
 // The two line stores are read before being overwritten by the current row.
 module edge_display_720p #(
     parameter integer IMAGE_WIDTH = 1280,
-    parameter [10:0] EDGE_THRESHOLD = 11'd180
+    parameter [10:0] EDGE_THRESHOLD = 11'd180,
+    parameter integer EDGE_THRESHOLD_SHIFT = 1
 ) (
     input  wire       clk,
     input  wire       rst_n,
@@ -138,6 +139,7 @@ reg s1_de;
 reg s1_window_valid;
 reg [10:0] s1_x;
 reg [7:0] s1_gray;
+reg [7:0] s1_center;
 reg [10:0] s1_gx_positive, s1_gx_negative;
 reg [10:0] s1_gy_positive, s1_gy_negative;
 
@@ -155,6 +157,7 @@ always @(posedge clk or negedge rst_n) begin
         s1_window_valid <= 1'b0;
         s1_x <= 11'd0;
         s1_gray <= 8'd0;
+        s1_center <= 8'd0;
         s1_gx_positive <= 11'd0;
         s1_gx_negative <= 11'd0;
         s1_gy_positive <= 11'd0;
@@ -167,6 +170,7 @@ always @(posedge clk or negedge rst_n) begin
         s1_gray <= s0_gray;
         s1_window_valid <= s0_de && s0_x >= 11'd2 && s0_y >= 10'd2;
         if (s0_de) begin
+            s1_center <= s0_edge_gray;
             top_left <= top_center;
             top_center <= top_now;
             mid_left <= mid_center;
@@ -188,7 +192,16 @@ wire [10:0] gy_abs = (s1_gy_positive >= s1_gy_negative)
                    ? s1_gy_positive - s1_gy_negative
                    : s1_gy_negative - s1_gy_positive;
 wire [11:0] magnitude = {1'b0, gx_abs} + {1'b0, gy_abs};
-wire edge_pixel = s1_window_valid && magnitude >= {1'b0, EDGE_THRESHOLD};
+// The gradient magnitude of a real edge scales with local contrast, not with
+// absolute brightness. A fixed threshold therefore loses low contrast objects
+// (a person in dim light) while a bright source (a phone screen) clears it
+// easily. Scale the threshold with the gray level at the window centre and use
+// EDGE_THRESHOLD as a noise floor. EDGE_THRESHOLD_SHIFT = 8 disables the
+// adaptive term and restores a purely fixed threshold.
+wire [10:0] local_threshold = {3'b0, s1_center} >> EDGE_THRESHOLD_SHIFT;
+wire [10:0] active_threshold = (local_threshold > EDGE_THRESHOLD)
+                             ? local_threshold : EDGE_THRESHOLD;
+wire edge_pixel = s1_window_valid && magnitude >= {1'b0, active_threshold};
 
 // Stage 2: synchronized HDMI pixel. The split is intentionally simple for
 // first hardware validation; the two halves currently show their own crop.
