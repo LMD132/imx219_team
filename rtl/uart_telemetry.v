@@ -39,6 +39,7 @@
 // middle of the message. CV is the tone curve of rtl/tone_curve_lut.v and HY
 // the local hysteresis flag of rtl/edge_overlay_720p.v; both are appended at
 // the end so the fields in front of them keep their byte positions.
+// PD is the runtime colour delay of rtl/rgb_delay_720p.v, appended the same way.
 //
 ////////////////////////////////////////////////////////////////////////////
 
@@ -55,6 +56,7 @@ module uart_telemetry #(
     input  wire [1:0]  i_denoise,
     input  wire [1:0]  i_curve,
     input  wire        i_hysteresis,
+    input  wire [7:0]  i_pixel_delay,
     input  wire        i_remote,     // 1 = the host owns the operating point
     input  wire [19:0] i_frame_pix,  // active pixels in the last video frame
     input  wire        i_update,     // push a fresh line as soon as the line is free
@@ -62,7 +64,7 @@ module uart_telemetry #(
 );
 
     localparam [5:0]  MSG_LEN_BANNER = 6'd14;
-    localparam [5:0]  MSG_LEN_STATUS = 6'd50;
+    localparam [5:0]  MSG_LEN_STATUS = 6'd56;
     localparam integer GAP_CLKS      = (CLK_HZ / 1000) * PERIOD_MS;
 
     // ---------------------------------------------------------------
@@ -75,6 +77,9 @@ module uart_telemetry #(
     wire [7:0] rem  = thr8 - (d_h * 8'd100);
     wire [7:0] d_t  = rem / 8'd10;
     wire [7:0] d_u  = rem - (d_t * 8'd10);
+    // PD is 0..63, so two digits and a constant divide are enough.
+    wire [7:0] pd_d = i_pixel_delay / 8'd10;
+    wire [7:0] pd_u = i_pixel_delay - (pd_d * 8'd10);
 
     function [7:0] msg_byte;
         input        banner_sel;
@@ -84,6 +89,7 @@ module uart_telemetry #(
         input        hy;
         input        remote;
         input [23:0] pix_bcd;
+        input [3:0]  pdt, pdu;
         begin
             if (banner_sel) begin
                 case (idx)
@@ -153,7 +159,13 @@ module uart_telemetry #(
                     6'd46:   msg_byte = "Y";
                     6'd47:   msg_byte = "=";
                     6'd48:   msg_byte = 8'h30 + {7'b0, hy};
-                    6'd49:   msg_byte = 8'h0D;   // CR
+                    6'd49:   msg_byte = " ";
+                    6'd50:   msg_byte = "P";
+                    6'd51:   msg_byte = "D";
+                    6'd52:   msg_byte = "=";
+                    6'd53:   msg_byte = 8'h30 + {4'b0, pdt};
+                    6'd54:   msg_byte = 8'h30 + {4'b0, pdu};
+                    6'd55:   msg_byte = 8'h0D;   // CR
                     default: msg_byte = 8'h0A;   // LF
                 endcase
             end
@@ -180,6 +192,8 @@ module uart_telemetry #(
     reg [1:0]  d_c_reg;
     reg        d_y_reg;
     reg        d_r_reg;
+    reg [3:0]  d_pd_t_reg;
+    reg [3:0]  d_pd_u_reg;
     reg [23:0] pix_bcd_reg;
     wire       tx_busy;
 
@@ -234,6 +248,8 @@ module uart_telemetry #(
             d_c_reg   <= 2'd1;
             d_y_reg   <= 1'b1;
             d_r_reg   <= 1'b0;
+            d_pd_t_reg <= 4'd0;
+            d_pd_u_reg <= 4'd0;
             pix_bcd_reg <= 24'd0;
             bcd_bin   <= 20'd0;
             bcd_out   <= 24'd0;
@@ -261,6 +277,8 @@ module uart_telemetry #(
                             d_c_reg  <= i_curve;
                             d_y_reg  <= i_hysteresis;
                             d_r_reg  <= i_remote;
+            d_pd_t_reg <= pd_d[3:0];
+            d_pd_u_reg <= pd_u[3:0];
                             bcd_bin  <= i_frame_pix;
                             bcd_out  <= 24'd0;
                             conv_cnt <= 5'd0;
@@ -294,7 +312,8 @@ module uart_telemetry #(
                                          d_h_reg, d_t_reg, d_u_reg,
                                          d_s_reg, d_k_reg, d_e_reg,
                                          d_c_reg, d_y_reg,
-                                         d_r_reg, pix_bcd_reg);
+                                         d_r_reg, pix_bcd_reg,
+                                         d_pd_t_reg, d_pd_u_reg);
                     state    <= S_START;
                 end
 

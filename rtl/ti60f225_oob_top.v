@@ -453,6 +453,7 @@ wire [3:0]  w_cmd_despeckle;
 wire [1:0]  w_cmd_denoise;
 wire [1:0]  w_cmd_curve;
 wire        w_cmd_hysteresis;
+wire [7:0]  w_cmd_pixel_delay;
 wire        w_cmd_override;
 wire        w_cmd_commit;
 
@@ -483,6 +484,7 @@ uart_cmd #(
        .o_denoise    (w_cmd_denoise),
        .o_curve      (w_cmd_curve),
        .o_hysteresis (w_cmd_hysteresis),
+       .o_pixel_delay (w_cmd_pixel_delay),
        .o_override   (w_cmd_override),
        .o_commit     (w_cmd_commit)
 );
@@ -500,6 +502,10 @@ wire [1:0]  w_cfg_denoise   = w_cmd_override ? w_cmd_denoise   : 2'd2;
 // the plain single-threshold picture.
 wire [1:0]  w_cfg_curve      = w_cmd_override ? w_cmd_curve      : 2'd1;
 wire        w_cfg_hysteresis = w_cmd_override ? w_cmd_hysteresis : 1'b1;
+// Colour delay of the overlay. The power-on value is the one the cycle model
+// in tools/verify_rgb_delay.py is checked against; P<n> overrides it.
+localparam [7:0] RGB_PIXEL_DELAY_INIT = 8'd8;
+wire [7:0]  w_cfg_pixel_delay = w_cmd_override ? w_cmd_pixel_delay : RGB_PIXEL_DELAY_INIT;
 wire        w_cfg_changed   = w_edge_changed | w_cmd_commit;
 
 uart_telemetry #(
@@ -515,6 +521,7 @@ uart_telemetry #(
        .i_denoise   (w_cfg_denoise),
        .i_curve     (w_cfg_curve),
        .i_hysteresis(w_cfg_hysteresis),
+       .i_pixel_delay(w_cfg_pixel_delay),
        .i_remote    (w_cmd_override),
        .i_frame_pix (w_frame_pix),
        .i_update    (w_cfg_changed),
@@ -1073,6 +1080,8 @@ reg [1:0]  cv_meta;
 reg [1:0]  cv_sync;
 reg        hy_meta;
 reg        hy_sync;
+reg [7:0]  pd_meta;
+reg [7:0]  pd_sync;
 always @(posedge hdmi_tx_slow_clk or negedge vid_rst_n) begin
     if (!vid_rst_n) begin
         thr_meta <= 11'd16;
@@ -1087,6 +1096,8 @@ always @(posedge hdmi_tx_slow_clk or negedge vid_rst_n) begin
         cv_sync  <= 2'd1;
         hy_meta  <= 1'b1;
         hy_sync  <= 1'b1;
+        pd_meta  <= RGB_PIXEL_DELAY_INIT;
+        pd_sync  <= RGB_PIXEL_DELAY_INIT;
     end else begin
         thr_meta <= w_cfg_threshold;
         thr_sync <= thr_meta;
@@ -1100,6 +1111,8 @@ always @(posedge hdmi_tx_slow_clk or negedge vid_rst_n) begin
         cv_sync  <= cv_meta;
         hy_meta  <= w_cfg_hysteresis;
         hy_sync  <= hy_meta;
+        pd_meta  <= w_cfg_pixel_delay;
+        pd_sync  <= pd_meta;
     end
 end
 
@@ -1202,7 +1215,7 @@ wire [7:0]  col_b;
 rgb_delay_720p #(
     .IMAGE_WIDTH(1280),
     .LINE_DELAY(4),
-    .PIXEL_DELAY(8)      // 4*1280 + 8 = 4 stages x one line, plus the pixels
+    .PIXEL_DELAY(RGB_PIXEL_DELAY_INIT)   // power-on value; P<n> overrides it
 ) u_rgb_delay (
     .clk(hdmi_tx_slow_clk),
     .rst_n(vid_rst_n),
@@ -1212,6 +1225,7 @@ rgb_delay_720p #(
     .in_r(hdmi_tx_rdata),
     .in_g(hdmi_tx_gdata),
     .in_b(hdmi_tx_bdata),
+    .pixel_delay(pd_sync),
     // The sync outputs of the delay line are not consumed: the overlay
     // keeps its own timing from the edge chain, which the delay matches
     // by construction.

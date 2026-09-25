@@ -32,8 +32,12 @@
 // pixel count is NOT exact - the register arrangement differs slightly from
 // level to level, so k is somewhere in 1 .. 3 and the horizontal alignment is
 // only right to within a few pixels. A few pixels of horizontal error is
-// invisible, a whole row is not, so PIXEL_DELAY is a plain integer that can be
-// nudged at any time without any other consequence. It is set to 4 * 2 = 8.
+// invisible, a whole row is not, so the pixel delay is a runtime port that can
+// be nudged from the host at any time (P<n> over UART) without a rebuild.
+// The old estimate of 4 * 2 = 8 was short: the median level alone is eleven
+// pipeline clocks deep on top of its one-row window offset, so the delay the
+// port has to make up is expected to be in the twenties. That is exactly why
+// the offset is a port instead of a constant that only a rebuild can move.
 //
 // Implementation
 // --------------
@@ -61,27 +65,32 @@
 // (That +1 cost one round of tools/verify_rgb_delay.py: with the depth written
 // here the module delivers exactly DELAY_PIX, which is what the model asserts.)
 //
-// Validity: the store only holds pixels of the current frame once STORE_DEPTH
-// writes have happened since the frame boundary, so the output is forced black
-// until the write pointer has wrapped once after the frame boundary and that
-// flag has travelled through the output register. The black border is
-// therefore exactly DELAY_PIX pixels - LINE_DELAY lines plus PIXEL_DELAY
-// pixels, the same offset the module applies - and it is not visible.
+// Validity: the store only holds pixels of the current frame once the delay
+// worth of writes have happened since the frame boundary, so the output is
+// forced black until the write pointer has wrapped once after the frame
+// boundary and that flag has travelled through the output register. The black
+// border is therefore exactly the delay the module applies - DELAY_PIX
+// at power-on - and it is not visible.
 //
 // The address counter is reset at the frame boundary. The reset makes the
-// pointer revisit a few addresses before STORE_DEPTH writes have passed, and
+// pointer revisit a few addresses before the wrap has passed, and
 // those words are stale, but that can only happen inside the black region
 // above, so the visible picture is always the exact delay.
 //
-// Measured on TI60F225, 2026-09-26: 51 FFs, 76 LUTs, 24 RAM blocks, and the
-// design still closes timing with a positive slack.
+// Measured on TI60F225, 2026-09-26 (runtime port, PIXEL_DELAY_MAX = 63):
+// 39 FFs, 53 LUTs, 24 RAM blocks, worst slack +0.479 ns. The store grew to
+// 5182 words and still packs into the same 24 blocks; the whole top level is
+// 10614 FFs and 12549 LUTs. Two VERI-1209 width warnings (15/32 -> 14) remain,
+// exactly as before this change; the largest address is 5183, so the top bit is
+// constant and the truncation cannot change behaviour.
 //
 ////////////////////////////////////////////////////////////////////////////
 
 module rgb_delay_720p #(
     parameter integer IMAGE_WIDTH = 1280,
     parameter integer LINE_DELAY  = 4,
-    parameter integer PIXEL_DELAY = 8
+    parameter integer PIXEL_DELAY     = 8,     // power-on value of the runtime port
+    parameter integer PIXEL_DELAY_MAX = 63     // the store is sized for this
 ) (
     input  wire       clk,
     input  wire       rst_n,
@@ -91,6 +100,9 @@ module rgb_delay_720p #(
     input  wire [7:0] in_r,
     input  wire [7:0] in_g,
     input  wire [7:0] in_b,
+    // Offset of the colour stream in whole active pixels on top of LINE_DELAY
+    // lines, so the host can calibrate it without a rebuild. Clamped below.
+    input  wire [7:0] pixel_delay,
     output reg        out_vs,
     output reg        out_hs,
     output reg        out_de,
@@ -99,17 +111,22 @@ module rgb_delay_720p #(
     output reg  [7:0] out_b
 );
 
+    // Power-on delay, i.e. the value the top level drives the port with.
     localparam integer DELAY_PIX = LINE_DELAY * IMAGE_WIDTH + PIXEL_DELAY;
+    localparam integer LINE_PIX  = LINE_DELAY * IMAGE_WIDTH;
+    // The store has to hold the longest delay the port can be asked for.
+    localparam integer MAX_PIX   = LINE_PIX + PIXEL_DELAY_MAX;
     // The read register is part of DELAY_PIX; see the header for the -1.
     localparam integer REG_STAGES  = 1;
-    localparam integer STORE_DEPTH = DELAY_PIX - REG_STAGES;
-    // STORE_DEPTH is 5126 here, i.e. 13 bits are enough. Every operand of the
+    localparam integer STORE_WORDS = MAX_PIX - REG_STAGES;
+    // MAX_PIX is 5183 here, i.e. 13 bits are enough. Every operand of the
     // address arithmetic carries that width, so no expression is wider than the
     // index it drives.
     localparam integer         ADDR_BITS     = 13;
-    localparam [ADDR_BITS-1:0] STORE_DEPTH_V = STORE_DEPTH[ADDR_BITS-1:0];
+    localparam [ADDR_BITS-1:0] LINE_PIX_V = LINE_PIX[ADDR_BITS-1:0];
+    localparam [7:0]           MAX_PD     = PIXEL_DELAY_MAX;
 
-    reg [23:0] store [0:STORE_DEPTH-1];
+    reg [23:0] store [0:STORE_WORDS-1];
     reg [23:0] read_rgb;
 
     reg        prev_de;
@@ -119,6 +136,13 @@ module rgb_delay_720p #(
     reg [ADDR_BITS-1:0] waddr;
 
     wire frame_start = in_vs && !prev_vs;
+
+    // The store hands back the word written depth writes earlier and the read
+    // register adds one, so wrapping at LINE_PIX+pixel_delay words delivers
+    // exactly that many active pixels of delay. Moving the wrap point while the
+    // picture runs costs one frame of tearing, nothing else.
+    wire [7:0] pd = (pixel_delay > MAX_PD) ? MAX_PD : pixel_delay;
+    wire [ADDR_BITS-1:0] wrap_at = LINE_PIX_V + {5'b0, pd} - 13'd2;
 
     // Read before write at the same address: the read port returns the word
     // written STORE_DEPTH writes earlier.
@@ -152,7 +176,7 @@ module rgb_delay_720p #(
                 filled <= 1'b0;
                 waddr  <= {ADDR_BITS{1'b0}};
             end else if (in_de) begin
-                if (waddr == STORE_DEPTH_V - 1) begin
+                if (waddr == wrap_at) begin
                     waddr  <= {ADDR_BITS{1'b0}};
                     filled <= 1'b1;
                 end else begin

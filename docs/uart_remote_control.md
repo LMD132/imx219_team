@@ -30,6 +30,9 @@ same thing.
 | `S<n>` | adaptive weight (shift) | 0..8 | 8 |
 | `D<n>` | despeckle neighbours | 0..5 | 5 |
 | `E<n>` | denoise stages | 0..2 | 2 |
+| `C<n>` | tone curve before Sobel | 0..3 | 3 |
+| `H<n>` | local hysteresis | 0..1 | 1 |
+| `P<n>` | colour delay pixels of `rgb_delay_720p` | 0..63 | 63 |
 | `K` | hand control back to the keys | - | - |
 
 The value is a *saturating* accumulate of every digit in the line, so a typo
@@ -45,7 +48,7 @@ side is in charge with `SRC=U` (host) or `SRC=K` (keys).
 
 One 41 byte status line, continuously:
 
-    THR=016 SH=1 DS=3 EN=2 SRC=K PIX=921600\r\n
+    THR=016 SH=1 DS=3 EN=2 SRC=K PIX=921600 CV=1 HY=1 PD=08\r\n
 
 `PIX` counts pixels written per frame and is a cheap way to see that the video
 path is still healthy: at 720p it must stay 921600. A `T`/`S`/`D`/`E`/`K` line
@@ -136,7 +139,7 @@ Second bitstream after the `digit` fix, JTAG loaded, `COM5`:
 | `D7` | `DS=5` (clamp) |
 | `E0` / `E1` / `E2` | `EN=0` / `EN=1` / `EN=2` |
 | `K` | `SRC=K`, and `THR` returns to the key-controlled value |
-| (idle) | `THR=016 SH=1 DS=3 EN=2 SRC=K PIX=921600` |
+    THR=016 SH=1 DS=3 EN=2 SRC=K PIX=921600 CV=1 HY=1 PD=08\r\n
 
 The idle line is the power-on default: the floor default was lowered from 24 to
 16 because that is where the two stage denoiser lets the contour close up
