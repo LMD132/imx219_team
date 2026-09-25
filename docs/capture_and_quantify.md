@@ -195,4 +195,28 @@ InfoFrame 才肯锁定，纯 DVI 流会被它判成无信号。这与观测到�
 3. 仍不行就给 TMDS 加 **AVI InfoFrame**：`rtl/dvi_tx/` 里已有厂商 HDMI TX 组件
    （`auxiliary_video_information_info_frame.sv`、`packet_assembler.sv`、`audio_*.sv`、
    `ecc_calc_v1.v`），当前顶层并未使用它们。
-4. 或者直接换一张**明确支持 DVI 输入**的采集卡。
+4. 或者直接换一张**明确支持 DVI 输入**的采集卡。### 2026-09-25 复查：卡能打开，但拿到的是全黑帧
+
+重新烧录 `overlay_box.bit`（JTAG OK，串口连续 11 帧 `PIX=921600` 正常）后，把卡的
+USB-A 插回本机复查：
+
+- 卡枚举正常（`Camera`/`MEDIA` 类都在，名字 `UGREEN 25854`）；
+- ⚠️ **Windows「相机」应用会独占这张卡**：它开着的时候别的进程一律开不起来
+  （DirectShow 报 can't be used to capture by index，MSMF 报
+  `MF_E_HW_MFT_FAILED_START_STREAMING`）。抓帧前先关掉它，否则会误判成"卡坏了"。
+- 关掉后能开：`device 1 open: 1280x720 @ 60.0 fps, fourcc YUY2`；
+- 但**每一帧都是纯黑**（`mean=0.00 sd=0.00`），MJPG/YUY2 x 720p/1080p 四种组合
+  全都一样，而且实测只有 1~5 fps，远低于卡的标称能力，不像一条正常的流；
+- 卡挂在 XHCI 根集线器的 `HS03` 口上（USB 2.0 High Speed 链路）。
+
+纯黑和早前看到过的 UGREEN 开机画面**不是一回事**，所以还得用两个便宜试验把
+"卡压根没画面"和"卡锁住了时钟但解不出画面"分开：
+
+| 试验 | 结果 | 说明 |
+|---|---|---|
+| HDMI 线**从卡上彻底拔掉**再抓帧 | 出现 UGREEN 开机画面 | 卡能区分有信号/没信号 → 现在这种黑屏说明它看到了 TMDS 时钟却解不出画面，正是"纯 DVI 缺 InfoFrame"的样子 |
+| 同上 | 仍然全黑 | 黑屏就是这张卡的无信号状态，现在压根没锁到信号 |
+| HDMI 线改插**笔记本 HDMI 输出**（`Win+P` 选复制/扩展）再抓帧 | 有画面 | 卡、线、驱动、USB 链路全好 → 问题在板子信号 |
+| 同上 | 仍然全黑 | 卡的接收路径有问题，与板子无关 |
+
+抓帧用 `python tools\probe_uvc.py --device 1 --formats`（逐格式抓帧并 dump PNG）。
