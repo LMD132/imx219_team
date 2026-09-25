@@ -89,6 +89,18 @@ def main():
                   f"({min(greys):.1f}..{max(greys):.1f}) - the scene moved, "
                   f"do not trust the ranking")
 
+    # live_sweep.ps1 captures the same reference setting first and last, so the
+    # plain difference between those two clips is the scene drift over the whole
+    # run. Anything above a few percent means the clips are not comparable.
+    refa = next((r for r in rows if r[0].startswith("refa_")), None)
+    refz = next((r for r in rows if r[0].startswith("refz_")), None)
+    if refa and refz:
+        drift = 100.0 * (refz[1] - refa[1]) / max(refa[1], 1e-6)
+        verdict = "ok" if abs(drift) <= 5 else "TOO MUCH - ranking not trustworthy"
+        print(f"reference drift {refa[0]} -> {refz[0]}: "
+              f"grey {refa[1]:.1f} -> {refz[1]:.1f} ({drift:+.1f} %), "
+              f"edge {refa[2]} -> {refz[2]}   {verdict}")
+
 
 if __name__ == "__main__":
     main()

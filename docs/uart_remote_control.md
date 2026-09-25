@@ -81,8 +81,46 @@ That looked like the newline was wrong; it was not.
 2. **`-File` invocation does not split a comma separated argument** (see the
    host tools section above).
 
-Both were diagnosed by sending single digit values and reading the reply, not
-by reading the RTL. When a remote-control channel misbehaves, sweep one digit
+3. **`String.Split("||")` is not a string split on Windows PowerShell 5.1.**
+   `tools\live_sweep.ps1` plans a run as flat `"<label>||<setting>"` strings and
+   pulled the two halves out with `$step.Split("||")`. On PowerShell 7 that
+   resolves to `String.Split(string)` and returns two fields; on the 5.1 that
+   `powershell -File` actually launches the argument is coerced to `char[]`, so
+   the string is cut on *every* `|` and `"ab_e2_t16||E2_T16"` comes back as
+   **three** fields `("ab_e2_t16", "", "E2_T16")`. The label was still right, so
+   the run looked healthy while `$cmds` was empty: four clips were captured with
+   the UART never touched, and the first/last reference pair agreed perfectly
+   (0.0 % drift) because nothing had changed. Use a regex split,
+   `$step -split '\|\|'`, which behaves the same on both versions. The give-away
+   is `.Count`: probe the shape of a parsed value instead of trusting that the
+   first field looks right.
+
+4. **Do not round-trip a UTF-8 document through PowerShell's default text
+   cmdlets.** `Set-Content` / `Add-Content` / `Out-File` without `-Encoding` use
+   the ANSI code page on Windows PowerShell 5.1, so reading a UTF-8 Markdown file
+   and writing it back turns every Chinese character into `?`. That is not a
+   theory: commit `cc88c13` did exactly this to `docs/capture_and_quantify.md`
+   and silently replaced 16083 non-ASCII bytes with 5184 question marks, which
+   then sat in the repository looking like a normal commit. No error, no
+   warning, and the loss is invisible in a normal diff view. Use
+   `[System.IO.File]::WriteAllText($path, $text, (New-Object
+   System.Text.UTF8Encoding($false)))` for edits, or `Set-Content -Encoding
+   utf8`. The damage is only visible by counting: `git cat-file blob
+   <rev>:<file>` and counting bytes above 127, per revision.
+   `tools/doc_health.py` does that scan across the whole history and exits
+   non-zero when a file's non-ASCII count collapsed to zero.
+
+5. **A backtick inside a double-quoted PowerShell string is an escape, not a
+   quote.** Writing the text of this very file with `python -c "..."` from a
+   PowerShell command line silently ate every backtick that was meant to be a
+   Markdown code span, and turned `` `tools/doc_health.py` `` into a literal tab
+   followed by `ools/doc_health.py`. Prefer the `apply_patch` tool for edits, or
+   a script file with a single-quoted here-string (`@'...'@`, which does not
+   interpolate).
+
+Every one of these was diagnosed by observing behaviour - a reply line, a byte
+count, a parsed value's shape - not by reading the source and reasoning about
+what it *should* do. When a remote-control channel misbehaves, sweep one digit
 at a time first.
 
 ## Verified on hardware
@@ -104,3 +142,31 @@ The idle line is the power-on default: the floor default was lowered from 24 to
 16 because that is where the two stage denoiser lets the contour close up
 without picking up noise, see `docs/edge_overlay.md` and
 `docs/capture_and_quantify.md`.
+## Self-checking sweeps
+
+A sweep is only worth reading if the scene stayed put while it ran. The camera's
+auto exposure drifts slowly, and one lit run lost 13 % of its grey mean between
+the first and last clip, which quietly flattered whichever setting happened to be
+captured last. `tools\live_sweep.ps1` therefore captures one **reference**
+setting both first and last (`refa_*`, `refz_*`), and `tools\analyze_sweep.py`
+prints the grey and edge counts of that pair plus a verdict: the run is
+trustworthy below 5 % drift, above it "TOO MUCH - ranking not trustworthy".
+That pair also caught the `String.Split` bug above, because a 0.0 % drift over a
+four-clip sweep is too good to be true.
+
+Validated on 2026-09-25, dark scene, `-Settings E2_T16,E2_T20 -Reference E2_T24`:
+
+| label | grey | dens % | comps | specks | frags | biggest |
+|---|---|---|---|---|---|---|
+| `refa_e2_t24` | 18.7 | 1.41 | 69 | 4 | 21 | 1590 |
+| `ab_e2_t16` | 18.8 | 2.26 | 55 | 9 | 11 | 2449 |
+| `ab_e2_t20` | 18.9 | 1.90 | 60 | 2 | 11 | 2126 |
+| `refz_e2_t24` | 19.0 | 1.42 | 66 | 2 | 21 | 1596 |
+
+Reference drift `+1.7 %` -> ok. The same setting captured 40 s apart reproduced
+to within 0.6 % on edge count while the settings in between differ by ~60 % in
+density, so the round trip (UART -> stage -> DDR -> HDMI -> capture -> score) is
+stable enough to rank settings.
+
+Frames are grabbed in `YUY2` when the capture stick offers it, so these numbers
+are not contaminated by motion-JPEG ringing.
