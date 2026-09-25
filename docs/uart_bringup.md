@@ -19,6 +19,13 @@ what proved the link; the current protocol is in `docs/uart_remote_control.md`.
 | Second port | COM6 (channel D) stays silent, so it is not the board UART |
 | Baseline | before the banner was flashed both ports read 0 bytes, so the data is ours |
 
+The COM numbers are **not stable**: the FT4232H pair came up as COM5/COM6 on the
+first bring-up and as COM7/COM8 after a later USB re-enumeration, with the old
+pair left behind as dead `Unknown` entries in Device Manager. Always list the
+ports (`[System.IO.Ports.SerialPort]::GetPortNames()`) and use whichever one
+prints the status line; the other half of the pair (channel D) never transmits,
+which is what makes it a useful negative control.
+
 The pin matches the vendor UART demo (`rxd` R4 / GPIOL_02, `txd` R14 /
 GPIOR_28), and the same signals are brought out on header J8 (pin 4 = rx,
 pin 6 = tx) if the FT4232H channel is ever needed for something else.
