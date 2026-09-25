@@ -1127,9 +1127,18 @@ edge_display_720p #(
     .in_vs(den2_vs),
     .in_hs(den2_hs),
     .in_de(den2_de),
-    .in_r(raw_gray),
-    .in_g(raw_gray),
-    .in_b(raw_gray),
+    // The grey half is meant to show what the edge detector is looking at.
+    // It used to show raw_gray, which is only ten clocks along the median
+    // filter while the sync here comes from den2_*, two gauss stages further
+    // down: the two halves were drawing different parts of the scene, about
+    // two lines and a few pixels apart. raw_gray also still carries the fixed
+    // 2 px comb measured in docs/capture_and_quantify.md (+22 % on odd columns,
+    // -12 % on odd rows); a [1,2,1] stage is an exact null for period 2, so
+    // taking the grey from the end of the denoise chain drops the comb and
+    // lines the halves up at the same time.
+    .in_r(den2_gray),
+    .in_g(den2_gray),
+    .in_b(den2_gray),
     .in_edge_gray(den2_gray),
     .i_threshold(thr_sync),
     .i_threshold_shift(sh_sync),
