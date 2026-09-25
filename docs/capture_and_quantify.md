@@ -303,4 +303,45 @@ TMDS 上，与采集卡这一侧无关。
 1. **烧厂商的 `hdmi_tx.bit`（彩条）做对照**：卡能看到彩条 → "板子 HDMI TX + 这张卡"
    本身能通，问题落在我们与厂商参考设计的差异上；卡仍然全黑 → 这张卡就是不认这块板子的
    DVI 风格输出，得走加 InfoFrame 或换卡的路。
-2. 把数据线 `vod` 改成 `large`（与厂商一致），重编译烧回再抓。
+2. 把数据线 `vod` 改成 `large`（与厂商一致），重编译烧回再抓。### 厂商自己的 HDMI TX demo 也是全黑（关键对照）
+
+把厂商的彩条 demo 烧上去（`03_hdmi_tx_demo\hdmi_tx_demo_v2\outflow\hdmi_tx.bit`，
+用的是普通的 `dvi_encoder`），用同口径抓 30 帧 x 4 种格式：
+
+| 格式 | 结果 | 帧率 |
+|---|---|---|
+| MJPG 1280x720 | 30/30 纯黑 | 4.6 fps |
+| YUY2 1280x720 | 30/30 纯黑 | 4.6 fps |
+| MJPG 1920x1080 | 30/30 纯黑 | 1.1 fps |
+| 默认 640x480 | 30/30 纯黑 | 11.5 fps |
+
+和我们自己的设计（5.6/4.8/1.2/11.9）几乎一模一样，而线空着时是 30 fps 并且能看到
+「无信号」画面 —— 说明厂商 demo 同样在发信号、卡同样解不出。
+**所以这不是我们 RTL 的问题。**
+
+### 修正：我们的设计其实已经带 AVI InfoFrame
+
+- 工程的编译列表里就有厂商 HDMI TX IP 的加密顶层 `rtl/dvi_tx/dvi_encoder.v_encrypted.v`，
+  它的端口包含 `video_format`、`video_VIC`、`audio_L/R`、`audio_N`、`audio_CTS` 等，
+  并且 `auxiliary_video_information_info_frame.sv`、`packet_assembler.sv`、`audio_*.sv`、
+  `ecc_calc_v1.v` 也都在这份编译列表里；
+- 我们 top 的接线与厂商自家的 HDMI 输出 demo
+  （`10_Ti60f225_sc431hai2hdmi_demo\Ti60f225_sc431hai2hdmi_v1\rtl\ti60f225_oob_top.v`）
+  **逐行一致**：同样 `.video_format(video_format)`、`.video_VIC(0)`、`.audio_N(6144)`，
+  只有 `audio_CTS` 不同（74250 vs 148500）。
+
+于是早前"我们缺 AVI InfoFrame、所以要加 InfoFrame"这条判断**作废**：这个差异并不存在。
+
+### 剩下最可能的原因：物理层
+
+厂商的普通 DVI demo 与我们的 HDMI IP 版本**都失败**，说明差别不在"发不发 InfoFrame"，
+而在**这块板 TMDS 输出本身的电气特性**：TI60 是用 LVDS 仿 TMDS 驱动，对 Dell 这类带均衡
+的正规显示器足够，但对廉价采集卡这类接收机偏"挑"。这与"卡不显示 No Signal、说明它认得
+到有信号，但一帧都解不出来"的表现一致。
+
+下一步两条腿走：
+
+1. **免费试 RTL 变体**（每个约 3 分钟闭环：编译 -> JTAG -> 抓帧）：数据线 `vod` 由
+   `typical` 提到 `large` 并把预加重调高；`video_VIC` 由 0 改成 16（标准 720p60 VIC）等；
+2. **物理层最便宜的一刀**：板子与卡之间串一个 **HDMI 分配器 / 中继器**，让它把 TMDS
+   重新整形、补成标准 HDMI 电平。
