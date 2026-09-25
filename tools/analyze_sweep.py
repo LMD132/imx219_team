@@ -96,7 +96,18 @@ def main():
     refz = next((r for r in rows if r[0].startswith("refz_")), None)
     if refa and refz:
         drift = 100.0 * (refz[1] - refa[1]) / max(refa[1], 1e-6)
-        verdict = "ok" if abs(drift) <= 5 else "TOO MUCH - ranking not trustworthy"
+        edge_drift = 100.0 * (refz[2] - refa[2]) / max(refa[2], 1e-6)
+        if abs(drift) <= 5:
+            verdict = "ok"
+        elif abs(edge_drift) <= 3:
+            # The grey mean moved but the thing being ranked did not: a slow
+            # light change shifts absolute density a little, while the setting
+            # differences under test are many times larger. Usable for the big
+            # gaps, not for a photo finish.
+            verdict = (f"grey drifted but edge count held ({edge_drift:+.1f} %) - "
+                       f"trust only differences much larger than {abs(drift):.0f} %")
+        else:
+            verdict = "TOO MUCH - ranking not trustworthy"
         print(f"reference drift {refa[0]} -> {refz[0]}: "
               f"grey {refa[1]:.1f} -> {refz[1]:.1f} ({drift:+.1f} %), "
               f"edge {refa[2]} -> {refz[2]}   {verdict}")
