@@ -71,6 +71,11 @@ module edge_overlay_720p #(
     input  wire [7:0]  in_g,
     input  wire [7:0]  in_b,
     input  wire [3:0]  i_despeckle_min,   // 0 = filter off
+    // Local hysteresis (Canny double threshold, local form). i_strong is
+    // the strong companion of the binary map in in_r and has the same
+    // timing; i_hysteresis_en = 0 restores the plain single threshold.
+    input  wire        i_strong,
+    input  wire        i_hysteresis_en,
     output reg         out_vs,
     output reg         out_hs,
     output reg         out_de,
@@ -141,11 +146,18 @@ module edge_overlay_720p #(
     // ---------------------------------------------------------------
     wire in_right = in_de && (x_now > HALF_X) && (x_now < IMAGE_WIDTH);
     wire bin_in   = in_right ? (in_r != 8'h00) : 1'b0;
+    wire strong_in = in_right ? i_strong : 1'b0;
 
     reg [IMAGE_WIDTH+1:0] sr1;    // one line deep
     reg [IMAGE_WIDTH:0]   sr2;    // two lines deep
     reg                   b_d1;
     reg                   b_d2;
+    // Same delay structure for the strong bit, so its window lands on the
+    // same nine pixels as nbr_cnt below.
+    reg [IMAGE_WIDTH+1:0] sr3;
+    reg [IMAGE_WIDTH:0]   sr4;
+    reg                   s_d1;
+    reg                   s_d2;
 
     wire b_prev1  = sr1[IMAGE_WIDTH];
     wire shift_en = in_de && (x_now < IMAGE_WIDTH);
@@ -156,11 +168,19 @@ module edge_overlay_720p #(
             sr2  <= {(IMAGE_WIDTH+1){1'b0}};
             b_d1 <= 1'b0;
             b_d2 <= 1'b0;
+            sr3  <= {(IMAGE_WIDTH+2){1'b0}};
+            sr4  <= {(IMAGE_WIDTH+1){1'b0}};
+            s_d1 <= 1'b0;
+            s_d2 <= 1'b0;
         end else if (shift_en) begin
             sr1  <= {sr1[IMAGE_WIDTH:0], bin_in};
             sr2  <= {sr2[IMAGE_WIDTH-1:0], b_prev1};
             b_d1 <= bin_in;
             b_d2 <= b_d1;
+            sr3  <= {sr3[IMAGE_WIDTH:0], strong_in};
+            sr4  <= {sr4[IMAGE_WIDTH-1:0], sr3[IMAGE_WIDTH]};
+            s_d1 <= strong_in;
+            s_d2 <= s_d1;
         end
     end
 
@@ -176,9 +196,19 @@ module edge_overlay_720p #(
     wire center    = b_d1;
     wire window_ok = in_de && (x_now >= 11'd2) && (y_now >= 10'd2);
 
+    // Hysteresis: keep a weak pixel only when at least one pixel of its
+    // neighbourhood is strong (the nine taps include the centre itself, so
+    // every strong pixel survives by construction). The taps mirror the
+    // nbr_cnt window above exactly, shear included, so the two views stay
+    // on the same neighbourhood.
+    wire strong_nbr = sr4[IMAGE_WIDTH]   | sr4[IMAGE_WIDTH-1] | sr4[IMAGE_WIDTH-2]
+                    | sr3[IMAGE_WIDTH+1] | sr3[IMAGE_WIDTH]   | sr3[IMAGE_WIDTH-1]
+                    | s_d2               | s_d1               | strong_in;
+    wire keep = i_hysteresis_en ? (center && strong_nbr) : center;
+
     wire edge_clean = window_ok
-                    ? ((i_despeckle_min == 4'd0) ? center
-                                                 : (center && (nbr_cnt >= i_despeckle_min)))
+                    ? ((i_despeckle_min == 4'd0) ? keep
+                                                 : (keep && (nbr_cnt >= i_despeckle_min)))
                     : 1'b0;
 
     // ---------------------------------------------------------------

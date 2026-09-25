@@ -37,11 +37,15 @@
 ////////////////////////////////////////////////////////////////////////////
 
 module threshold_ctrl #(
-    parameter [10:0]  THRESHOLD_INIT = 11'd16,
+    // Reset operating point measured best on the bench once the tone curve
+    // and the local hysteresis (tone_curve_lut.v / edge_overlay_720p.v) are
+    // in the path: a fixed 24/48 pair on the boosted gray.
+    parameter [10:0]  THRESHOLD_INIT = 11'd24,
     parameter integer STEP_THRESHOLD = 8,
-    // Reset value of the adaptive-weight index. Index 3 is shift = 1, which is
-    // the configuration the previous bitstream ran with.
-    parameter [2:0]   MODE_INIT      = 3'd3,
+    // Reset value of the adaptive-weight index. Index 0 is shift = 8, which
+    // switches the adaptive term off entirely; that is what the curve and the
+    // hysteresis were tuned against, and KEY3 still steps through {8,3,2,1,0}.
+    parameter [2:0]   MODE_INIT      = 3'd0,
     // Reset index of the despeckle table; 2 selects the recommended value 3.
     parameter [1:0]   DESPECKLE_INIT = 2'd2,
     parameter integer CLK_HZ         = 25000000,

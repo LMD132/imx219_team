@@ -23,8 +23,13 @@ module edge_display_720p #(
     output reg        out_de,
     output reg  [7:0] out_r,
     output reg  [7:0] out_g,
-    output reg  [7:0] out_b
+    output reg  [7:0] out_b,
+    // Companion flag of the binary edge map: 1 where the gradient clears
+    // twice the weak threshold. Consumed by edge_overlay_720p.v, which
+    // keeps a weak edge only when it touches a strong one.
+    output reg         o_strong
 );
+
 
 // BT.601 integer approximation: Y = (77 R + 150 G + 29 B) / 256.
 // Constant products are written as shifts and adds; no divider is inferred.
@@ -206,6 +211,13 @@ wire [10:0] active_threshold = (local_threshold > i_threshold)
                              ? local_threshold : i_threshold;
 wire edge_pixel = s1_window_valid && magnitude >= {1'b0, active_threshold};
 
+// Canny-style double threshold, local form. The strong level is twice the
+// weak one, so the single threshold knob keeps both in step. Measured on
+// the bench: with a fixed 24/48 pair the contour of a dim object comes
+// back while the isolated specks of the shadow wall stay out.
+wire [11:0] strong_threshold = {1'b0, active_threshold, 1'b0};
+wire strong_pixel = s1_window_valid && (magnitude >= strong_threshold);
+
 // Stage 2: synchronized HDMI pixel. The split is intentionally simple for
 // first hardware validation; the two halves currently show their own crop.
 always @(posedge clk or negedge rst_n) begin
@@ -216,6 +228,7 @@ always @(posedge clk or negedge rst_n) begin
         out_r <= 8'd0;
         out_g <= 8'd0;
         out_b <= 8'd0;
+        o_strong <= 1'b0;
     end else begin
         out_vs <= s1_vs;
         out_hs <= s1_hs;
@@ -237,7 +250,12 @@ always @(posedge clk or negedge rst_n) begin
             out_g <= edge_pixel ? 8'hff : 8'h00;
             out_b <= edge_pixel ? 8'hff : 8'h00;
         end
+        // Only the right half of the picture is an edge map, and the
+        // overlay gates its own binary input the same way.
+        if (!s1_de || s1_x <= IMAGE_WIDTH/2)
+            o_strong <= 1'b0;
+        else
+            o_strong <= strong_pixel;
     end
 end
-
 endmodule

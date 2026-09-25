@@ -11,14 +11,16 @@
 //     S<n>\n       adaptive weight / shift   0..8   (8 = adaptive term off)
 //     D<n>\n       despeckle neighbours      0..5
 //     E<n>\n       denoise stages            0..2
+//     C<n>\n       tone curve before Sobel   0..3   (0 = bypass)
+//     H<n>\n       local hysteresis          0..1
 //     K\n          release control back to the on-board keys
 //
 // Examples: "T16\n", "E2\n", "K\n". Separators such as '=' or spaces are
 // accepted and ignored, so "T=16" and "T 16" work as well.
 //
-// The first T/S/D/E line latches o_override, and from then on the keys are
-// ignored - otherwise a KEY3 hold while sweeping would silently fight the
-// host. K hands control back. o_commit pulses once per accepted line, which
+// The first parameter line latches o_override, and from then on the keys
+// are ignored - otherwise a KEY3 hold while sweeping would silently fight
+// the host. K hands control back. o_commit pulses once per accepted line, which
 // the top level uses both to push an immediate telemetry line and to send an
 // ACK line.
 //
@@ -28,10 +30,14 @@
 ////////////////////////////////////////////////////////////////////////////
 
 module uart_cmd #(
-    parameter [10:0] THRESHOLD_INIT = 11'd16,
-    parameter [3:0]  SHIFT_INIT     = 4'd1,
+    // Same reset operating point as threshold_ctrl.v, so a host that only
+    // sends one parameter does not silently reset the others.
+    parameter [10:0] THRESHOLD_INIT = 11'd24,
+    parameter [3:0]  SHIFT_INIT     = 4'd8,
     parameter [3:0]  DESPECKLE_INIT = 4'd3,
-    parameter [1:0]  DENOISE_INIT   = 2'd2
+    parameter [1:0]  DENOISE_INIT   = 2'd2,
+    parameter [1:0]  CURVE_INIT      = 2'd1,
+    parameter        HYSTERESIS_INIT = 1'b1
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -41,21 +47,26 @@ module uart_cmd #(
     output reg  [3:0]  o_shift,
     output reg  [3:0]  o_despeckle,
     output reg  [1:0]  o_denoise,
+    output reg  [1:0]  o_curve,
+    output reg         o_hysteresis,
     output reg         o_override,
     output reg         o_commit
 );
 
-    // 0 = threshold, 1 = shift, 2 = despeckle, 3 = denoise stages.
-    localparam [1:0] K_T = 2'd0,
-                     K_S = 2'd1,
-                     K_D = 2'd2,
-                     K_E = 2'd3;
+    // 0 = threshold, 1 = shift, 2 = despeckle, 3 = denoise stages,
+    // 4 = tone curve, 5 = local hysteresis.
+    localparam [2:0] K_T = 3'd0,
+                     K_S = 3'd1,
+                     K_D = 3'd2,
+                     K_E = 3'd3,
+                     K_C = 3'd4,
+                     K_H = 3'd5;
 
     localparam [1:0] S_KEY = 2'd0,
                      S_VAL = 2'd1;
 
     reg [1:0]  state;
-    reg [1:0]  key;
+    reg [2:0]  key;
     // 16 bits wide and clamped at 1000, so a long digit string can never wrap
     // around before the commit clamp brings it down to 255.
     reg [15:0] acc;
@@ -82,6 +93,8 @@ module uart_cmd #(
             o_shift     <= SHIFT_INIT;
             o_despeckle <= DESPECKLE_INIT;
             o_denoise   <= DENOISE_INIT;
+            o_curve     <= CURVE_INIT;
+            o_hysteresis <= HYSTERESIS_INIT;
             o_override  <= 1'b0;
             o_commit    <= 1'b0;
         end else begin
@@ -110,6 +123,16 @@ module uart_cmd #(
                             state <= S_VAL;
                             acc   <= 16'd0;
                             got_digit <= 1'b0;
+                        end else if (i_data == "C" || i_data == "c") begin
+                            key   <= K_C;
+                            state <= S_VAL;
+                            acc   <= 16'd0;
+                            got_digit <= 1'b0;
+                        end else if (i_data == "H" || i_data == "h") begin
+                            key   <= K_H;
+                            state <= S_VAL;
+                            acc   <= 16'd0;
+                            got_digit <= 1'b0;
                         end else if (i_data == "K" || i_data == "k") begin
                             // Hand the stage back to the on-board keys.
                             o_override <= 1'b0;
@@ -130,7 +153,9 @@ module uart_cmd #(
                                     K_T: o_threshold  <= {3'b0, val};
                                     K_S: o_shift      <= (val > 8'd8) ? 4'd8 : val[3:0];
                                     K_D: o_despeckle  <= (val > 8'd5) ? 4'd5 : val[3:0];
-                                    default: o_denoise <= (val > 8'd2) ? 2'd2 : val[1:0];
+                                    K_E: o_denoise    <= (val > 8'd2) ? 2'd2 : val[1:0];
+                                    K_C: o_curve      <= (val > 8'd3) ? 2'd3 : val[1:0];
+                                    default: o_hysteresis <= (val != 8'd0);
                                 endcase
                             end
                             state <= S_KEY;

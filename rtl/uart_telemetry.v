@@ -34,9 +34,11 @@
 // that window and drops every other byte. Do not simplify it back to two
 // states.
 //
-// char_idx is six bits because the status line grew from 30 to 41 bytes when
-// EN and SRC were added; a five-bit index would wrap in the middle of the
-// message.
+// char_idx is six bits because the status line kept growing (30 -> 41 -> 50
+// bytes as EN, SRC, CV and HY were added); a five-bit index would wrap in the
+// middle of the message. CV is the tone curve of rtl/tone_curve_lut.v and HY
+// the local hysteresis flag of rtl/edge_overlay_720p.v; both are appended at
+// the end so the fields in front of them keep their byte positions.
 //
 ////////////////////////////////////////////////////////////////////////////
 
@@ -51,6 +53,8 @@ module uart_telemetry #(
     input  wire [3:0]  i_shift,
     input  wire [3:0]  i_despeckle,
     input  wire [1:0]  i_denoise,
+    input  wire [1:0]  i_curve,
+    input  wire        i_hysteresis,
     input  wire        i_remote,     // 1 = the host owns the operating point
     input  wire [19:0] i_frame_pix,  // active pixels in the last video frame
     input  wire        i_update,     // push a fresh line as soon as the line is free
@@ -58,7 +62,7 @@ module uart_telemetry #(
 );
 
     localparam [5:0]  MSG_LEN_BANNER = 6'd14;
-    localparam [5:0]  MSG_LEN_STATUS = 6'd41;
+    localparam [5:0]  MSG_LEN_STATUS = 6'd50;
     localparam integer GAP_CLKS      = (CLK_HZ / 1000) * PERIOD_MS;
 
     // ---------------------------------------------------------------
@@ -76,6 +80,8 @@ module uart_telemetry #(
         input        banner_sel;
         input [5:0]  idx;
         input [3:0]  dh, dt, du, ds, dk, de;
+        input [1:0]  cv;
+        input        hy;
         input        remote;
         input [23:0] pix_bcd;
         begin
@@ -137,7 +143,17 @@ module uart_telemetry #(
                     6'd36:   msg_byte = 8'h30 + pix_bcd[11:8];
                     6'd37:   msg_byte = 8'h30 + pix_bcd[7:4];
                     6'd38:   msg_byte = 8'h30 + pix_bcd[3:0];
-                    6'd39:   msg_byte = 8'h0D;   // CR
+                    6'd39:   msg_byte = " ";
+                    6'd40:   msg_byte = "C";
+                    6'd41:   msg_byte = "V";
+                    6'd42:   msg_byte = "=";
+                    6'd43:   msg_byte = 8'h30 + {6'b0, cv};
+                    6'd44:   msg_byte = " ";
+                    6'd45:   msg_byte = "H";
+                    6'd46:   msg_byte = "Y";
+                    6'd47:   msg_byte = "=";
+                    6'd48:   msg_byte = 8'h30 + {7'b0, hy};
+                    6'd49:   msg_byte = 8'h0D;   // CR
                     default: msg_byte = 8'h0A;   // LF
                 endcase
             end
@@ -161,6 +177,8 @@ module uart_telemetry #(
     // Snapshot of the values used for the line currently being sent, so a key
     // press in the middle of a message cannot mix two readings in one line.
     reg [3:0]  d_h_reg, d_t_reg, d_u_reg, d_s_reg, d_k_reg, d_e_reg;
+    reg [1:0]  d_c_reg;
+    reg        d_y_reg;
     reg        d_r_reg;
     reg [23:0] pix_bcd_reg;
     wire       tx_busy;
@@ -213,6 +231,8 @@ module uart_telemetry #(
             d_s_reg   <= 4'd1;
             d_k_reg   <= 4'd3;
             d_e_reg   <= 4'd2;
+            d_c_reg   <= 2'd1;
+            d_y_reg   <= 1'b1;
             d_r_reg   <= 1'b0;
             pix_bcd_reg <= 24'd0;
             bcd_bin   <= 20'd0;
@@ -238,6 +258,8 @@ module uart_telemetry #(
                             d_s_reg  <= i_shift;
                             d_k_reg  <= i_despeckle;
                             d_e_reg  <= {2'b0, i_denoise};
+                            d_c_reg  <= i_curve;
+                            d_y_reg  <= i_hysteresis;
                             d_r_reg  <= i_remote;
                             bcd_bin  <= i_frame_pix;
                             bcd_out  <= 24'd0;
@@ -271,6 +293,7 @@ module uart_telemetry #(
                     tx_byte  <= msg_byte(banner, char_idx,
                                          d_h_reg, d_t_reg, d_u_reg,
                                          d_s_reg, d_k_reg, d_e_reg,
+                                         d_c_reg, d_y_reg,
                                          d_r_reg, pix_bcd_reg);
                     state    <= S_START;
                 end

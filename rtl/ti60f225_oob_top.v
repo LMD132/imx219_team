@@ -419,9 +419,9 @@ wire [3:0]  w_edge_despeckle;
 wire        w_edge_changed;
 
 threshold_ctrl #(
-       .THRESHOLD_INIT  (11'd16),
+       .THRESHOLD_INIT  (11'd24),
        .STEP_THRESHOLD  (8),
-       .MODE_INIT       (3'd3),    // shift = 1, what the previous bitstream used
+       .MODE_INIT       (3'd0),    // shift = 8, the curve/hysteresis tuning
        .DESPECKLE_INIT  (2'd2),    // index 2 -> despeckle window 3, the default
        .CLK_HZ          (25000000),
        .LONG_PRESS_MS   (1000)
@@ -451,6 +451,8 @@ wire [10:0] w_cmd_threshold;
 wire [3:0]  w_cmd_shift;
 wire [3:0]  w_cmd_despeckle;
 wire [1:0]  w_cmd_denoise;
+wire [1:0]  w_cmd_curve;
+wire        w_cmd_hysteresis;
 wire        w_cmd_override;
 wire        w_cmd_commit;
 
@@ -466,8 +468,8 @@ uart_rx #(
 );
 
 uart_cmd #(
-       .THRESHOLD_INIT (11'd16),
-       .SHIFT_INIT     (4'd1),
+       .THRESHOLD_INIT (11'd24),
+       .SHIFT_INIT     (4'd8),
        .DESPECKLE_INIT (4'd3),
        .DENOISE_INIT   (2'd2)
 ) u_uart_cmd (
@@ -479,6 +481,8 @@ uart_cmd #(
        .o_shift      (w_cmd_shift),
        .o_despeckle  (w_cmd_despeckle),
        .o_denoise    (w_cmd_denoise),
+       .o_curve      (w_cmd_curve),
+       .o_hysteresis (w_cmd_hysteresis),
        .o_override   (w_cmd_override),
        .o_commit     (w_cmd_commit)
 );
@@ -490,6 +494,12 @@ wire [10:0] w_cfg_threshold = w_cmd_override ? w_cmd_threshold : w_edge_threshol
 wire [3:0]  w_cfg_shift     = w_cmd_override ? w_cmd_shift     : w_edge_shift;
 wire [3:0]  w_cfg_despeckle = w_cmd_override ? w_cmd_despeckle : w_edge_despeckle;
 wire [1:0]  w_cfg_denoise   = w_cmd_override ? w_cmd_denoise   : 2'd2;
+// Tone curve and local hysteresis default to the configuration measured
+// best on the bench (docs/capture_and_quantify.md). The on-board keys
+// cannot reach them, so "C0" / "H0" over UART is the only way back to
+// the plain single-threshold picture.
+wire [1:0]  w_cfg_curve      = w_cmd_override ? w_cmd_curve      : 2'd1;
+wire        w_cfg_hysteresis = w_cmd_override ? w_cmd_hysteresis : 1'b1;
 wire        w_cfg_changed   = w_edge_changed | w_cmd_commit;
 
 uart_telemetry #(
@@ -503,6 +513,8 @@ uart_telemetry #(
        .i_shift     (w_cfg_shift),
        .i_despeckle (w_cfg_despeckle),
        .i_denoise   (w_cfg_denoise),
+       .i_curve     (w_cfg_curve),
+       .i_hysteresis(w_cfg_hysteresis),
        .i_remote    (w_cmd_override),
        .i_frame_pix (w_frame_pix),
        .i_update    (w_cfg_changed),
@@ -1057,6 +1069,10 @@ reg [3:0]  ds_meta;
 reg [3:0]  ds_sync;
 reg [1:0]  den_meta;
 reg [1:0]  den_sync;
+reg [1:0]  cv_meta;
+reg [1:0]  cv_sync;
+reg        hy_meta;
+reg        hy_sync;
 always @(posedge hdmi_tx_slow_clk or negedge vid_rst_n) begin
     if (!vid_rst_n) begin
         thr_meta <= 11'd16;
@@ -1067,6 +1083,10 @@ always @(posedge hdmi_tx_slow_clk or negedge vid_rst_n) begin
         ds_sync  <= 4'd3;
         den_meta <= 2'd2;
         den_sync <= 2'd2;
+        cv_meta  <= 2'd1;
+        cv_sync  <= 2'd1;
+        hy_meta  <= 1'b1;
+        hy_sync  <= 1'b1;
     end else begin
         thr_meta <= w_cfg_threshold;
         thr_sync <= thr_meta;
@@ -1076,6 +1096,10 @@ always @(posedge hdmi_tx_slow_clk or negedge vid_rst_n) begin
         ds_sync  <= ds_meta;
         den_meta <= w_cfg_denoise;
         den_sync <= den_meta;
+        cv_meta  <= w_cfg_curve;
+        cv_sync  <= cv_meta;
+        hy_meta  <= w_cfg_hysteresis;
+        hy_sync  <= hy_meta;
     end
 end
 
@@ -1119,6 +1143,17 @@ gauss3_720p #(.IMAGE_WIDTH(1280)) denoise_stage2 (
     .out_gray(den2_gray)
 );
 
+// Tone curve between the denoise chain and the Sobel. It is combinational,
+// so the sync signals below keep their existing alignment. See
+// rtl/tone_curve_lut.v for why the dark end of the curve is stretched.
+wire [7:0] tone_gray;
+
+tone_curve_lut u_tone_curve (
+    .i_mode (cv_sync),
+    .i_gray (den2_gray),
+    .o_gray (tone_gray)
+);
+
 edge_display_720p #(
     .IMAGE_WIDTH(1280)
 ) edge_display_inst (
@@ -1136,10 +1171,10 @@ edge_display_720p #(
     // -12 % on odd rows); a [1,2,1] stage is an exact null for period 2, so
     // taking the grey from the end of the denoise chain drops the comb and
     // lines the halves up at the same time.
-    .in_r(den2_gray),
-    .in_g(den2_gray),
-    .in_b(den2_gray),
-    .in_edge_gray(den2_gray),
+    .in_r(tone_gray),
+    .in_g(tone_gray),
+    .in_b(tone_gray),
+    .in_edge_gray(tone_gray),
     .i_threshold(thr_sync),
     .i_threshold_shift(sh_sync),
     .out_vs(edge_vs),
@@ -1147,7 +1182,8 @@ edge_display_720p #(
     .out_de(edge_de),
     .out_r(edge_r),
     .out_g(edge_g),
-    .out_b(edge_b)
+    .out_b(edge_b),
+    .o_strong(w_edge_strong)
 );
 
 //==============================================================================
@@ -1156,6 +1192,9 @@ edge_display_720p #(
 // Sits between the split-screen stage and the DVI encoder. It re-times the
 // stream by exactly one pixel clock (vs/hs/de and the RGB data all move
 // together), which the DVI encoder does not care about.
+// Strong-edge companion of the binary map, produced by edge_display_720p.
+wire w_edge_strong;
+
 wire ov_vs;
 wire ov_hs;
 wire ov_de;
@@ -1177,6 +1216,8 @@ edge_overlay_720p #(
     .in_g(edge_g),
     .in_b(edge_b),
     .i_despeckle_min(ds_sync),
+    .i_strong(w_edge_strong),
+    .i_hysteresis_en(hy_sync),
     .out_vs(ov_vs),
     .out_hs(ov_hs),
     .out_de(ov_de),

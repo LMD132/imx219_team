@@ -178,3 +178,59 @@ UART 实时扫（`tools/live_sweep.ps1` + `tools/analyze_sweep.py`，`T=t16/t24/
 > 对比度 20~40 的窗帘褶皱要抬 `T` 才压得住，而一个暗处的人（轮廓对比度可能也就 40~80）
 > 又要求 `T` 低。单阈值区分不了这两者，**正解是双阈值 + 迟滞（hysteresis）**：
 > 高阈值定强边，弱边只在"与强边连通"时才保留。这需要 RTL 改动（弱边连通性要跨行传播）。
+
+## 7. GitHub 搜索（2026-09-25）：双阈值迟滞 + 暗区提亮
+
+上一节末尾写的"正解是双阈值 + 迟滞，弱边连通性要跨行传播"里，**后半句是错的**。
+去 GitHub 翻了一圈实现之后发现：迟滞在工程上根本不需要跨行传播，**纯 3x3 邻域**就够。
+
+搜索方式（代理 `http://127.0.0.1:10808`，`api.github.com` 可用；仓库 clone 和 api tarball
+被限流，改用 `codeload.github.com` + `Invoke-WebRequest` 下载）：
+`verilog canny edge detection`、`fpga sobel verilog`、`verilog image processing`、
+`fpga adaptive threshold verilog`、`fpga image enhancement verilog` 等。
+
+| 仓库 | stars | 判断 |
+|---|---|---|
+| `DOUDIU/Hardware-Implementation-of-the-Canny-Edge-Detection-Algorithm` | 50 | **采纳**（见下） |
+| `Gowtham1729/Image-Processing` | 248 | Xilinx 原语工程，链路和我们的不同，没有可移植的点 |
+| `Mirshahnawaz/Adaptive-Thresholding-Using-Verilog` | 2 | **不采纳**：学生级代码，`lR[i] <= (256-x)/256` 恒为 0（整数除法），`weightUpdateDataValid` 未声明，编译不过 |
+
+下载到 `work/ref_gh/`（`work/` 不入库，仓库名记在这里就够了）。
+
+### 7.1 借到的东西：局部迟滞（`canny_doubleThreshold.v`）
+
+`work/ref_gh/doudiu/1.RTL/source/canny_doubleThreshold.v` 的全部逻辑：
+
+```verilog
+assign search   = mag1_1[1] | mag1_2[1] | mag1_3[1] | mag2_1[1] | mag2_2[1]
+                | mag2_3[1] | mag3_1[1] | mag3_2[1] | mag3_3[1];  // 3x3 里有强边
+assign high_low = mag2_2[1] | mag2_2[0];                          // 自己至少是弱边
+always @(posedge clk) canny_out <= high_low ? search : 1'b0;
+```
+
+强/弱编码在 `canny_get_grandient.v:203-205`：`> THRESHOLD_HIGH` 置 bit1、`> THRESHOLD_LOW`
+置 bit0（`THRESHOLD_LOW = 50`、`THRESHOLD_HIGH = 100`）。所以它的"双阈值迟滞"是：
+
+> `out = 弱边 && 3x3 邻域内存在强边`
+
+**这正是我们缺的那一块**：暗墙褶皱（对比度 20~40）只够"弱边"、周围没有强边 → 被丢掉；
+暗处物体轮廓的明暗交界处局部对比高（够"强边"），沿着同一条轮廓的其余像素即使弱一点，
+因为紧挨着强边 → 被保住。而且它**和去碎斑是同一种硬件形态**（现成的 1bit 3x3 窗口），
+所以 `edge_overlay_720p.v` 里那套移位寄存器直接复制一份给 strong 位就行。
+
+### 7.2 但迟滞救不了"整条轮廓都低于阈值"
+
+离线把迟滞加在**原始灰度**上（`tools/proto_curve_sweep.py` 的 `ident` 行 + 迟滞）：
+暗区密度只从 6.6 % 抬到 6.6 %——一分钱没多。原因是这台机器的场景被 8 bit 压缩了：
+
+* 背光实验室，`mean(gray) = 41.3`，**86.7 % 的像素 < 48**，整幅画面只用掉 8 bit 的下 1/5；
+* 暗墙上窗帘褶皱的对比度 10~20 LSB、暗处仪器的轮廓 10~30 LSB。
+
+所以要么抬阈值下限（噪声泛滥，见 `docs/capture_and_quantify.md` 的 S/T 扫描），
+要么**把暗部的传递曲线拉陡**——后者不改曝光、不动传感器寄存器（曝光已用 62.9 %、增益 4x，
+余量快用尽），只加一个 256 项的查找表。这就是 `rtl/tone_curve_lut.v`（模式 1：64 以下 2 倍，
+之后线性压到 255）+ 局部迟滞的组合。
+
+参照工程（`work/ref_src`，易灵思那套）里其实也有同样的思路——灰度直方图均衡模块
+`hdl/histeq/*`，只是它做的是全局直方图重映射，比这条固定的两段折线更贵、而且对
+"15 % 像素已经饱和在 255"的场景会把亮部继续拉开。所以这里用了固定折线而不是 histeq。
