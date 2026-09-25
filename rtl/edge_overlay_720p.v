@@ -22,7 +22,15 @@
 //        thicker / corner  4-6 -> kept
 //      i_despeckle_min = 0 bypasses the filter and is the A/B reference.
 //
-//   2. Bounding box of the edge region (competition task 6, simple object
+//   2. Red edges on the original colour picture (competition task 5). in_cr/
+//      in_cg/in_cb carry the camera RGB delayed by rgb_delay_720p.v to the
+//      same coordinate as the edge map; the right half draws an edge pixel in
+//      red, the 2-pixel box outline in green, and everything else in that
+//      colour picture. The left half keeps the tone-curve grey it is given in
+//      in_r/g/b, so one screen shows "what the detector sees" next to "the
+//      real picture with the edges on it".
+//
+//   3. Bounding box of the edge region (competition task 6, simple object
 //      localisation). The box is the min/max of the despeckled edge pixels of
 //      one frame, latched at the frame boundary and drawn in red over the NEXT
 //      frame, so no extra frame buffer is needed.
@@ -70,6 +78,12 @@ module edge_overlay_720p #(
     input  wire [7:0]  in_r,
     input  wire [7:0]  in_g,
     input  wire [7:0]  in_b,
+    // Original colour picture, delayed to this stage's coordinate system by
+    // rgb_delay_720p.v. Only the right half uses it (the left half stays the
+    // grey in in_r/g/b).
+    input  wire [7:0]  in_cr,
+    input  wire [7:0]  in_cg,
+    input  wire [7:0]  in_cb,
     input  wire [3:0]  i_despeckle_min,   // 0 = filter off
     // Local hysteresis (Canny double threshold, local form). i_strong is
     // the strong companion of the binary map in in_r and has the same
@@ -327,13 +341,17 @@ module edge_overlay_720p #(
                 out_g <= 8'hff;
                 out_b <= 8'hff;
             end else if (box_draw) begin
-                out_r <= 8'hff;      // red, so it cannot be mistaken for an
-                out_g <= 8'd0;       // edge pixel
+                out_r <= 8'd0;       // green: the box must not be mistaken
+                out_g <= 8'hff;      // for an edge now that the edges are red
+                out_b <= 8'd0;
+            end else if (edge_clean) begin
+                out_r <= 8'hff;      // red edge over the colour picture
+                out_g <= 8'd0;
                 out_b <= 8'd0;
             end else begin
-                out_r <= edge_clean ? 8'hff : 8'd0;
-                out_g <= edge_clean ? 8'hff : 8'd0;
-                out_b <= edge_clean ? 8'hff : 8'd0;
+                out_r <= in_cr;      // original colour, same 1-clock path as
+                out_g <= in_cg;      // the grey above
+                out_b <= in_cb;
             end
         end
     end

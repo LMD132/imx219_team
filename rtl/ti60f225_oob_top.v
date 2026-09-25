@@ -1186,6 +1186,43 @@ edge_display_720p #(
     .o_strong(w_edge_strong)
 );
 
+// Competition task 5 (red edges on the original colour picture): the colour
+// that the overlay needs is the camera stream it was fed before median_filter
+// touched it, delayed to the coordinate system of the edge map. See
+// rtl/rgb_delay_720p.v for why the delay is 4 lines + 8 pixels (4 stages
+// x one line, plus a few pixels per stage; the rows are exact, the pixels
+// are right to within a pixel or two).
+wire        col_vs;
+wire        col_hs;
+wire        col_de;
+wire [7:0]  col_r;
+wire [7:0]  col_g;
+wire [7:0]  col_b;
+
+rgb_delay_720p #(
+    .IMAGE_WIDTH(1280),
+    .LINE_DELAY(4),
+    .PIXEL_DELAY(8)      // 4*1280 + 8 = 4 stages x one line, plus the pixels
+) u_rgb_delay (
+    .clk(hdmi_tx_slow_clk),
+    .rst_n(vid_rst_n),
+    .in_vs(hdmi_tx_vs),
+    .in_hs(hdmi_tx_hs),
+    .in_de(hdmi_tx_de),
+    .in_r(hdmi_tx_rdata),
+    .in_g(hdmi_tx_gdata),
+    .in_b(hdmi_tx_bdata),
+    // The sync outputs of the delay line are not consumed: the overlay
+    // keeps its own timing from the edge chain, which the delay matches
+    // by construction.
+    .out_vs(col_vs),
+    .out_hs(col_hs),
+    .out_de(col_de),
+    .out_r(col_r),
+    .out_g(col_g),
+    .out_b(col_b)
+);
+
 //==============================================================================
 // Edge overlay: despeckle + target bounding box
 //==============================================================================
@@ -1215,6 +1252,9 @@ edge_overlay_720p #(
     .in_r(edge_r),
     .in_g(edge_g),
     .in_b(edge_b),
+    .in_cr(col_r),
+    .in_cg(col_g),
+    .in_cb(col_b),
     .i_despeckle_min(ds_sync),
     .i_strong(w_edge_strong),
     .i_hysteresis_en(hy_sync),
