@@ -39,8 +39,18 @@
 module threshold_ctrl #(
     // Reset operating point measured best on the bench once the tone curve
     // and the local hysteresis (tone_curve_lut.v / edge_overlay_720p.v) are
-    // in the path: a fixed 24/48 pair on the boosted gray.
-    parameter [10:0]  THRESHOLD_INIT = 11'd24,
+    // in the path: a fixed 16/32 pair on the boosted gray.
+    //
+    // Why 16 and not 24: the adaptive term can only RAISE the threshold
+    // (active = max(local_mean >> shift, floor)), so in the dark it is the
+    // floor and nothing else, and the strong seed sits at twice that. The
+    // daytime bench capture is 64 % below 48/255, and on those pixels the
+    // 24/48 pair lights only 7.4 % of them against 16.7 % for 16/32 - the
+    // dim contour was never faint, it simply never reached 48. Sweep and
+    // side-by-side sheet: tools/proto_pair_sweep.py, docs/tuning_findings.md.
+    // KEY1 raises the floor by STEP_THRESHOLD = 8, so one press returns the
+    // old 24 without a rebuild; UART T/S/D/E override it too.
+    parameter [10:0]  THRESHOLD_INIT = 11'd16,
     parameter integer STEP_THRESHOLD = 8,
     // Reset value of the adaptive-weight index. Index 0 is shift = 8, which
     // switches the adaptive term off entirely; that is what the curve and the

@@ -21,6 +21,8 @@ comb decomposition on them, and compare with the grey half as a control.
 from __future__ import annotations
 
 import argparse
+import glob
+import os
 import time
 
 import cv2
@@ -58,31 +60,48 @@ def main() -> None:
     ap.add_argument("--seconds", type=float, default=3.0)
     ap.add_argument("--width", type=int, default=1280)
     ap.add_argument("--height", type=int, default=720)
+    ap.add_argument("--frame", default=None,
+                    help="a saved frame (or glob) instead of a live device")
     args = ap.parse_args()
 
-    cap = cv2.VideoCapture(args.device, cv2.CAP_DSHOW)
-    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"YUY2"))
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
-    cap.set(cv2.CAP_PROP_CONVERT_RGB, 1)
-    if not cap.isOpened():
-        raise SystemExit(f"cannot open capture device {args.device}")
+    if args.frame:
+        paths = sorted(glob.glob(args.frame)) or [args.frame]
+        acc, frames = None, 0
+        for p in paths:
+            img = cv2.imread(p)
+            if img is None:
+                continue
+            a = img.astype(np.float32)
+            acc = a if acc is None else acc + a
+            frames += 1
+        if acc is None:
+            raise SystemExit("no frames read from " + args.frame)
+        mean = acc / frames
+        print(f"frames {frames} from {os.path.dirname(args.frame) or '.'}")
+    else:
+        cap = cv2.VideoCapture(args.device, cv2.CAP_DSHOW)
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"YUY2"))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
+        cap.set(cv2.CAP_PROP_CONVERT_RGB, 1)
+        if not cap.isOpened():
+            raise SystemExit(f"cannot open capture device {args.device}")
 
-    acc = None
-    frames = 0
-    t0 = time.time()
-    while time.time() - t0 < args.seconds:
-        ok, frame = cap.read()
-        if not ok:
-            continue
-        a = frame.astype(np.float32)
-        acc = a if acc is None else acc + a
-        frames += 1
-    cap.release()
-    if acc is None:
-        raise SystemExit("no frames")
-    mean = acc / frames
-    print(f"frames {frames}")
+        acc = None
+        frames = 0
+        t0 = time.time()
+        while time.time() - t0 < args.seconds:
+            ok, frame = cap.read()
+            if not ok:
+                continue
+            a = frame.astype(np.float32)
+            acc = a if acc is None else acc + a
+            frames += 1
+        cap.release()
+        if acc is None:
+            raise SystemExit("no frames")
+        mean = acc / frames
+        print(f"frames {frames}")
 
     yy = 0.114 * mean[:, :, 0] + 0.587 * mean[:, :, 1] + 0.299 * mean[:, :, 2]
     box = cv2.boxFilter(yy, -1, (4, 4), normalize=True)
