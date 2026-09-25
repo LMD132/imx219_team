@@ -10,14 +10,14 @@ the commit looks perfectly ordinary. That already happened once: commit
 5184 question marks, and it was only noticed days later.
 
 This walks every text file through the whole history and flags any revision
-where the file's non-ASCII byte count collapsed relative to the previous
-revision that touched it. Run it before pushing, or after any bulk text edit.
+where the file's non-ASCII byte count collapsed relative to the revision that
+came before it. A wipe-out that a later revision already repaired is reported as
+history and does not fail the run; one that is still missing text exits 1, so the
+script can gate a push. Run it after any bulk text edit.
 
     python tools/doc_health.py                  # scan the whole history
     python tools/doc_health.py --rev HEAD~5..HEAD
     python tools/doc_health.py --paths docs/
-
-Exit status is 1 when a regression is found, so it can gate a script.
 """
 
 from __future__ import annotations
@@ -42,9 +42,8 @@ def git(repo: Path, args: list[str], check: bool = True) -> bytes:
         ["git", "-C", str(repo), *args], capture_output=True, check=False
     )
     if check and result.returncode != 0:
-        raise SystemExit(
-            f"git {' '.join(args)} failed: {result.stderr.decode('utf-8', 'replace').strip()}"
-        )
+        message = result.stderr.decode("utf-8", "replace").strip()
+        raise SystemExit(f"git {' '.join(args)} failed: {message}")
     return result.stdout
 
 
@@ -63,10 +62,7 @@ def list_files(repo: Path, rev: str, prefixes: list[str]) -> list[str]:
 
 def revisions(repo: Path, revspec: str | None, path: str) -> list[str]:
     args = ["log", "--format=%h"]
-    if revspec:
-        args.append(revspec)
-    else:
-        args.append("--all")
+    args.append(revspec if revspec else "--all")
     args += ["--", path]
     return git(repo, args).decode().split()
 
@@ -88,8 +84,7 @@ def blob_series(repo: Path, path: str, revs: list[str]) -> list[bytes]:
     pos = 0
     while pos < len(out):
         end = out.index(b"\n", pos)
-        header = out[pos:end]
-        parts = header.split()
+        parts = out[pos:end].split()
         if len(parts) >= 3 and parts[1] == b"blob":
             size = int(parts[2])
             blobs.append(out[end + 1 : end + 1 + size])
@@ -100,15 +95,15 @@ def blob_series(repo: Path, path: str, revs: list[str]) -> list[bytes]:
     return blobs
 
 
-def scan(repo: Path, paths: list[str], revspec: str | None) -> list[tuple[str, str, int, int]]:
+def scan(repo: Path, paths: list[str], revspec: str | None):
     """Return (path, revision, non_ascii_before, non_ascii_after) for wipe-outs."""
-    findings: list[tuple[str, str, int, int]] = []
+    findings = []
     files = list_files(repo, "HEAD", paths)
     print(f"scanning {len(files)} text files under {paths} ...")
     for path in files:
         revs = revisions(repo, revspec, path)
         blobs = blob_series(repo, path, revs)
-        previous: bytes | None = None
+        previous = None
         # `git log` is newest first; walk oldest first so `previous` really is the
         # revision that came before `rev`.
         for rev, blob in zip(reversed(revs), reversed(blobs)):
@@ -120,6 +115,35 @@ def scan(repo: Path, paths: list[str], revspec: str | None) -> list[tuple[str, s
                     findings.append((path, rev, before, after))
             previous = blob
     return findings
+
+
+def last_healthy(repo: Path, path: str, bad_rev: str) -> str:
+    """The newest revision older than `bad_rev` whose blob still had non-ASCII."""
+    revs = revisions(repo, None, path)
+    if bad_rev in revs:
+        revs = revs[revs.index(bad_rev) + 1 :]
+    for rev in revs:
+        blob = git(repo, ["cat-file", "blob", f"{rev}:{path}"], check=False)
+        if blob and non_ascii(blob) > 0:
+            return rev
+    return bad_rev + "~1"
+
+
+def restoring_revision(repo: Path, path: str, bad_rev: str):
+    """A revision newer than `bad_rev` that put non-ASCII text back, if any.
+
+    A wipe-out that a later commit already repaired is history, not a live bug,
+    so the scan reports it but does not fail on it. Without this the tool would
+    stay red forever, the day after it caught the first real case.
+    """
+    revs = revisions(repo, None, path)
+    if bad_rev not in revs:
+        return None
+    for rev in revs[: revs.index(bad_rev)]:
+        blob = git(repo, ["cat-file", "blob", f"{rev}:{path}"], check=False)
+        if blob and non_ascii(blob) > 0:
+            return rev
+    return None
 
 
 def main() -> int:
@@ -139,28 +163,33 @@ def main() -> int:
         print("no non-ASCII wipe-out found in the scanned history")
         return 0
 
+    live = []
     print()
-    print("NON-ASCII TEXT WAS WIPED OUT - the file now contains '?' where Chinese used to be:")
     for path, rev, before, after in findings:
+        fixed = restoring_revision(repo, path, rev)
+        if fixed:
+            print(
+                f"already repaired  {rev}  {path}: {before} -> {after} non-ASCII "
+                f"bytes, text is back as of {fixed}"
+            )
+        else:
+            live.append((path, rev, before, after))
+
+    if not live:
+        print()
+        print("no unrepaired wipe-out: every finding above has been restored already")
+        return 0
+
+    print()
+    print("NON-ASCII TEXT IS STILL MISSING - the file has '?' where Chinese used to be:")
+    for path, rev, before, after in live:
         print(f"  {rev}  {path}: {before} -> {after} non-ASCII bytes")
     print()
     print("Recover the last healthy revision of each file with:")
-    for path, rev, _, _ in findings:
+    for path, rev, _, _ in live:
         previous = last_healthy(repo, path, rev)
         print(f'  git cat-file blob {previous}:{path} > "{path}"')
     return 1
-
-
-def last_healthy(repo: Path, path: str, bad_rev: str) -> str:
-    """The newest revision *older* than `bad_rev` that still had non-ASCII text."""
-    revs = revisions(repo, None, path)
-    if bad_rev in revs:
-        revs = revs[revs.index(bad_rev) + 1:]
-    for rev in revs:
-        blob = git(repo, ["cat-file", "blob", f"{rev}:{path}"], check=False)
-        if blob and non_ascii(blob) > 0:
-            return rev
-    return bad_rev + "~1"
 
 
 if __name__ == "__main__":
