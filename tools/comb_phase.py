@@ -46,6 +46,7 @@ def main() -> None:
 
     acc = np.zeros(4)          # sum of (g / box - 1) per phase
     n = 0
+    gsum = 0.0
     frames = 0
     t0 = time.time()
     while time.time() - t0 < args.seconds:
@@ -55,6 +56,7 @@ def main() -> None:
         frames += 1
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
         gray = gray[:, : args.width // 2]          # grey half only
+        gsum += float(gray.mean())
         box = cv2.boxFilter(gray, -1, (4, 4), normalize=True)
         rel = gray / np.maximum(box, 1.0) - 1.0
         for iy in range(2):
@@ -65,6 +67,7 @@ def main() -> None:
     cap.release()
     r = acc / max(n, 1)
     print(f"frames {frames} in {args.seconds:g} s, grey half {args.width // 2} x {args.height}")
+    print(f"grey half mean {gsum / max(n, 1):.2f}")
     print()
     print("relative gain per phase  (0 = matches the 4 px local average)")
     print("              x even      x odd")
