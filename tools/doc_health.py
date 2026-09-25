@@ -53,10 +53,14 @@ def non_ascii(blob: bytes) -> int:
 
 def list_files(repo: Path, rev: str, prefixes: list[str]) -> list[str]:
     names = git(repo, ["ls-tree", "-r", "--name-only", rev]).decode("utf-8").split()
+    # "." and "" mean the whole tree; keeping them as literal prefixes would
+    # match nothing, because git prints paths without a leading "./".
+    prefixes = [p for p in prefixes if p not in (".", "")]
     return [
         name
         for name in names
-        if name.endswith(TEXT_SUFFIXES) and any(name.startswith(p) for p in prefixes)
+        if name.endswith(TEXT_SUFFIXES)
+        and (not prefixes or any(name.startswith(p) for p in prefixes))
     ]
 
 
