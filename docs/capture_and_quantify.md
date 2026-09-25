@@ -777,7 +777,7 @@ edge half: pixels lit >2%: 77227
 ## 两条 2 像素探针：那层条纹是可分离的乘法图案，上一节的 CFA 结论被推翻（2026-09-25）
 
 上面那段把 2 px 图案归到 CFA / debayer 相位，是**推理**，而且错了。用两个探针直接量它的
-结构（`work/analysis/comb_probe.py`、`work/analysis/comb_phase.py`，都是实时抓帧），
+结构（`tools/comb_probe.py`、`tools/comb_phase.py`，都是实时抓帧），
 结论很清楚：这不是 Bayer 相位问题。
 
 ### 一、差值随亮度成比例：是乘法增益，不是固定偏移
@@ -831,7 +831,7 @@ edge half: pixels lit >2%: 77227
 
 ### 四、红框和右半都干净，但这不能当"位置证据"
 
-`work/analysis/box_probe.py` / `y_probe.py`：红色的目标框（叠加层画的，在图像之后）没有
+`tools/box_probe.py` / `y_probe.py`：红色的目标框（叠加层画的，在图像之后）没有
 +22 % 的列项；右半的亮点（Sobel 边）`A_x = -0.001`，而灰度半是 `+0.233`。
 
 **但这里有个陷阱**：右半的 Sobel 吃的是 `den2_gray`，而 `[1,2,1]` 对周期 2 是零响应。所以
