@@ -90,6 +90,8 @@ def main():
     ap.add_argument("--despeckle", type=int, default=3, help=">=N 个邻居才保留（0=关）")
     ap.add_argument("--median", type=int, default=3, help="前置中值滤波核（1=关）")
     ap.add_argument("--crop", default=None, help="可选 x,y,w,h，只看局部")
+    ap.add_argument("--sweep", action="store_true",
+                    help="在同一帧上扫 shift x floor 全组合，并按源亮度分区看灵敏度")
     args = ap.parse_args()
 
     img = cv2.imread(args.frame)
@@ -104,6 +106,29 @@ def main():
         gs = cv2.medianBlur(g, args.median)
     else:
         gs = g
+
+    if args.sweep:
+        mag, c = sobel_xy(gs)
+        dark_m = c < 48
+        mid_m = (c >= 48) & (c < 160)
+        brt_m = c >= 160
+        print(f"输入灰度 mean={gs.mean():.1f}   "
+              f"分区像素占比 暗(<48)={100 * dark_m.mean():5.1f}%  "
+              f"中={100 * mid_m.mean():5.1f}%  亮(>=160)={100 * brt_m.mean():5.1f}%")
+        print(f"despeckle>={args.despeckle}   "
+              f"{'S':>2s} {'T':>3s} {'总dens%':>7s} {'暗dens%':>7s} {'中dens%':>7s} "
+              f"{'亮dens%':>7s} {'comps':>6s} {'碎斑':>5s} {'最大域':>7s}")
+        for shift in (0, 1, 2, 3):
+            for floor in (0, 8, 16, 24, 32, 48, 64):
+                thr = np.maximum(floor, c >> shift)
+                b = despeckle((mag >= thr).astype(np.uint8), args.despeckle)
+                st = stats(b)
+                dd = 100.0 * b[dark_m].mean()
+                dm = 100.0 * b[mid_m].mean()
+                db = 100.0 * b[brt_m].mean()
+                print(f"{shift:2d} {floor:3d} {st['lit_pct']:7.2f} {dd:7.2f} {dm:7.2f} "
+                      f"{db:7.2f} {st['nblob']:6d} {st['tiny']:5d} {st['med_area']:7.0f}")
+        return
 
     modes = {}
     # A. 我们现在的：|Gx|+|Gy| + max(floor, center>>shift)
