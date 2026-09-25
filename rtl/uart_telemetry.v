@@ -7,12 +7,18 @@
 //
 // Two messages are emitted at 115200 8N1:
 //
-//   power-up, once : "TI60 UART OK\r\n"                    (14 bytes)
-//   after that     : "THR=nnn SH=n DS=k PIX=nnnnnn\r\n"    (30 bytes)
-//                    every PERIOD_MS, or immediately whenever i_update pulses
+//   power-up, once : "TI60 UART OK\r\n"                               (14)
+//   after that     : "THR=nnn SH=n DS=k EN=n SRC=x PIX=nnnnnn\r\n"   (41)
+//                    every PERIOD_MS, or immediately whenever i_update
+//                    pulses (a key press or a remote-control command)
 //
-// DS  is the despeckle neighbour threshold of edge_overlay_720p.v, so the log
-//     records which filter setting a picture was taken with.
+// THR is the threshold floor, SH the adaptive weight (8 = adaptive term off),
+// DS  the despeckle neighbour threshold of edge_overlay_720p.v, and EN the
+//     number of gauss3_720p denoise stages that are switched in. All four are
+//     the values actually in use, so a log line is enough to say which
+//     configuration a captured picture belongs to.
+// SRC is 'U' while the host owns the operating point through uart_cmd.v and
+//     'K' while the on-board keys do.
 // PIX is the number of active pixels counted in the last video frame. A clean
 //     720p stream gives exactly 1280 x 720 = 921600, so this one number is the
 //     on-board evidence that the pixel pipeline sees complete frames and does
@@ -28,8 +34,9 @@
 // that window and drops every other byte. Do not simplify it back to two
 // states.
 //
-// The banner and the status line have different lengths, so the pacer works
-// from a per-message length instead of one constant.
+// char_idx is six bits because the status line grew from 30 to 41 bytes when
+// EN and SRC were added; a five-bit index would wrap in the middle of the
+// message.
 //
 ////////////////////////////////////////////////////////////////////////////
 
@@ -43,13 +50,15 @@ module uart_telemetry #(
     input  wire [10:0] i_threshold,
     input  wire [3:0]  i_shift,
     input  wire [3:0]  i_despeckle,
+    input  wire [1:0]  i_denoise,
+    input  wire        i_remote,     // 1 = the host owns the operating point
     input  wire [19:0] i_frame_pix,  // active pixels in the last video frame
     input  wire        i_update,     // push a fresh line as soon as the line is free
     output wire        o_txd
 );
 
-    localparam [4:0]  MSG_LEN_BANNER = 5'd14;
-    localparam [4:0]  MSG_LEN_STATUS = 5'd30;
+    localparam [5:0]  MSG_LEN_BANNER = 6'd14;
+    localparam [5:0]  MSG_LEN_STATUS = 6'd41;
     localparam integer GAP_CLKS      = (CLK_HZ / 1000) * PERIOD_MS;
 
     // ---------------------------------------------------------------
@@ -65,58 +74,70 @@ module uart_telemetry #(
 
     function [7:0] msg_byte;
         input        banner_sel;
-        input [4:0]  idx;
-        input [3:0]  dh, dt, du, ds, dk;
+        input [5:0]  idx;
+        input [3:0]  dh, dt, du, ds, dk, de;
+        input        remote;
         input [23:0] pix_bcd;
         begin
             if (banner_sel) begin
                 case (idx)
-                    5'd0:    msg_byte = "T";
-                    5'd1:    msg_byte = "I";
-                    5'd2:    msg_byte = "6";
-                    5'd3:    msg_byte = "0";
-                    5'd4:    msg_byte = " ";
-                    5'd5:    msg_byte = "U";
-                    5'd6:    msg_byte = "A";
-                    5'd7:    msg_byte = "R";
-                    5'd8:    msg_byte = "T";
-                    5'd9:    msg_byte = " ";
-                    5'd10:   msg_byte = "O";
-                    5'd11:   msg_byte = "K";
-                    5'd12:   msg_byte = 8'h0D;   // CR
+                    6'd0:    msg_byte = "T";
+                    6'd1:    msg_byte = "I";
+                    6'd2:    msg_byte = "6";
+                    6'd3:    msg_byte = "0";
+                    6'd4:    msg_byte = " ";
+                    6'd5:    msg_byte = "U";
+                    6'd6:    msg_byte = "A";
+                    6'd7:    msg_byte = "R";
+                    6'd8:    msg_byte = "T";
+                    6'd9:    msg_byte = " ";
+                    6'd10:   msg_byte = "O";
+                    6'd11:   msg_byte = "K";
+                    6'd12:   msg_byte = 8'h0D;   // CR
                     default: msg_byte = 8'h0A;   // LF
                 endcase
             end else begin
                 case (idx)
-                    5'd0:    msg_byte = "T";
-                    5'd1:    msg_byte = "H";
-                    5'd2:    msg_byte = "R";
-                    5'd3:    msg_byte = "=";
-                    5'd4:    msg_byte = 8'h30 + {4'b0, dh};
-                    5'd5:    msg_byte = 8'h30 + {4'b0, dt};
-                    5'd6:    msg_byte = 8'h30 + {4'b0, du};
-                    5'd7:    msg_byte = " ";
-                    5'd8:    msg_byte = "S";
-                    5'd9:    msg_byte = "H";
-                    5'd10:   msg_byte = "=";
-                    5'd11:   msg_byte = 8'h30 + {4'b0, ds};
-                    5'd12:   msg_byte = " ";
-                    5'd13:   msg_byte = "D";
-                    5'd14:   msg_byte = "S";
-                    5'd15:   msg_byte = "=";
-                    5'd16:   msg_byte = 8'h30 + {4'b0, dk};
-                    5'd17:   msg_byte = " ";
-                    5'd18:   msg_byte = "P";
-                    5'd19:   msg_byte = "I";
-                    5'd20:   msg_byte = "X";
-                    5'd21:   msg_byte = "=";
-                    5'd22:   msg_byte = 8'h30 + pix_bcd[23:20];
-                    5'd23:   msg_byte = 8'h30 + pix_bcd[19:16];
-                    5'd24:   msg_byte = 8'h30 + pix_bcd[15:12];
-                    5'd25:   msg_byte = 8'h30 + pix_bcd[11:8];
-                    5'd26:   msg_byte = 8'h30 + pix_bcd[7:4];
-                    5'd27:   msg_byte = 8'h30 + pix_bcd[3:0];
-                    5'd28:   msg_byte = 8'h0D;   // CR
+                    6'd0:    msg_byte = "T";
+                    6'd1:    msg_byte = "H";
+                    6'd2:    msg_byte = "R";
+                    6'd3:    msg_byte = "=";
+                    6'd4:    msg_byte = 8'h30 + {4'b0, dh};
+                    6'd5:    msg_byte = 8'h30 + {4'b0, dt};
+                    6'd6:    msg_byte = 8'h30 + {4'b0, du};
+                    6'd7:    msg_byte = " ";
+                    6'd8:    msg_byte = "S";
+                    6'd9:    msg_byte = "H";
+                    6'd10:   msg_byte = "=";
+                    6'd11:   msg_byte = 8'h30 + {4'b0, ds};
+                    6'd12:   msg_byte = " ";
+                    6'd13:   msg_byte = "D";
+                    6'd14:   msg_byte = "S";
+                    6'd15:   msg_byte = "=";
+                    6'd16:   msg_byte = 8'h30 + {4'b0, dk};
+                    6'd17:   msg_byte = " ";
+                    6'd18:   msg_byte = "E";
+                    6'd19:   msg_byte = "N";
+                    6'd20:   msg_byte = "=";
+                    6'd21:   msg_byte = 8'h30 + {4'b0, de};
+                    6'd22:   msg_byte = " ";
+                    6'd23:   msg_byte = "S";
+                    6'd24:   msg_byte = "R";
+                    6'd25:   msg_byte = "C";
+                    6'd26:   msg_byte = "=";
+                    6'd27:   msg_byte = remote ? "U" : "K";
+                    6'd28:   msg_byte = " ";
+                    6'd29:   msg_byte = "P";
+                    6'd30:   msg_byte = "I";
+                    6'd31:   msg_byte = "X";
+                    6'd32:   msg_byte = "=";
+                    6'd33:   msg_byte = 8'h30 + pix_bcd[23:20];
+                    6'd34:   msg_byte = 8'h30 + pix_bcd[19:16];
+                    6'd35:   msg_byte = 8'h30 + pix_bcd[15:12];
+                    6'd36:   msg_byte = 8'h30 + pix_bcd[11:8];
+                    6'd37:   msg_byte = 8'h30 + pix_bcd[7:4];
+                    6'd38:   msg_byte = 8'h30 + pix_bcd[3:0];
+                    6'd39:   msg_byte = 8'h0D;   // CR
                     default: msg_byte = 8'h0A;   // LF
                 endcase
             end
@@ -132,20 +153,21 @@ module uart_telemetry #(
 
     reg [2:0]  state;
     reg [31:0] gap_cnt;
-    reg [4:0]  char_idx;
+    reg [5:0]  char_idx;
     reg        tx_valid;
     reg [7:0]  tx_byte;
     reg        banner;
     reg        pending;
     // Snapshot of the values used for the line currently being sent, so a key
     // press in the middle of a message cannot mix two readings in one line.
-    reg [3:0]  d_h_reg, d_t_reg, d_u_reg, d_s_reg, d_k_reg;
+    reg [3:0]  d_h_reg, d_t_reg, d_u_reg, d_s_reg, d_k_reg, d_e_reg;
+    reg        d_r_reg;
     reg [23:0] pix_bcd_reg;
     wire       tx_busy;
 
     // The banner is shorter than a status line, so the end-of-message test in
     // S_SEND has to look at the length of the message being sent.
-    wire [4:0] msg_len = banner ? MSG_LEN_BANNER : MSG_LEN_STATUS;
+    wire [5:0] msg_len = banner ? MSG_LEN_BANNER : MSG_LEN_STATUS;
 
     // Sequential double-dabble state: 20 binary bits -> six BCD digits.
     reg [19:0] bcd_bin;
@@ -180,7 +202,7 @@ module uart_telemetry #(
         if (!rst_n) begin
             state     <= S_GAP;
             gap_cnt   <= 32'd0;
-            char_idx  <= 5'd0;
+            char_idx  <= 6'd0;
             tx_valid  <= 1'b0;
             tx_byte   <= 8'h00;
             banner    <= 1'b1;
@@ -190,6 +212,8 @@ module uart_telemetry #(
             d_u_reg   <= 4'd0;
             d_s_reg   <= 4'd1;
             d_k_reg   <= 4'd3;
+            d_e_reg   <= 4'd2;
+            d_r_reg   <= 1'b0;
             pix_bcd_reg <= 24'd0;
             bcd_bin   <= 20'd0;
             bcd_out   <= 24'd0;
@@ -201,18 +225,20 @@ module uart_telemetry #(
 
             case (state)
                 // Wait out the gap once the line is free, unless a key press
-                // asked for an immediate line.
+                // or a remote command asked for an immediate line.
                 S_GAP: begin
                     if (!tx_busy) begin
                         if (pending || (gap_cnt >= GAP_CLKS)) begin
                             gap_cnt  <= 32'd0;
-                            char_idx <= 5'd0;
+                            char_idx <= 6'd0;
                             pending  <= 1'b0;
                             d_h_reg  <= d_h[3:0];
                             d_t_reg  <= d_t[3:0];
                             d_u_reg  <= d_u[3:0];
                             d_s_reg  <= i_shift;
                             d_k_reg  <= i_despeckle;
+                            d_e_reg  <= {2'b0, i_denoise};
+                            d_r_reg  <= i_remote;
                             bcd_bin  <= i_frame_pix;
                             bcd_out  <= 24'd0;
                             conv_cnt <= 5'd0;
@@ -244,7 +270,8 @@ module uart_telemetry #(
                     tx_valid <= 1'b1;
                     tx_byte  <= msg_byte(banner, char_idx,
                                          d_h_reg, d_t_reg, d_u_reg,
-                                         d_s_reg, d_k_reg, pix_bcd_reg);
+                                         d_s_reg, d_k_reg, d_e_reg,
+                                         d_r_reg, pix_bcd_reg);
                     state    <= S_START;
                 end
 
@@ -256,11 +283,11 @@ module uart_telemetry #(
                 // Frame is on the wire; wait for it to finish, then advance.
                 S_SEND: begin
                     if (!tx_busy) begin
-                        if (char_idx == (msg_len - 5'd1)) begin
+                        if (char_idx == (msg_len - 6'd1)) begin
                             banner <= 1'b0;     // the banner is a one-shot
                             state  <= S_GAP;
                         end else begin
-                            char_idx <= char_idx + 5'd1;
+                            char_idx <= char_idx + 6'd1;
                             state    <= S_LOAD;
                         end
                     end

@@ -146,8 +146,11 @@ module ti60f225_oob_top #(
        //LED
        output [7:0] led,
 
-       // UART debug channel (FT4232H channel C, board UART header J8)
+       // UART debug channel (FT4232H, board UART header J8). The receive pin
+       // (GPIOL_02 / R4, net UART_TX_3V3) was unused until the remote-control
+       // feature landed; see rtl/uart_cmd.v and docs/uart_remote_control.md.
        output wire o_uart_txd,
+       input  wire i_uart_rxd,
 
        // User push buttons. They are active low with external pull-ups on the
        // demo board (see the vendor key demo, which tests ~i_key).
@@ -416,7 +419,7 @@ wire [3:0]  w_edge_despeckle;
 wire        w_edge_changed;
 
 threshold_ctrl #(
-       .THRESHOLD_INIT  (11'd24),
+       .THRESHOLD_INIT  (11'd16),
        .STEP_THRESHOLD  (8),
        .MODE_INIT       (3'd3),    // shift = 1, what the previous bitstream used
        .DESPECKLE_INIT  (2'd2),    // index 2 -> despeckle window 3, the default
@@ -434,6 +437,61 @@ threshold_ctrl #(
        .o_changed     (w_edge_changed)
 );
 
+//-----------------------------------------------------------------------------
+// Remote control of the edge stage over the same UART.
+//
+// The FPGA-side receive pin was unused until now, so a sweep of the threshold,
+// the adaptive weight, the despeckle window and the denoise depth can be run
+// from the host instead of by pressing keys: "T16\n", "S2\n", "D3\n", "E2\n",
+// "K\n" (K hands control back to the keys). See rtl/uart_cmd.v.
+//-----------------------------------------------------------------------------
+wire [7:0]  w_uart_byte;
+wire        w_uart_byte_valid;
+wire [10:0] w_cmd_threshold;
+wire [3:0]  w_cmd_shift;
+wire [3:0]  w_cmd_despeckle;
+wire [1:0]  w_cmd_denoise;
+wire        w_cmd_override;
+wire        w_cmd_commit;
+
+uart_rx #(
+       .CLK_HZ (25000000),
+       .BAUD   (115200)
+) u_uart_rx (
+       .clk     (CLK_25M),
+       .rst_n   (w_arstn),
+       .i_rxd   (i_uart_rxd),
+       .o_data  (w_uart_byte),
+       .o_valid (w_uart_byte_valid)
+);
+
+uart_cmd #(
+       .THRESHOLD_INIT (11'd16),
+       .SHIFT_INIT     (4'd1),
+       .DESPECKLE_INIT (4'd3),
+       .DENOISE_INIT   (2'd2)
+) u_uart_cmd (
+       .clk          (CLK_25M),
+       .rst_n        (w_arstn),
+       .i_data       (w_uart_byte),
+       .i_valid      (w_uart_byte_valid),
+       .o_threshold  (w_cmd_threshold),
+       .o_shift      (w_cmd_shift),
+       .o_despeckle  (w_cmd_despeckle),
+       .o_denoise    (w_cmd_denoise),
+       .o_override   (w_cmd_override),
+       .o_commit     (w_cmd_commit)
+);
+
+// Effective operating point: the host wins once it has sent anything, and the
+// keys only come back after a "K" command. The denoise depth defaults to two
+// stages, which is the measured best setting for the dark scenes.
+wire [10:0] w_cfg_threshold = w_cmd_override ? w_cmd_threshold : w_edge_threshold;
+wire [3:0]  w_cfg_shift     = w_cmd_override ? w_cmd_shift     : w_edge_shift;
+wire [3:0]  w_cfg_despeckle = w_cmd_override ? w_cmd_despeckle : w_edge_despeckle;
+wire [1:0]  w_cfg_denoise   = w_cmd_override ? w_cmd_denoise   : 2'd2;
+wire        w_cfg_changed   = w_edge_changed | w_cmd_commit;
+
 uart_telemetry #(
        .CLK_HZ    (25000000),
        .BAUD      (115200),
@@ -441,11 +499,13 @@ uart_telemetry #(
 ) u_uart_telemetry (
        .clk         (CLK_25M),
        .rst_n       (w_arstn),
-       .i_threshold (w_edge_threshold),
-       .i_shift     (w_edge_shift),
-       .i_despeckle (w_edge_despeckle),
+       .i_threshold (w_cfg_threshold),
+       .i_shift     (w_cfg_shift),
+       .i_despeckle (w_cfg_despeckle),
+       .i_denoise   (w_cfg_denoise),
+       .i_remote    (w_cmd_override),
        .i_frame_pix (w_frame_pix),
-       .i_update    (w_edge_changed),
+       .i_update    (w_cfg_changed),
        .o_txd       (o_uart_txd)
 );
 
@@ -995,36 +1055,82 @@ reg [3:0]  sh_meta;
 reg [3:0]  sh_sync;
 reg [3:0]  ds_meta;
 reg [3:0]  ds_sync;
+reg [1:0]  den_meta;
+reg [1:0]  den_sync;
 always @(posedge hdmi_tx_slow_clk or negedge vid_rst_n) begin
     if (!vid_rst_n) begin
-        thr_meta <= 11'd24;
-        thr_sync <= 11'd24;
+        thr_meta <= 11'd16;
+        thr_sync <= 11'd16;
         sh_meta  <= 4'd1;
         sh_sync  <= 4'd1;
         ds_meta  <= 4'd3;
         ds_sync  <= 4'd3;
+        den_meta <= 2'd2;
+        den_sync <= 2'd2;
     end else begin
-        thr_meta <= w_edge_threshold;
+        thr_meta <= w_cfg_threshold;
         thr_sync <= thr_meta;
-        sh_meta  <= w_edge_shift;
+        sh_meta  <= w_cfg_shift;
         sh_sync  <= sh_meta;
-        ds_meta  <= w_edge_despeckle;
+        ds_meta  <= w_cfg_despeckle;
         ds_sync  <= ds_meta;
+        den_meta <= w_cfg_denoise;
+        den_sync <= den_meta;
     end
 end
+
+// Two cascaded 3x3 binomial stages (an effective 5x5 Gaussian) between the
+// median filter and the Sobel stage. Measured on a dim captured scene, one
+// stage cuts the frame-to-frame edge flicker from 49 % to 23 % and raises the
+// share of marked pixels that sit on a real contour from 16 % to 65 %; the
+// second stage takes it to 76 %. den_sync selects 0, 1 or 2 of them, and the
+// latency is the same for all three settings so a live change cannot shift
+// the picture. See rtl/gauss3_720p.v.
+wire        den1_vs, den1_hs, den1_de;
+wire [7:0]  den1_gray;
+wire        den2_vs, den2_hs, den2_de;
+wire [7:0]  den2_gray;
+
+gauss3_720p #(.IMAGE_WIDTH(1280)) denoise_stage1 (
+    .clk(hdmi_tx_slow_clk),
+    .rst_n(vid_rst_n),
+    .i_enable(den_sync >= 2'd1),
+    .in_vs(median_vs),
+    .in_hs(median_hs),
+    .in_de(median_de),
+    .in_gray(median_gray),
+    .out_vs(den1_vs),
+    .out_hs(den1_hs),
+    .out_de(den1_de),
+    .out_gray(den1_gray)
+);
+
+gauss3_720p #(.IMAGE_WIDTH(1280)) denoise_stage2 (
+    .clk(hdmi_tx_slow_clk),
+    .rst_n(vid_rst_n),
+    .i_enable(den_sync >= 2'd2),
+    .in_vs(den1_vs),
+    .in_hs(den1_hs),
+    .in_de(den1_de),
+    .in_gray(den1_gray),
+    .out_vs(den2_vs),
+    .out_hs(den2_hs),
+    .out_de(den2_de),
+    .out_gray(den2_gray)
+);
 
 edge_display_720p #(
     .IMAGE_WIDTH(1280)
 ) edge_display_inst (
     .clk(hdmi_tx_slow_clk),
     .rst_n(vid_rst_n),
-    .in_vs(median_vs),
-    .in_hs(median_hs),
-    .in_de(median_de),
+    .in_vs(den2_vs),
+    .in_hs(den2_hs),
+    .in_de(den2_de),
     .in_r(raw_gray),
     .in_g(raw_gray),
     .in_b(raw_gray),
-    .in_edge_gray(median_gray),
+    .in_edge_gray(den2_gray),
     .i_threshold(thr_sync),
     .i_threshold_shift(sh_sync),
     .out_vs(edge_vs),

@@ -37,7 +37,7 @@
 ////////////////////////////////////////////////////////////////////////////
 
 module threshold_ctrl #(
-    parameter [10:0]  THRESHOLD_INIT = 11'd24,
+    parameter [10:0]  THRESHOLD_INIT = 11'd16,
     parameter integer STEP_THRESHOLD = 8,
     // Reset value of the adaptive-weight index. Index 3 is shift = 1, which is
     // the configuration the previous bitstream ran with.

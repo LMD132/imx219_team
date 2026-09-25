@@ -4,8 +4,10 @@ Goal: stop describing the picture by hand. Put a text channel from the FPGA to
 the host PC so tuning runs can be judged from numbers (`edge ratio = 4.7 %`)
 instead of by photographing the panel.
 
-Status: **verified on hardware**. `COM5` receives `TI60 UART OK\r\n` every
-100 ms, about 138 bytes/s, with a clean `0D 0A` line ending.
+Status: **verified on hardware**. The fixed banner described below was later
+replaced by a numeric status line, so `COM5` now carries
+`THR=016 SH=1 DS=3 EN=2 SRC=K PIX=921600` continuously. The banner is still
+what proved the link; the current protocol is in `docs/uart_remote_control.md`.
 
 ## What was verified
 
@@ -46,11 +48,11 @@ the board sent only the even message indices (`54 36 20 41 54 4F 0D`, i.e.
 `S_GAP -> S_LOAD -> S_START -> S_SEND` and advances the index once per frame,
 after the frame actually finishes.
 
-## Not done yet
+## Follow-ups (both have since landed)
 
-- `i_uart_rxd` is not wired up. Commands from the host (e.g. threshold up/down
-  over serial instead of with the keys) need `rtl/uart_rx.v` plus the input
-  constraint on `GPIOL_02`.
-- Numeric telemetry. The natural first metrics are per-frame edge-pixel ratio,
-  an intensity histogram summary, and the currently active threshold, so the
-  brightness-adaptive threshold can be tuned from data.
+- `i_uart_rxd` (**R4 / GPIOL_02**) is now wired up and parsed, which turns this
+  one-way channel into `T/S/D/E/K` remote control: see
+  `docs/uart_remote_control.md`.
+- Numeric telemetry is in place - a 41 byte status line carrying the active
+  threshold, shift, despeckle, denoise stages, which side owns control, and the
+  per-frame pixel count. Same doc.
