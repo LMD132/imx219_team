@@ -26,6 +26,19 @@ param(
 $ErrorActionPreference = "Stop"
 $tools = $PSScriptRoot
 $root  = Split-Path -Parent $tools
+
+# `powershell -File live_sweep.ps1 -Settings E2_T16,E1_T16` does not parse the
+# comma: the whole "E2_T16,E1_T16" arrives as ONE array element, which would run
+# every command in sequence and capture a single useless clip. Split here so the
+# script works with both `-File` and `& script.ps1` invocation styles. (Same trap
+# as tools\uart_send.ps1 - see docs\uart_remote_control.md.)
+$Settings = @(
+  foreach ($s in $Settings) {
+    foreach ($part in ($s -split '[,\s]+')) { if ($part) { $part } }
+  }
+)
+if ($Settings.Count -eq 0) { throw "no settings given" }
+
 if (-not $Python) {
   $Python = "C:\Users\HUAWEI\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 }
