@@ -157,3 +157,16 @@ python tools\analyze_capture.py --input work\capture\dark_target --dump work\ana
 - 板子的 TMDS 输出是 **DVI 风格**（`dvi_encoder` 直接驱动，没有 HDMI 信息帧）；
 - 我们的设计**不理会 HPD/EDID**，TMDS 输出无条件常开——所以"卡收不到"不可能是
   被 HPD 门控导致的。
+
+### HDCP 不是原因
+
+产品页明确写着"PS 系列/机顶盒/手机用户请提前关闭 HDCP 保护，设备默认开启状态下
+图像无法显示"，也就是**这张卡不支持 HDCP**，源端必须不加密。我们的源根本不加密：
+`dvi_encoder` 只做 TMDS 编码，全仓库检索 `hdcp` 零命中（唯一命中是 DDR3 加密核
+里的一段 base64 文本），而且 Dell 显示器能直接锁到并显示这条流。更关键的是 HDCP
+发生在"锁到信号 + EDID/HPD 握手"之后，而这张卡**连 EDID 都没交给电脑**
+（笔记本 `Win+P` 里没有第二块屏）——所以故障在更早的物理层。
+
+若换回来的卡"接笔记本正常、接板子不行"，那才轮到**卡不兼容纯 DVI 信号**这个假设，
+届时改用带 AVI 信息帧的 HDMI TX（`rtl/dvi_tx/` 里已有
+`auxiliary_video_information_info_frame.sv`、`packet_assembler.sv` 这套包组装逻辑）。
