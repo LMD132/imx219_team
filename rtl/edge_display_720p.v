@@ -140,6 +140,14 @@ wire [10:0] gy_positive = {3'b0, bot_left} + {2'b0, bot_center, 1'b0}
 wire [10:0] gy_negative = {3'b0, top_left} + {2'b0, top_center, 1'b0}
                         + {3'b0, top_now};
 
+// Sum of the nine taps of the same 3x3 window the Sobel uses. 9*255 = 2295
+// fits in 12 bits. Registered together with the Sobel side sums so the
+// adaptive threshold stays on the same pipeline stage as the magnitude it
+// gates.
+wire [11:0] win_sum = {1'b0, top_left} + {1'b0, top_center} + {1'b0, top_now}
+                    + {1'b0, mid_left} + {1'b0, mid_center} + {1'b0, mid_now}
+                    + {1'b0, bot_left} + {1'b0, bot_center} + {1'b0, s0_edge_gray};
+
 // Stage 1: sliding 3x3 window and Sobel side sums.
 reg s1_vs;
 reg s1_hs;
@@ -148,6 +156,7 @@ reg s1_window_valid;
 reg [10:0] s1_x;
 reg [7:0] s1_gray;
 reg [7:0] s1_center;
+reg [11:0] s1_win_sum;
 reg [10:0] s1_gx_positive, s1_gx_negative;
 reg [10:0] s1_gy_positive, s1_gy_negative;
 
@@ -166,6 +175,7 @@ always @(posedge clk or negedge rst_n) begin
         s1_x <= 11'd0;
         s1_gray <= 8'd0;
         s1_center <= 8'd0;
+        s1_win_sum <= 12'd0;
         s1_gx_positive <= 11'd0;
         s1_gx_negative <= 11'd0;
         s1_gy_positive <= 11'd0;
@@ -179,6 +189,7 @@ always @(posedge clk or negedge rst_n) begin
         s1_window_valid <= s0_de && s0_x >= 11'd2 && s0_y >= 10'd2;
         if (s0_de) begin
             s1_center <= s0_edge_gray;
+            s1_win_sum <= win_sum;
             top_left <= top_center;
             top_center <= top_now;
             mid_left <= mid_center;
@@ -203,10 +214,21 @@ wire [11:0] magnitude = {1'b0, gx_abs} + {1'b0, gy_abs};
 // The gradient magnitude of a real edge scales with local contrast, not with
 // absolute brightness. A fixed threshold therefore loses low contrast objects
 // (a person in dim light) while a bright source (a phone screen) clears it
-// easily. Scale the threshold with the gray level at the window centre and use
-// i_threshold as a noise floor. i_threshold_shift = 8 disables the adaptive
-// term and restores a purely fixed threshold.
-wire [10:0] local_threshold = {3'b0, s1_center} >> i_threshold_shift;
+// easily. Scale the threshold with the level of the surrounding area and keep
+// i_threshold as a noise floor.
+//
+// The base is the *mean of the 3x3 window* rather than the centre pixel (the
+// rule spelled out in the CSDN "Sobel hardware acceleration" article:
+// dynamic_th = window_sum/(K*K) - 16). Averaging nine pixels means one hot or
+// dead pixel cannot move the threshold, which matters in the dark where a
+// single LSB of sensor noise is a large share of the level. Division by 9 is
+// done as *57 >> 9 (57 = 32+16+8+1, 0.2 % high): shifts and adds only, no DSP
+// and no divider. i_threshold_shift = 8 disables the adaptive term again
+// (255 >> 8 = 0) and restores a purely fixed threshold.
+wire [17:0] win_sum_x57 = (s1_win_sum << 5) + (s1_win_sum << 4)
+                        + (s1_win_sum << 3) + s1_win_sum;
+wire [8:0]  local_mean = win_sum_x57[17:9];
+wire [10:0] local_threshold = {2'b0, local_mean} >> i_threshold_shift;
 wire [10:0] active_threshold = (local_threshold > i_threshold)
                              ? local_threshold : i_threshold;
 wire edge_pixel = s1_window_valid && magnitude >= {1'b0, active_threshold};
