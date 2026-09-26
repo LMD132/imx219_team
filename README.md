@@ -18,6 +18,13 @@
   见 `docs/上板记录_2026-09-26.md`）；**肉眼画面确认尚未做。**
   该分支同时修正了上面那条分屏口径问题（mode 0 = 同一完整视野 2:1 抽取）。
   算法的来源、逐级映射、延迟表与对齐原理见 [`docs/ALGO_RTL.md`](docs/ALGO_RTL.md)。
+- **运行期调参（`py-algo-rtl` 分支，2026-09-26）**：`alg_top` 的参数本来就是运行期端口，
+  以前被顶层接成常量，所以调参要改代码重编译再烧录。现在补上了**板载 UART 通道**
+  （115200 8N1，`GPIOR_28`/`GPIOL_02`）和 PC 端界面 `tools/alg_tuner.py`：
+  **拖动滑块 → 屏幕立即变化，不需要重新编译或重新烧录。** 9 个参数实时可调，
+  已通过真板实测（串口命令 9/9 OK、GUI 端到端 PASS）。算法 RTL 一行未改，
+  默认值 = 之前写死的常量，不插串口线时画面逐位一致。见
+  [`docs/运行期调参.md`](docs/运行期调参.md)。
 
 ## 赛题对照与待办
 
@@ -36,7 +43,7 @@
 | 无除法器灰度化、两行缓存、3×3 Sobel、参数化阈值、左右分屏 | 已上板验证（`main`） |
 | 3×3 中值滤波后再 Sobel | `median-experiment` 已编译/JTAG；画面右侧丢失不少边缘，待调优 |
 
-`py-algo-rtl`（算法全链移植，**仿真/编译通过，未上板**）：
+`py-algo-rtl`（算法全链移植，**仿真/编译/JTAG 通过，肉眼画面未确认**）：
 
 | 项目 | 状态 |
 | --- | --- |
@@ -45,11 +52,12 @@
 | 高阶④ 完整 Canny（5×5 高斯 → 幅值+方向 → NMS → 双阈值滞后 → 去孤点） | ✅ RTL + 逐位对拍 |
 | 高阶⑤ 边缘红边叠加彩色输出 | ✅ RTL（mode 1） |
 | 赛题④ 同一完整视野的灰度/边缘并排显示 | ✅ RTL（mode 0，逐位对拍 306 像素 0 mismatch） |
-| 按键实时调阈值（含消抖） | 🔄 阈值已是运行期寄存器；按键硬件接入与消抖未做 |
+| **运行期调参**（9 个参数经板载 UART 实时生效） | ✅ 真板实测：命令 9/9 OK、GUI 端到端 PASS（`tools/alg_tuner.py`，见 `docs/运行期调参.md`） |
+| 按键实时调阈值（含消抖） | 🔄 参数已是运行期寄存器且可串口实时改；**板上按键 ± 与消抖未做** |
 | 高阶③ DDR 帧缓存的回放/冻结/多帧对比 | 🔄 整帧经 DDR 中介成立；扩展功能未做 |
 | 高阶⑥ 圆/矩形识别 + 屏幕文字 | ❌ 未做 |
 | 时间域平均 `temporal_blend`（压帧间白点闪烁） | ❌ 未 RTL 化（下一步优先级最高） |
-| JTAG 下载 | ✅ 2026-09-26 完成（`algo_canny_full_20260926_1954.bit`，日志见 `docs/上板记录_2026-09-26.md`） |
+| JTAG 下载 | ✅ 2026-09-26 完成（当前板内 `algo_uart_tuner_splitonly_20260926_2037.bit`，来源提交 `0cf4f69`，日志见 `docs/上板记录_2026-09-26.md`） |
 | 上板画面确认、演示视频 | ❌ 未做 |
 
 ## 关键文件
@@ -75,6 +83,16 @@
   `check_py_repo.py` 仓库 Python 对拍）和算法参考源快照 `ref/FPGA-Python-main/`。
   `check_py_repo.py` 只依赖 numpy + opencv，可直接重跑；RTL 仿真需要 iverilog，用
   `ALG_OSS_BIN` 指到 oss-cad-suite（约 2GB，不入库）。
+- `rtl/alg_cfg_uart.v`、`rtl/alg_cfg_sync.v`、`rtl/alg_cfg_telemetry.v`、`rtl/uart_rx.v`、`rtl/uart_tx.v`：
+  **运行期调参通道**（板载 UART 115200 8N1）。`uart_rx.v`/`uart_tx.v` 逐字取自同一块板上
+  已验证的 `imx219_team` 分支 `uart-bringup`，未改一行。协议表、时序与实测记录见
+  [`docs/运行期调参.md`](docs/运行期调参.md)。
+- `tools/alg_tuner.py`：PC 端 tkinter 滑块界面（依赖 `pyserial`）。每行一个参数，
+  拖动即下发；右侧"板端"列显示 FPGA 回读的真实生效值（不一致会变红），用来自证链路。
+- `sim/algo/tb_alg_cfg_uart.v`：命令解析/遥测测试台（自定义采样，不复用 DUT 的 `uart_rx`）。
+- `tools/link_test.py`、`tools/gui_hw_test.py`、`tools/smoke_alg_tuner.py`：调参通道的验证脚本
+  —— 真板串口命令 9/9、GUI 真板端到端、离线不接板只喂状态行。都不需要工具链，
+  `python tools\link_test.py COM5` 这类命令直接跑。
 - `candidate_bitstreams/`：候选位流 + 来源提交、SHA-256、上板状态记录。见该目录 `README.md`。
 
 ## 编译与下载（Windows CMD）

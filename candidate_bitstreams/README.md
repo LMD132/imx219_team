@@ -15,7 +15,32 @@ tools\flash_candidate.bat candidate_bitstreams\<位流文件>
 
 ---
 
-## 1. `algo_canny_splitonly_20260926_2019.bit` —— **当前版**（算法全链 + 固定左右分屏）
+## 1. `algo_uart_tuner_splitonly_20260926_2037.bit` —— **当前版**（算法全链 + 固定左右分屏 + 运行期串口调参）
+
+| 项 | 值 |
+| --- | --- |
+| 来源提交 | `0cf4f6962760856742bc0eac7cf17a4ea8b2fd26`（分支 `py-algo-rtl`） |
+| 编译时间 | 2026-09-26 20:36:52 |
+| 字节数 | 2434185 |
+| SHA-256 | `4F9D7D387627031A0D8F1AC6F4B0AE5AB1CC94D716D6238D8ADBCB51ECC3EB05` |
+| 工具 | Efinity 2026.1.132.4.5 |
+| 流程结果 | `map` PASS、`interface` PASS、`pnr` PASS、`pgm` PASS |
+| 时序 | `hdmi_tx_slow_clk` setup **+5.360 ns** / hold **+0.026 ns**；全设计无负 slack；最大可分析频率 **123.335 MHz**（约束 74.25 MHz） |
+| 资源 | XLRs 22313/60800 (36.70%)、Memory Blocks 208/256 (81.25%)、DSP 4/160 |
+| CDC | `No Synchronizer warnings to report` |
+| 显示模式 | **固定 mode 0** = 同视野左右分屏。可用串口命令 `D0..D3` 在运行期切换，不需要重新编译 |
+| 调参通道 | 板载 UART 115200 8N1（`o_uart_txd`→`GPIOR_28`/R14，`i_uart_rxd`→`GPIOL_02`/R4），PC 端 `tools/alg_tuner.py` |
+| **上板状态** | ✅ **JTAG 下载成功**（JTAG ID `0x10660A79`）；✅ **串口通道上板实测 9/9 OK**；✅ **GUI 真板端到端 PASS**；❌ **肉眼画面仍未确认** |
+| 内容 | 灰度 → 3×3 中值 → 5×5 高斯 → Sobel(幅值+方向) → NMS → 双阈值滞后(58/21) → 去孤点 → 显示 |
+| 已验证程度 | RTL + 仿真逐位对拍 + 编译/时序通过 + **JTAG 下载 + 串口链路真板实测**（**不含**肉眼画面） |
+
+与上一版（`..._2019.bit`）的**唯一**差别是参数来源：这一版 `alg_top` 的 `cfg_*`
+由 UART 寄存器组驱动，上一版接的是常量。算法 RTL 一行未改，**每个默认值都等于它
+替换掉的那个常量**，所以不插串口线时画面与上一版逐位一致。
+
+协议表、GUI 用法与实测记录见 [`../docs/运行期调参.md`](../docs/运行期调参.md)。
+
+## 2. `algo_canny_splitonly_20260926_2019.bit` —— 上一版（固定左右分屏，**已被上面那份取代**）
 
 | 项 | 值 |
 | --- | --- |
@@ -28,13 +53,13 @@ tools\flash_candidate.bat candidate_bitstreams\<位流文件>
 | 时序 | `hdmi_tx_slow_clk` setup **+4.843 ns** / hold **+0.031 ns**；全设计无负 slack；该时钟最大可分析频率 115.942 MHz（约束 74.25 MHz） |
 | 资源 | XLRs 21351/60800 (35.12%)、Memory Blocks 208/256 (81.25%)、DSP 4/160 |
 | 显示模式 | **固定 mode 0** = 同视野左右分屏（左半屏灰度全画幅 / 右半屏边缘全画幅，2:1 水平抽取）。**不再轮换** |
-| **上板状态** | ✅ **JTAG 下载成功**（2026-09-26 20:2x，JTAG ID `0x10660A79`，日志见 `docs/上板记录_2026-09-26.md`）；❌ **肉眼画面未确认** |
+| **上板状态** | ✅ JTAG 下载成功（2026-09-26 20:2x，JTAG ID `0x10660A79`）；❌ 肉眼画面未确认。**已被上面 `..._2037.bit` 取代** |
 | 内容 | 灰度 → 3×3 中值 → 5×5 高斯 → Sobel(幅值+方向) → NMS → 双阈值滞后(58/21) → 去孤点 → 显示 |
 | 已验证程度 | RTL 实现 + 仿真逐位对拍 + 编译/时序通过 + **JTAG 下载**（**不含**肉眼画面） |
 
 算法来源、逐级映射与对拍数据见 `docs/ALGO_RTL.md`。
 
-## 2. `algo_canny_full_20260926_1954.bit` —— 上一版（含模式轮换，已被上面那份取代）
+## 3. `algo_canny_full_20260926_1954.bit` —— 更早（含模式轮换，已被取代）
 
 | 项 | 值 |
 | --- | --- |
@@ -50,7 +75,7 @@ tools\flash_candidate.bat candidate_bitstreams\<位流文件>
 与当前版的唯一差别就是显示模式：算法链、参数、链路完全相同。
 保留它是因为"JTAG 下载成功"这条证据最早记在它身上，便于对照。
 
-## 3. `pre_algo_edge_display_720p_20260926_1728.bit` —— 移植前的旧基线
+## 4. `pre_algo_edge_display_720p_20260926_1728.bit` —— 移植前的旧基线
 
 | 项 | 值 |
 | --- | --- |
@@ -63,7 +88,7 @@ tools\flash_candidate.bat candidate_bitstreams\<位流文件>
 > 它与 `known_good/edge_detect_720p_verified.bit` 同源思路但**不是**同一份文件，
 > 请勿与已验证恢复位流混淆。
 
-## 4. `known_good/edge_detect_720p_verified.bit`（不在本目录，仅列出以便对照）
+## 5. `known_good/edge_detect_720p_verified.bit`（不在本目录，仅列出以便对照）
 
 | 项 | 值 |
 | --- | --- |
@@ -88,6 +113,7 @@ Get-ChildItem candidate_bitstreams,known_good -Filter *.bit -Recurse |
 
 | 文件 | SHA-256 |
 | --- | --- |
+| `candidate_bitstreams/algo_uart_tuner_splitonly_20260926_2037.bit` | `4F9D7D387627031A0D8F1AC6F4B0AE5AB1CC94D716D6238D8ADBCB51ECC3EB05` |
 | `candidate_bitstreams/algo_canny_splitonly_20260926_2019.bit` | `A7234BB845C8E067BA2ABADBE45BF832B3A6BF580D77ECDC938CFC1317A7B1B7` |
 | `candidate_bitstreams/algo_canny_full_20260926_1954.bit` | `0B1354A8C08C544B40801815378BCD93DB604210A1BC1CC805BE2592CC0AED89` |
 | `candidate_bitstreams/pre_algo_edge_display_720p_20260926_1728.bit` | `140E575936B2222E8AAC808A7E7827CED124638A19106A38B3E0260C1A1B2F6A` |
