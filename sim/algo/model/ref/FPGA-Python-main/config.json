@@ -1,0 +1,16 @@
+{
+  "mode_dual": 1,
+  "algo": 1,
+  "t": 24,
+  "t_hi": 58,
+  "t_lo": 21,
+  "median": 1,
+  "gauss": 0,
+  "noise": 0,
+  "color": 0,
+  "shape": 0,
+  "track": 0,
+  "temp": 50,
+  "isol": 1,
+  "box": 50
+}

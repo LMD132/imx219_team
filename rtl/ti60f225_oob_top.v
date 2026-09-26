@@ -821,32 +821,51 @@ begin
   hdmi_tx_de <= rgb_de;
 end
 
-// Competition task 4: grayscale, 3x3 Sobel, and side-by-side output.
-// Camera capture, DDR buffering, and HDMI timing remain unchanged.
-wire edge_vs;
-wire edge_hs;
-wire edge_de;
-wire [7:0] edge_r;
-wire [7:0] edge_g;
-wire [7:0] edge_b;
-edge_display_720p #(
-    .IMAGE_WIDTH(1280),
-    .EDGE_THRESHOLD(11'd180)
-) edge_display_inst (
+//==============================================================================
+// 赛题4: 实时边缘检测流水线
+//   算法全部来自 GitHub 仓库 liuziyaoyao1210-sudo/FPGA-Python (edge_pipeline.py),
+//   按 rtl_model.py 的定点/截位约定逐位改写为 Verilog, 并与 Python 金标准逐位对拍
+//   (sim/algo/tb_alg_chain.v + work/model/check_chain.py)。
+//   链路: 灰度 -> 3x3中值 -> 5x5高斯 -> 3x3 Sobel -> NMS -> 双阈值滞后 -> 去孤点
+//   摄像机 / MIPI / DDR / HDMI 链路完全不动。
+//==============================================================================
+wire        edge_vs;
+wire        edge_hs;
+wire        edge_de;
+wire [11:0] edge_x;
+wire [12:0] edge_y;
+wire [7:0]  edge_r;
+wire [7:0]  edge_g;
+wire [7:0]  edge_b;
+
+// 本板无按键, 演示用: 每 128 帧轮换一次显示模式
+//   0=左右2:1分屏(左灰度/右边缘) 1=彩色+红边叠加 2=左右1:1分区 3=纯边缘
+reg [9:0] demo_cnt;
+always @(posedge hdmi_tx_slow_clk) begin
+    if (!vid_rst_n)  demo_cnt <= 10'd0;
+    else if (pos_vs) demo_cnt <= demo_cnt + 10'd1;
+end
+wire [1:0] demo_disp = demo_cnt[8:7];
+
+alg_top #(
+    .W(1280), .VEXT(16), .H(720), .REXT(8),
+    .HTOTAL(1650),              // 行周期初值; 运行期按输入光栅实测修正
+    .HALF(640), .ROWD(7)
+) u_alg_top (
     .clk(hdmi_tx_slow_clk),
     .rst_n(vid_rst_n),
-    .in_vs(hdmi_tx_vs),
-    .in_hs(hdmi_tx_hs),
-    .in_de(hdmi_tx_de),
-    .in_r(hdmi_tx_rdata),
-    .in_g(hdmi_tx_gdata),
-    .in_b(hdmi_tx_bdata),
-    .out_vs(edge_vs),
-    .out_hs(edge_hs),
-    .out_de(edge_de),
-    .out_r(edge_r),
-    .out_g(edge_g),
-    .out_b(edge_b)
+    .in_vs(hdmi_tx_vs), .in_hs(hdmi_tx_hs), .in_de(hdmi_tx_de),
+    .in_r(hdmi_tx_rdata), .in_g(hdmi_tx_gdata), .in_b(hdmi_tx_bdata),
+    .cfg_mode(2'd2),                 // CANNY 全链路
+    .cfg_t(11'd24), .cfg_lo(11'd21), .cfg_hi(11'd58),
+    .cfg_median_en(1'b1),
+    .cfg_gauss_en(1'b0),             // CANNY 档自动开 5x5 高斯
+    .cfg_isol_en(1'b1),
+    .cfg_disp_mode(demo_disp),
+    .cfg_ov_color(1'b1),
+    .out_vs(edge_vs), .out_hs(edge_hs), .out_de(edge_de),
+    .out_x(edge_x), .out_y(edge_y),
+    .out_r(edge_r), .out_g(edge_g), .out_b(edge_b)
 );
 //==============================================================================
 // MIPI DSI

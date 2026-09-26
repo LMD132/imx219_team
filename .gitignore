@@ -29,3 +29,10 @@ Desktop.ini
 # only after checking redistribution rights.
 /rtl/cam/doc/
 /rtl/cam_i2c_ctrl/*.docx
+
+# Simulation build products and Python caches
+*.vvp
+__pycache__/
+/sim/algo/run/
+/sim/algo/dbg_gauss.txt
+/sim/algo/in_rgb.hex
