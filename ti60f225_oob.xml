@@ -19,6 +19,11 @@
         <efx:design_file name="rtl/algo/alg_despeckle.v" version="default" library="default" />
         <efx:design_file name="rtl/algo/alg_vdisp.v" version="default" library="default" />
         <efx:design_file name="rtl/algo/alg_top.v" version="default" library="default" />
+        <efx:design_file name="rtl/uart_rx.v" version="default" library="default" />
+        <efx:design_file name="rtl/uart_tx.v" version="default" library="default" />
+        <efx:design_file name="rtl/alg_cfg_uart.v" version="default" library="default" />
+        <efx:design_file name="rtl/alg_cfg_sync.v" version="default" library="default" />
+        <efx:design_file name="rtl/alg_cfg_telemetry.v" version="default" library="default" />
         <efx:design_file name="rtl/mipi_csi_rx.sv" version="default" library="default" />
         <efx:design_file name="rtl/cam/piv2_config.v" version="default" library="default" />
         <efx:design_file name="rtl/cam/i2c_phy.v" version="default" library="default" />

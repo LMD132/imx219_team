@@ -146,6 +146,12 @@ module ti60f225_oob_top #(
        //LED
        output [7:0] led,
 
+       // UART 调参/状态通道 (FT4232H 通道C = 板载 J8 排针)
+       //   o_uart_txd -> GPIOR_28 (R14), i_uart_rxd -> GPIOL_02 (R4)
+       //   PC 端工具: tools/alg_tuner.py
+       output wire o_uart_txd,
+       input  wire i_uart_rxd,
+
        // MIPI DSI
        input	wire	                     i_mipi_tx_pclk		,
        output	wire	                     mipi_dp_clk_LP_P_OUT		,
@@ -838,12 +844,134 @@ wire [7:0]  edge_r;
 wire [7:0]  edge_g;
 wire [7:0]  edge_b;
 
-// 显示模式固定为 0 = 同视野左右分屏(2:1 水平抽取)
+// 运行期调参: alg_top 的 cfg_* 全部改由 UART 寄存器组驱动,
+// 默认值 = 之前写死的常量, 因此不接串口时画面与上一版逐位一致。
+// 显示模式默认 0 = 同视野左右分屏(2:1 水平抽取):
 //   左半屏 = 灰度全画幅, 右半屏 = 边缘全画幅, 两者是同一完整视野
 //   (原"每 128 帧轮换 0/1/2/3"的演示计数已按需求移除)
 //   alg_vdisp 里另外三种模式(mode 1 彩色+红边 / 2 左右1:1 / 3 纯边缘)保留在模块里,
-//   改这里一个常量即可切回。
-localparam [1:0] DISP_MODE = 2'd0;
+//   PC 端发 D0..D3 即可切换, 不需要重新编译或重新烧录。
+//==============================================================================
+// 运行期调参通道 (UART, 115200 8N1)
+//   PC( tools/alg_tuner.py 的滑块 ) --USB串口--> FPGA UART RX
+//   --> alg_cfg_uart 寄存器组 --> alg_cfg_sync 跨时钟域 --> alg_top 的 cfg_* 端口
+//   命令: M/T/L/H/N/G/I/D/C/R   (取值范围见 rtl/alg_cfg_uart.v 的文件头)
+//   状态: 每 500ms 回一行, 收到命令后立即回一行, 例如
+//         M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1
+//   alg_top 及其下游算法 RTL 一行未改, 只是参数来源从常量变成了寄存器。
+//==============================================================================
+wire [7:0]  w_uart_byte;
+wire        w_uart_byte_valid;
+wire [1:0]  w_cfg_mode;
+wire [10:0] w_cfg_t;
+wire [10:0] w_cfg_lo;
+wire [10:0] w_cfg_hi;
+wire        w_cfg_median_en;
+wire        w_cfg_gauss_en;
+wire        w_cfg_isol_en;
+wire [1:0]  w_cfg_disp_mode;
+wire        w_cfg_ov_color;
+wire        w_cfg_commit;
+// 跨到 HDMI 像素时钟域后的运行期参数 (真正接到 alg_top 上的那一份)
+wire [1:0]  w_px_mode;
+wire [10:0] w_px_t;
+wire [10:0] w_px_lo;
+wire [10:0] w_px_hi;
+wire        w_px_median_en;
+wire        w_px_gauss_en;
+wire        w_px_isol_en;
+wire [1:0]  w_px_disp_mode;
+wire        w_px_ov_color;
+uart_rx #(
+    .CLK_HZ (25000000),
+    .BAUD   (115200)
+) u_alg_uart_rx (
+    .clk     (CLK_25M),
+    .rst_n   (w_arstn),
+    .i_rxd   (i_uart_rxd),
+    .o_data  (w_uart_byte),
+    .o_valid (w_uart_byte_valid)
+);
+alg_cfg_uart #(
+    .MODE_INIT   (2'd2),
+    .T_INIT      (11'd24),
+    .LO_INIT     (11'd21),
+    .HI_INIT     (11'd58),
+    .MEDIAN_INIT (1'b1),
+    .GAUSS_INIT  (1'b0),
+    .ISOL_INIT   (1'b1),
+    .DISP_INIT   (2'd0),
+    .OVC_INIT    (1'b1)
+) u_alg_cfg_uart (
+    .clk         (CLK_25M),
+    .rst_n       (w_arstn),
+    .i_data      (w_uart_byte),
+    .i_valid     (w_uart_byte_valid),
+    .o_mode      (w_cfg_mode),
+    .o_t         (w_cfg_t),
+    .o_lo        (w_cfg_lo),
+    .o_hi        (w_cfg_hi),
+    .o_median_en (w_cfg_median_en),
+    .o_gauss_en  (w_cfg_gauss_en),
+    .o_isol_en   (w_cfg_isol_en),
+    .o_disp_mode (w_cfg_disp_mode),
+    .o_ov_color  (w_cfg_ov_color),
+    .o_commit    (w_cfg_commit)
+);
+alg_cfg_telemetry #(
+    .CLK_HZ    (25000000),
+    .BAUD      (115200),
+    .PERIOD_MS (500)
+) u_alg_cfg_telemetry (
+    .clk      (CLK_25M),
+    .rst_n    (w_arstn),
+    .i_mode   (w_cfg_mode),
+    .i_t      (w_cfg_t),
+    .i_lo     (w_cfg_lo),
+    .i_hi     (w_cfg_hi),
+    .i_median (w_cfg_median_en),
+    .i_gauss  (w_cfg_gauss_en),
+    .i_isol   (w_cfg_isol_en),
+    .i_disp   (w_cfg_disp_mode),
+    .i_ovc    (w_cfg_ov_color),
+    .i_update (w_cfg_commit),
+    .o_txd    (o_uart_txd)
+);
+alg_cfg_sync #(
+    .MODE_INIT   (2'd2),
+    .T_INIT      (11'd24),
+    .LO_INIT     (11'd21),
+    .HI_INIT     (11'd58),
+    .MEDIAN_INIT (1'b1),
+    .GAUSS_INIT  (1'b0),
+    .ISOL_INIT   (1'b1),
+    .DISP_INIT   (2'd0),
+    .OVC_INIT    (1'b1)
+) u_alg_cfg_sync (
+    .clk_a     (CLK_25M),
+    .rst_a_n   (w_arstn),
+    .i_commit  (w_cfg_commit),
+    .i_mode    (w_cfg_mode),
+    .i_t       (w_cfg_t),
+    .i_lo      (w_cfg_lo),
+    .i_hi      (w_cfg_hi),
+    .i_median  (w_cfg_median_en),
+    .i_gauss   (w_cfg_gauss_en),
+    .i_isol    (w_cfg_isol_en),
+    .i_disp    (w_cfg_disp_mode),
+    .i_ovc     (w_cfg_ov_color),
+    .clk_b     (hdmi_tx_slow_clk),
+    .rst_b_n   (vid_rst_n),
+    .o_mode    (w_px_mode),
+    .o_t       (w_px_t),
+    .o_lo      (w_px_lo),
+    .o_hi      (w_px_hi),
+    .o_median  (w_px_median_en),
+    .o_gauss   (w_px_gauss_en),
+    .o_isol    (w_px_isol_en),
+    .o_disp    (w_px_disp_mode),
+    .o_ovc     (w_px_ov_color)
+);
 
 alg_top #(
     .W(1280), .VEXT(16), .H(720), .REXT(8),
@@ -854,13 +982,13 @@ alg_top #(
     .rst_n(vid_rst_n),
     .in_vs(hdmi_tx_vs), .in_hs(hdmi_tx_hs), .in_de(hdmi_tx_de),
     .in_r(hdmi_tx_rdata), .in_g(hdmi_tx_gdata), .in_b(hdmi_tx_bdata),
-    .cfg_mode(2'd2),                 // CANNY 全链路
-    .cfg_t(11'd24), .cfg_lo(11'd21), .cfg_hi(11'd58),
-    .cfg_median_en(1'b1),
-    .cfg_gauss_en(1'b0),             // CANNY 档自动开 5x5 高斯
-    .cfg_isol_en(1'b1),
-    .cfg_disp_mode(DISP_MODE),       // 同视野左右分屏
-    .cfg_ov_color(1'b1),             // 仅 mode 1 使用; mode 0 忽略此位
+    .cfg_mode(w_px_mode),                 // CANNY 全链路
+    .cfg_t(w_px_t), .cfg_lo(w_px_lo), .cfg_hi(w_px_hi),
+    .cfg_median_en(w_px_median_en),
+    .cfg_gauss_en(w_px_gauss_en),             // CANNY 档自动开 5x5 高斯
+    .cfg_isol_en(w_px_isol_en),
+    .cfg_disp_mode(w_px_disp_mode),       // 同视野左右分屏
+    .cfg_ov_color(w_px_ov_color),             // 仅 mode 1 使用; mode 0 忽略此位
     .out_vs(edge_vs), .out_hs(edge_hs), .out_de(edge_de),
     .out_x(edge_x), .out_y(edge_y),
     .out_r(edge_r), .out_g(edge_g), .out_b(edge_b)
