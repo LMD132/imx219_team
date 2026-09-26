@@ -181,25 +181,41 @@ def gratings_page(c):
     foot(c, "第 7 页：条纹光栅")
 
 
-def build(path):
+def build(path, clean=False):
     c = canvas.Canvas(path, pagesize=A4)
     c.setTitle("Edge-detection demo chart, spread layout (A4, 100%)")
     c.setAuthor("imx219_team")
     c.setSubject("Printable targets, one or two patterns per page")
-    for fn in (cover, board9, shapes, digits, face_page, grey_star, gratings_page):
-        fn(c)
-        c.showPage()
+    saved = C.T
+    if clean:
+        # the dense chart draws every glyph through T, and so does every page
+        # here; this filter keeps the target glyphs and drops every caption
+        C.T = C.T_targets_only(saved)
+    try:
+        for fn in (cover, board9, shapes, digits, face_page, grey_star, gratings_page):
+            fn(c)
+            c.showPage()
+    finally:
+        C.T = saved
     c.save()
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=os.path.join("outputs", "edge_detect_demo_chart_spread_A4.pdf"))
-    ap.add_argument("--png", default=os.path.join("work", "preview_spread"))
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--png", default=None)
     ap.add_argument("--dpi", type=int, default=120)
+    ap.add_argument("--clean", action="store_true",
+                    help="patterns only: no titles, captions, notes or page numbers")
     a = ap.parse_args()
+    if a.out is None:
+        a.out = os.path.join("outputs", "edge_detect_demo_chart_spread%s_A4.pdf"
+                             % ("_clean" if a.clean else ""))
+    if a.png is None:
+        a.png = os.path.join("work", "preview_spread_clean" if a.clean
+                             else "preview_spread")
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
-    build(a.out)
+    build(a.out, clean=a.clean)
     print("wrote %s (%d bytes, font=%s)" % (a.out, os.path.getsize(a.out), C.FONT))
     print("preview: %s" % ", ".join(C.render(a.out, a.png, a.dpi)))
     return 0

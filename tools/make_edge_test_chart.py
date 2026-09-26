@@ -355,15 +355,36 @@ def page2(c):
       size=2.6, gray=0.45)
 
 
-def build(path):
+def T_targets_only(base):
+    """--clean filter: keep the target glyphs, drop every caption.
+
+    The only text that is part of a target (rather than a note about it) is the
+    0-9 glyph set, drawn in Helvetica-Bold, and the four strokes of the
+    'EDGE 0123' size ladder.  Everything else - page titles, panel captions,
+    hints, ruler numbers, wedge levels, grating periods, page numbers - is an
+    annotation and is dropped so the sheet holds nothing but patterns.
+    """
+    def t(c, x, y, s, size=3.4, font=None, gray=0.0, align="l"):
+        if font == "Helvetica-Bold" or "EDGE 0123" in s:
+            base(c, x, y, s, size=size, font=font, gray=gray, align=align)
+    return t
+
+
+def build(path, clean=False):
     c = canvas.Canvas(path, pagesize=A4)
     c.setTitle("Edge-detection demo chart (A4, 100%)")
     c.setAuthor("imx219_team")
     c.setSubject("Printable targets for the FPGA real-time edge-detection demo")
-    page1(c)
-    c.showPage()
-    page2(c)
-    c.showPage()
+    saved = globals()["T"]
+    if clean:
+        globals()["T"] = T_targets_only(saved)
+    try:
+        page1(c)
+        c.showPage()
+        page2(c)
+        c.showPage()
+    finally:
+        globals()["T"] = saved
     c.save()
 
 
@@ -387,12 +408,19 @@ def render(pdf, outdir, dpi=150):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=os.path.join("outputs", "edge_detect_demo_chart_A4.pdf"))
-    ap.add_argument("--png", default=os.path.join("work", "preview"))
+    ap.add_argument("--out", default=None)
+    ap.add_argument("--png", default=None)
     ap.add_argument("--dpi", type=int, default=150)
+    ap.add_argument("--clean", action="store_true",
+                    help="patterns only: no titles, captions, notes or page numbers")
     a = ap.parse_args()
+    if a.out is None:
+        a.out = os.path.join("outputs", "edge_detect_demo_chart%s_A4.pdf"
+                             % ("_clean" if a.clean else ""))
+    if a.png is None:
+        a.png = os.path.join("work", "preview_clean" if a.clean else "preview")
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
-    build(a.out)
+    build(a.out, clean=a.clean)
     print("wrote %s (%d bytes, font=%s)" % (a.out, os.path.getsize(a.out), FONT))
     print("preview: %s" % ", ".join(render(a.out, a.png, a.dpi)))
     return 0
