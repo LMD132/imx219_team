@@ -4,6 +4,10 @@
 重新生成：`python tools\make_edge_test_chart.py`
 （加 `--out <路径>` / `--png <目录>` 可换输出位置，`--dpi` 调预览分辨率。）
 
+> 还有一版**稀疏版**（每页 1-2 个图案，7 页，图案放大约 1.6-1.8 倍），
+> 适合让单个图案占满画面逐个拍摄：`outputs/edge_detect_demo_chart_spread_A4.pdf`，
+> 见 `docs/demo_chart_spread.md`。两版都保留。
+
 ---
 
 ## 1. 打印
