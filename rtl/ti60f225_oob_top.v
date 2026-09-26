@@ -838,14 +838,12 @@ wire [7:0]  edge_r;
 wire [7:0]  edge_g;
 wire [7:0]  edge_b;
 
-// 本板无按键, 演示用: 每 128 帧轮换一次显示模式
-//   0=左右2:1分屏(左灰度/右边缘) 1=彩色+红边叠加 2=左右1:1分区 3=纯边缘
-reg [9:0] demo_cnt;
-always @(posedge hdmi_tx_slow_clk) begin
-    if (!vid_rst_n)  demo_cnt <= 10'd0;
-    else if (pos_vs) demo_cnt <= demo_cnt + 10'd1;
-end
-wire [1:0] demo_disp = demo_cnt[8:7];
+// 显示模式固定为 0 = 同视野左右分屏(2:1 水平抽取)
+//   左半屏 = 灰度全画幅, 右半屏 = 边缘全画幅, 两者是同一完整视野
+//   (原"每 128 帧轮换 0/1/2/3"的演示计数已按需求移除)
+//   alg_vdisp 里另外三种模式(mode 1 彩色+红边 / 2 左右1:1 / 3 纯边缘)保留在模块里,
+//   改这里一个常量即可切回。
+localparam [1:0] DISP_MODE = 2'd0;
 
 alg_top #(
     .W(1280), .VEXT(16), .H(720), .REXT(8),
@@ -861,8 +859,8 @@ alg_top #(
     .cfg_median_en(1'b1),
     .cfg_gauss_en(1'b0),             // CANNY 档自动开 5x5 高斯
     .cfg_isol_en(1'b1),
-    .cfg_disp_mode(demo_disp),
-    .cfg_ov_color(1'b1),
+    .cfg_disp_mode(DISP_MODE),       // 同视野左右分屏
+    .cfg_ov_color(1'b1),             // 仅 mode 1 使用; mode 0 忽略此位
     .out_vs(edge_vs), .out_hs(edge_hs), .out_de(edge_de),
     .out_x(edge_x), .out_y(edge_y),
     .out_r(edge_r), .out_g(edge_g), .out_b(edge_b)
