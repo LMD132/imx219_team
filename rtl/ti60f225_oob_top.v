@@ -456,6 +456,7 @@ wire        w_cmd_hysteresis;
 wire [7:0]  w_cmd_pixel_delay;
 wire        w_cmd_override;
 wire        w_cmd_commit;
+wire        w_cmd_ip_sel;
 
 uart_rx #(
        .CLK_HZ (25000000),
@@ -486,7 +487,8 @@ uart_cmd #(
        .o_hysteresis (w_cmd_hysteresis),
        .o_pixel_delay (w_cmd_pixel_delay),
        .o_override   (w_cmd_override),
-       .o_commit     (w_cmd_commit)
+       .o_commit     (w_cmd_commit),
+       .o_ip_sel     (w_cmd_ip_sel)
 );
 
 // Effective operating point: the host wins once it has sent anything, and the
@@ -1082,6 +1084,8 @@ reg        hy_meta;
 reg        hy_sync;
 reg [7:0]  pd_meta;
 reg [7:0]  pd_sync;
+reg        ip_meta;
+reg        ip_sync;
 always @(posedge hdmi_tx_slow_clk or negedge vid_rst_n) begin
     if (!vid_rst_n) begin
         thr_meta <= 11'd16;
@@ -1098,6 +1102,8 @@ always @(posedge hdmi_tx_slow_clk or negedge vid_rst_n) begin
         hy_sync  <= 1'b1;
         pd_meta  <= RGB_PIXEL_DELAY_INIT;
         pd_sync  <= RGB_PIXEL_DELAY_INIT;
+        ip_meta  <= 1'b0;
+        ip_sync  <= 1'b0;
     end else begin
         thr_meta <= w_cfg_threshold;
         thr_sync <= thr_meta;
@@ -1113,6 +1119,8 @@ always @(posedge hdmi_tx_slow_clk or negedge vid_rst_n) begin
         hy_sync  <= hy_meta;
         pd_meta  <= w_cfg_pixel_delay;
         pd_sync  <= pd_meta;
+        ip_meta  <= w_cmd_ip_sel;
+        ip_sync  <= ip_meta;
     end
 end
 
@@ -1462,16 +1470,67 @@ inst_gamma_correction
   .o_vs     (gamma_vs       )
 );
 
+//-----------------------------------------------------------------------------
+// Teammate IP (rtl/teammate_ip/): a self-contained RGB -> gray -> (median) ->
+// (5x5 gauss) -> sobel -> (NMS) -> (hysteresis) -> (isolated removal) chain with
+// its own split view and centre box, written against the same RGB888 + de/hs/vs
+// protocol this top level produces on hdmi_tx_slow_clk. It taps hdmi_tx_* and
+// the DVI encoder is switched between the two chains with UART "I<n>"
+// (0 = the verified chain, 1 = this one). Both chains stay instantiated on
+// purpose: a constant selector would let the synthesiser delete the unused one
+// and the resource report would lie about the pair.
+//
+// The constants are the teammate's own finalised operating point (their
+// README section 4: Canny, median on, isolated-removal on, white edges,
+// split view, centre box).
+//-----------------------------------------------------------------------------
+wire [7:0] tip_r, tip_g, tip_b;
+wire       tip_de, tip_hs, tip_vs;
+
+image_processing_top #(.HACT(1280), .VACT(720)) u_teammate_ip (
+    .clk        (hdmi_tx_slow_clk),
+    .rst_n      (vid_rst_n),
+    .i_de       (hdmi_tx_de),
+    .i_hs       (hdmi_tx_hs),
+    .i_vs       (hdmi_tx_vs),
+    .i_r        (hdmi_tx_rdata),
+    .i_g        (hdmi_tx_gdata),
+    .i_b        (hdmi_tx_bdata),
+    .thr        (8'd24),
+    .thr_hi     (8'd58),
+    .thr_lo     (8'd21),
+    .mode_dual  (1'b1),
+    .algo       (1'b1),
+    .median_en  (1'b1),
+    .isol_en    (1'b1),
+    .color_mode (1'b0),
+    .split_en   (1'b1),
+    .box_en     (1'b1),
+    .o_de       (tip_de),
+    .o_hs       (tip_hs),
+    .o_vs       (tip_vs),
+    .o_r        (tip_r),
+    .o_g        (tip_g),
+    .o_b        (tip_b)
+);
+
+wire [7:0] enc_r  = ip_sync ? tip_r  : ov_r;
+wire [7:0] enc_g  = ip_sync ? tip_g  : ov_g;
+wire [7:0] enc_b  = ip_sync ? tip_b  : ov_b;
+wire       enc_de = ip_sync ? tip_de : ov_de;
+wire       enc_hs = ip_sync ? tip_hs : ov_hs;
+wire       enc_vs = ip_sync ? tip_vs : ov_vs;
+
 dvi_encoder dvi_encoder_m0
 (
 	.pixelclk      		(hdmi_tx_slow_clk          ),// system clock
 	.rst_p         		(~vid_rst_n      ),// reset
-	.i_bdata       (ov_b),
-	.i_gdata       (ov_g),
-	.i_rdata       (ov_r),
-  .i_de          (ov_de),
-	.i_hs          (ov_hs),
-	.i_vs          (ov_vs),
+	.i_bdata       (enc_b),
+	.i_gdata       (enc_g),
+	.i_rdata       (enc_r),
+  .i_de          (enc_de),
+	.i_hs          (enc_hs),
+	.i_vs          (enc_vs),
 	
   .video_format     (video_format), //// 00 = RGB, 01 = YCbCr 4:2:2, 10 = YCbCr 4:4:4
   .video_VIC        (0),

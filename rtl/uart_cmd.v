@@ -15,6 +15,7 @@
 //     H<n>\n       local hysteresis          0..1
 //     P<n>\n       colour delay pixels       0..63
 //     K\n          release control back to the on-board keys
+//     I<n>\n       pixel source: 0 = the verified chain, 1 = the teammate IP
 //
 // Examples: "T16\n", "E2\n", "K\n". Separators such as '=' or spaces are
 // accepted and ignored, so "T=16" and "T 16" work as well.
@@ -39,7 +40,8 @@ module uart_cmd #(
     parameter [1:0]  DENOISE_INIT   = 2'd2,
     parameter [1:0]  CURVE_INIT      = 2'd1,
     parameter        HYSTERESIS_INIT = 1'b1,
-    parameter [7:0]  PIXEL_DELAY_INIT = 8'd8
+    parameter [7:0]  PIXEL_DELAY_INIT = 8'd8,
+    parameter        IP_SEL_INIT      = 1'b0
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -52,6 +54,7 @@ module uart_cmd #(
     output reg  [1:0]  o_curve,
     output reg         o_hysteresis,
     output reg  [7:0]  o_pixel_delay,
+    output reg         o_ip_sel,
     output reg         o_override,
     output reg         o_commit
 );
@@ -64,7 +67,8 @@ module uart_cmd #(
                      K_E = 3'd3,
                      K_C = 3'd4,
                      K_H = 3'd5,
-                     K_P = 3'd6;
+                     K_P = 3'd6,
+                     K_I = 3'd7;
 
     localparam [1:0] S_KEY = 2'd0,
                      S_VAL = 2'd1;
@@ -100,6 +104,7 @@ module uart_cmd #(
             o_curve     <= CURVE_INIT;
             o_hysteresis <= HYSTERESIS_INIT;
             o_pixel_delay <= PIXEL_DELAY_INIT;
+            o_ip_sel    <= IP_SEL_INIT;
             o_override  <= 1'b0;
             o_commit    <= 1'b0;
         end else begin
@@ -147,6 +152,11 @@ module uart_cmd #(
                             // Hand the stage back to the on-board keys.
                             o_override <= 1'b0;
                             o_commit   <= 1'b1;
+                        end else if (i_data == "I" || i_data == "i") begin
+                            key   <= K_I;
+                            state <= S_VAL;
+                            acc   <= 16'd0;
+                            got_digit <= 1'b0;
                         end
                     end
 
@@ -167,6 +177,7 @@ module uart_cmd #(
                                     K_C: o_curve      <= (val > 8'd3) ? 2'd3 : val[1:0];
                                     default: o_hysteresis <= (val != 8'd0);
                                     K_P: o_pixel_delay <= (val > 8'd63) ? 8'd63 : val;
+                                    K_I: o_ip_sel      <= (val != 8'd0);
                                 endcase
                             end
                             state <= S_KEY;
