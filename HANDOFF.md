@@ -30,9 +30,10 @@ Ti60F225I3 DemoBoard V4 + IMX219 2-lane MIPI → DDR → 720p HDMI 已出图。`
 `otsu_threshold`、`guided_filter`、`detect_shapes`/`draw_shapes`、
 `color_edge_overlay` mode 2（按梯度方向着色）、`gaussian3x3`、`add_salt_pepper`。
 
-**本分支新引入的演示行为**：顶层无按键，故加了 `demo_cnt` 计数器，
-**每 128 帧轮换显示模式 0/1/2/3**。上板时若觉得画面"每隔几秒换一种样式"，
-那是这个演示轮换，不是算法异常。
+**显示模式**：顶层用 `localparam DISP_MODE = 2'd0` 固定为**同视野左右分屏**
+（左半屏 = 灰度全画幅，右半屏 = 边缘全画幅，2:1 水平抽取）。
+原先"每 128 帧轮换 0/1/2/3"的演示计数已在 2026-09-26 按需求移除；
+`alg_vdisp` 里另外三种模式仍然保留，改这一个常量即可切回。
 
 ## 交接时最容易误解的点
 
