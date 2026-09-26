@@ -21,7 +21,8 @@ Ti60F225I3 DemoBoard V4 + IMX219 2-lane MIPI → DDR → 720p HDMI 已出图。`
 | Python 溯源 | ✅ 仓库原 `edge_pipeline.py` ≡ 金标准模型，2 图 × 8 级 0 mismatch |
 | 编译 | ✅ Efinity `map/interface/pnr/pgm` 全 PASS，全设计无负 slack |
 | 资源 | XLRs 21593/60800 (35.51%)，Memory Blocks **208/256 (81.25%)**，DSP 4/160 |
-| JTAG / 上板 | ❌ **未做** |
+| JTAG 下载 | ✅ **已完成**（2026-09-26，成功烧入 `algo_canny_full_20260926_1954.bit`；JTAG ID `0x10660A79`；日志见 `docs/上板记录_2026-09-26.md`） |
+| 上板肉眼画面 | ❌ **未确认**（需看屏幕；观察清单见上板记录 §5） |
 
 详细推导、延迟表、对齐原理、未 RTL 化清单见 `docs/ALGO_RTL.md`。
 

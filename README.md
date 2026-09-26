@@ -14,7 +14,8 @@
   的 `edge_pipeline.py`（灰度 → 中值 → 5×5 高斯 → Sobel → NMS → 双阈值滞后 → 去孤点）
   完整改写成 Verilog，放在 `rtl/algo/`。已通过 **逐位对拍**（仿真 7 级 × 3 种模式
   0 mismatch；与仓库原始 Python 逐级 0 mismatch）和 **Efinity 全流程编译**
-  （`map/interface/pnr/pgm` PASS，无负 slack）。**尚未 JTAG 下载、尚未上板肉眼确认。**
+  （`map/interface/pnr/pgm` PASS，无负 slack）。已 **JTAG 下载成功**（2026-09-26，
+  见 `docs/上板记录_2026-09-26.md`）；**肉眼画面确认尚未做。**
   该分支同时修正了上面那条分屏口径问题（mode 0 = 同一完整视野 2:1 抽取）。
   算法的来源、逐级映射、延迟表与对齐原理见 [`docs/ALGO_RTL.md`](docs/ALGO_RTL.md)。
 
@@ -48,7 +49,8 @@
 | 高阶③ DDR 帧缓存的回放/冻结/多帧对比 | 🔄 整帧经 DDR 中介成立；扩展功能未做 |
 | 高阶⑥ 圆/矩形识别 + 屏幕文字 | ❌ 未做 |
 | 时间域平均 `temporal_blend`（压帧间白点闪烁） | ❌ 未 RTL 化（下一步优先级最高） |
-| JTAG 下载、上板画面确认、演示视频 | ❌ 未做 |
+| JTAG 下载 | ✅ 2026-09-26 完成（`algo_canny_full_20260926_1954.bit`，日志见 `docs/上板记录_2026-09-26.md`） |
+| 上板画面确认、演示视频 | ❌ 未做 |
 
 ## 关键文件
 
