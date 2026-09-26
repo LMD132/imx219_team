@@ -30,6 +30,7 @@
 """
 
 import queue
+import argparse
 import re
 import sys
 import threading
@@ -230,6 +231,16 @@ class Tuner:
                 self.port_var.set(names[0])
         self._log("发现串口: %s" % (", ".join(p.device for p in ports) or "无"))
 
+    def select_port(self, port):
+        """Point the combobox at `port`, e.g. "COM5", preferring the friendly
+        label from list_ports when one exists.  Falls back to the bare name, so
+        this works even before pyserial enumerated anything."""
+        for label, dev in self.port_map.items():
+            if dev.upper() == port.upper():
+                self.port_var.set(label)
+                return
+        self.port_var.set(port)
+
     def toggle(self):
         if self.ser is not None:
             self.disconnect()
@@ -392,12 +403,25 @@ class Tuner:
 
 
 def main():
+    ap = argparse.ArgumentParser(
+        description="Runtime tuner for the contest-4 edge pipeline over the "
+                    "board UART.  e.g.  python alg_tuner.py --port COM5 --connect")
+    ap.add_argument("--port", "-p", default=None,
+                    help="serial port, e.g. COM5 (default: auto-pick an FTDI port)")
+    ap.add_argument("--connect", action="store_true",
+                    help="connect immediately instead of waiting for a click")
+    args = ap.parse_args()
+
     root = tk.Tk()
     try:
         ttk.Style().theme_use("vista")
     except Exception:
         pass
-    Tuner(root)
+    tuner = Tuner(root)
+    if args.port:
+        tuner.select_port(args.port)
+        if args.connect:
+            root.after(150, tuner.connect)
     root.mainloop()
 
 
