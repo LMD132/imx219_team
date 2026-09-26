@@ -139,12 +139,17 @@ Second bitstream after the `digit` fix, JTAG loaded, `COM5`:
 | `D7` | `DS=5` (clamp) |
 | `E0` / `E1` / `E2` | `EN=0` / `EN=1` / `EN=2` |
 | `K` | `SRC=K`, and `THR` returns to the key-controlled value |
+| `P40` / `P8` | `PD=40` / `PD=08`, and `SRC` flips `K` -> `U`, so the colour-delay knob is live (2026-09-26) |
     THR=016 SH=1 DS=3 EN=2 SRC=K PIX=921600 CV=1 HY=1 PD=08\r\n
 
-The idle line is the power-on default: the floor default was lowered from 24 to
-16 because that is where the two stage denoiser lets the contour close up
-without picking up noise, see `docs/edge_overlay.md` and
-`docs/capture_and_quantify.md`.
+**Correction, 2026-09-26:** the floor is still **24** on hardware, not 16. `13bd7a7`
+lowered the `threshold_ctrl.v` parameter default to 16 but both top-level
+instantiations in `rtl/ti60f225_oob_top.v` (lines 422 and 472) pass `11'd24`
+explicitly, and the board reports `THR=024` at power-on (measured on COM5, see
+`docs/tuning_findings.md` section 9.2). `T16` / `S8` over UART do work, they are
+just not the power-on value. The reasoning behind 24 -> 16 is unaffected and is
+in `docs/edge_overlay.md` and `docs/capture_and_quantify.md`.
+
 ## Self-checking sweeps
 
 A sweep is only worth reading if the scene stayed put while it ran. The camera's

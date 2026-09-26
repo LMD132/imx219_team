@@ -212,3 +212,55 @@ HDMI 时钟域 -> `rgb_delay.pixel_delay`，回读行末尾多出 `PD=nn`。
 - 资源：`rgb_delay` 39 FF / 53 LUT / 24 RAM（RAM 数不变），顶层 10614 FF / 12549 LUT，
   最差 slack +0.479 ns，四行 PASS。
 - 上板要做的：从 `P20` 起一段一段扫，直到右半红边和彩图完全重合，把值记进文档。
+
+## 9. 上板记录：P 旋钮版第三次烧录（2026-09-26）
+
+`cmd /c tools\build\program.bat outflow\ti60f225_oob.bit` 成功，日志：
+
+```
+Using board profile: 'Generic Board Profile Using FT4232H' for pinout connection
+Connecting to JTAG_TAP: efx_ti
+jtag programming started!
+JTAG Programming on ftdi://0x0403:0x6011:2:9/2
+Programming 'outflow\ti60f225_oob.bit' via JTAG at freq 6.0 MHz
+Device ID read from JTAG: 0x10660A79
+... finished with JTAG programming
+```
+
+**烧录前的 `ERROR: No USB target detected, aborting!` 原因是板子不在主机上**：当时枚举 USB 只有摄像头 UVC（`VID_3277&PID_00A0`）和蓝牙，没有任何 FTDI 设备，串口只有 COM3/COM4（都是蓝牙）。板子插好上电后出现 `FTDI Quad RS232-HS`（`VID_0403&PID_6011`），板级串口是 **COM5**（COM6 静默、不吐遥测）。
+
+以后遇到这个报错不要反复重试 `program.bat`，先跑 `tools\board_probe.ps1`：退出码 0 = FT4232H 在场，1 = 板子没被主机看到，并列出上电/线材的检查顺序。这条区分很重要，因为 `program.bat` 对"板子没上电"和"用了充电线"给的是同一句话。
+
+烧录后（COM5，115200 8N1）**上电默认**回读：
+
+```
+THR=024 SH=8 DS=3 EN=2 SRC=U PIX=921600 CV=1 HY=1 PD=08
+```
+
+`PIX=921600` = 1280 x 720，说明 MIPI -> DDR -> HDMI 整条链路在跑，帧级无丢/无多像素。
+
+### 9.1 位流与源码一致性核查
+
+`rgb_delay_720p.v` 的文件时间比 `.bit` 晚 41 秒，怀疑烧的是旧版，查完排除了：那 41 秒是编译结束后把实测资源数字回填进文件头注释（`154f1aa` 的 diff 里 "Measured on TI60F225 ... 39 FFs, 53 LUTs, 24 RAM blocks, worst slack +0.479 ns" 那一段），逻辑没变。功能侧也自证：
+
+| 发出 | 回读 | 说明 |
+| --- | --- | --- |
+| `P8` | `PD=08`，`SRC` 由 `K` 变 `U` | 命令确实进板并被采纳 |
+| `P40` | `PD=40` | `pixel_delay` 真的接进了 `rgb_delay`（否则顶层那个端口悬空，map 阶段就会报错） |
+| `P8` | `PD=08` | 已恢复到上电默认 |
+
+这是套可复用的核对办法：**位流新旧不要只看文件时间，发一条遥测里能回读的命令**，回读值对得上就说明烧的就是那一版。
+
+### 9.2 顺带发现一个真问题：上电 floor 还是 24，不是 16
+
+`13bd7a7` 把 `threshold_ctrl.v` 的 `THRESHOLD_INIT` 默认值从 24 改成了 16，但顶层两处实例化都显式覆盖成 `11'd24`，所以板上空载回读是 `THR=024`（强阈值 48）：
+
+- `rtl/ti60f225_oob_top.v` 第 422 行 `u_threshold_ctrl` 的 `.THRESHOLD_INIT (11'd24)`
+- `rtl/ti60f225_oob_top.v` 第 472 行 `u_cmd` 的 `.THRESHOLD_INIT (11'd24)`
+- 模块自己的默认值 `rtl/threshold_ctrl.v` 第 53 行已经是 `11'd16`
+
+也就是说那次改动写的目标（"power-on floor 24 -> 16"）**在硬件上没有生效**：只有按键（KEY1 加 8）和串口 `T<n>` 能改到 16，断电重上电又回到 24。这直接影响第 6 节那件"上板验证 floor=16"的待办——串口下 `T16 S8` 是能测的，但"上电即 16"目前不是现状，要真的上电即 16 需要把上面两处覆盖改成 `11'd16` 再编译烧录。离线结论（16 比 24 在暗区多一倍轮廓）本身不受影响。
+
+### 9.3 堵点
+
+HDMI 采集卡此刻不在系统里（`Get-PnpDevice -Class Camera,Image` 只有摄像头 UVC），所以看不到屏幕，第 8 节的 P 扫描没做。把采集卡 USB 插回来后从 `P20` 起扫到红边与彩图重合，结果回填本节。
