@@ -133,10 +133,47 @@ ERROR : Not enough physical locations for EFM blocks   : capacity=14720 usage=55
 
 ## 8. 下一步的选项
 
-- **A**：按第 6 节把行级延迟改成行缓存，在 `teammate-ip` 分支上改到 `pnr` 过，再上板看效果
+- **A（已完成，见第 9 节）**：按第 6 节把行级延迟改成行缓存，改到 `pnr` 过，再上板看效果
   （这样 `I0/I1` 可以直接 A/B 对比两条链）。
 - **B**：只在文档层面把这个结论反馈给队友，让他自己改。
 - **C**：先不动，我们这条已验证的链继续往下做赛题（红边叠加的对齐、floor 上板验证等）。
 
 不管选哪个，`I<n>` 这个开关和 `rtl/teammate_ip/` 的脚手架都已经在 `teammate-ip` 分支上，
 不会影响 `uart-bringup` 和 `main`。
+## 9. 队友的修复版：`pnr` 已经过了（2026-09-26）
+
+队友按第 6 节的思路出了修复版（10 个 .v，新增 `line_delay_n.v`）。取进来重新编译：
+
+```
+map : PASS    interface : PASS    pnr : PASS    pgm : PASS
+```
+
+资源（Ti60F225，I3 时序模型）：
+
+| 资源 | 用了 | 容量 | 说明 |
+| --- | --- | --- | --- |
+| EFX_FF | 13168 | 60800 | 21.7% |
+| EFX_SRL8 | 1866 | 14720 | 12.7%，原版是 55351 |
+| EFX_ADD | 4181 | — | |
+| EFX_LUT4 | 15969 | — | |
+| EFX_RAM10 + DPRAM10 | 211 + 8 = 219 | 256 | **85.5%，只剩 37 块** |
+| EFX_DSP48 / DSP24 | 4 / 20 | — | |
+
+最差 setup slack `+0.297 ns`（我们基线 `+0.479 ns`），为正，时序收敛。
+bit 归档：`candidate_bitstreams/teammate_canny.bit`（这版是**两条链同时综合**的，
+上板后 `I0` / `I1` 可以直接切着对比）。
+
+他做了什么（正好对上第 6 节的建议）：
+
+1. 新增 `line_delay_n.v`：N 拍延迟 = N/DEPTH 个整行（`tip_line_buffer` 级联，进 BRAM）
+   + N%DEPTH 拍零头（`delay_n`，最多 7 拍）。
+2. 6 个算法模块里的行级 `delay_n` 全换成 `line_delay_n`（`we=i_de`）。
+3. 顶层行列计数 `hc`/`vc` 改成输出级实时计数，干掉两块 16bit×8967 的移位链（约 28.7 万位）。
+4. `de/hs/vs` 合并成 3bit 一条 BRAM 链（`u_sync`）。
+
+代价：BRAM 从 122/256 涨到 219/256。后面队友链要再加东西（比如 temporal blend 要 DDR
+帧缓存、或者 `delay_n` 之外再加对齐）之前，先看余量。
+
+引入修复版时我方只做了一件事：`ti60f225_oob.xml` 补一条
+`rtl/teammate_ip/line_delay_n.v` 的 `design_file`（队友 README 第 4 节也提醒了）。
+其余 9 个文件沿用他给的内容，未再改动。

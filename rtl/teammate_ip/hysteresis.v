@@ -71,12 +71,17 @@ module hysteresis #(
 
     // ---- 输出对齐(weak_p/edge_cur 相对输入打拍) ----
     wire win_d, hs_d, vs_d;
-    delay_n #(.N(OUT_DELAY), .W(1)) u_dv (.clk(clk), .din(win_valid), .dout(win_d));
-    delay_n #(.N(OUT_DELAY), .W(1)) u_dh (.clk(clk), .din(i_hs),      .dout(hs_d));
-    delay_n #(.N(OUT_DELAY), .W(1)) u_ds (.clk(clk), .din(i_vs),      .dout(vs_d));
+    line_delay_n #(.WIDTH(1), .DEPTH(DEPTH), .N(OUT_DELAY)) u_dv
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(win_valid), .dout(win_d));
+    line_delay_n #(.WIDTH(1), .DEPTH(DEPTH), .N(OUT_DELAY)) u_dh
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(i_hs),      .dout(hs_d));
+    line_delay_n #(.WIDTH(1), .DEPTH(DEPTH), .N(OUT_DELAY)) u_ds
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(i_vs),      .dout(vs_d));
     wire weak_c, edge_d;
-    delay_n #(.N(OUT_DELAY), .W(1)) u_wk (.clk(clk), .din(weak_p),      .dout(weak_c));
-    delay_n #(.N(OUT_DELAY), .W(1)) u_de (.clk(clk), .din(edge_cur),  .dout(edge_d));
+    line_delay_n #(.WIDTH(1), .DEPTH(DEPTH), .N(OUT_DELAY)) u_wk
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(weak_p),    .dout(weak_c));
+    line_delay_n #(.WIDTH(1), .DEPTH(DEPTH), .N(OUT_DELAY)) u_de
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(edge_cur),  .dout(edge_d));
 
     always @(posedge clk) begin
         if (!rst_n) begin

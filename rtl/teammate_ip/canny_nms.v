@@ -74,7 +74,8 @@ module canny_nms #(
 
     // ---- 方向与 NMS 判定 ----
     wire [1:0] dir_d;
-    delay_n #(.N(OUT_DELAY), .W(2)) u_dd (.clk(clk), .din(i_dir), .dout(dir_d));
+    line_delay_n #(.WIDTH(2), .DEPTH(DEPTH), .N(OUT_DELAY)) u_dd
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(i_dir), .dout(dir_d));
 
     wire keep =
         (dir_d == 2'd0) ? (m_center > n_left)  && (m_center >= n_right) :
@@ -86,9 +87,12 @@ module canny_nms #(
 
     // ---- 输出对齐 ----
     wire win_d, hs_d, vs_d;
-    delay_n #(.N(OUT_DELAY), .W(1)) u_dv (.clk(clk), .din(win_valid), .dout(win_d));
-    delay_n #(.N(OUT_DELAY), .W(1)) u_dh (.clk(clk), .din(i_hs),      .dout(hs_d));
-    delay_n #(.N(OUT_DELAY), .W(1)) u_ds (.clk(clk), .din(i_vs),      .dout(vs_d));
+    line_delay_n #(.WIDTH(1), .DEPTH(DEPTH), .N(OUT_DELAY)) u_dv
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(win_valid), .dout(win_d));
+    line_delay_n #(.WIDTH(1), .DEPTH(DEPTH), .N(OUT_DELAY)) u_dh
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(i_hs),      .dout(hs_d));
+    line_delay_n #(.WIDTH(1), .DEPTH(DEPTH), .N(OUT_DELAY)) u_ds
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(i_vs),      .dout(vs_d));
 
     always @(posedge clk) begin
         if (!rst_n) begin

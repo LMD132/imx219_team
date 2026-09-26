@@ -19,6 +19,7 @@
         <efx:design_file name="rtl/gauss3_720p.v" version="default" library="default" />
 <efx:design_file name="rtl/rgb_delay_720p.v" version="default" library="default" />
 <efx:design_file name="rtl/teammate_ip/line_buffer.v" version="default" library="default" />
+<efx:design_file name="rtl/teammate_ip/line_delay_n.v" version="default" library="default" />
 <efx:design_file name="rtl/teammate_ip/delay_n.v" version="default" library="default" />
 <efx:design_file name="rtl/teammate_ip/median3x3.v" version="default" library="default" />
 <efx:design_file name="rtl/teammate_ip/gaussian5x5.v" version="default" library="default" />

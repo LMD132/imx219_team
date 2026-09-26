@@ -4,21 +4,18 @@
 //
 // 固定流水线(模块全部运行, 统一延迟 D_TOT = 7*HACT+7 拍):
 //   RGB -> gray -> median -> gauss -> sobel -> nms -> hysteresis -> isolated -> 分屏
-//   algo      : 0 = Sobel 保底(单阈值 thr / mode_dual 双阈值)
-//               1 = Canny 加分(5x5 高斯 + NMS + 双阈值滞后)
-//   median_en : 启用 3x3 中值
-//   isol_en   : 启用孤立点消除
-//   color_mode: 0=白边, 1=红边(右半面板)
-//   split_en  : 1=左灰度/右边缘, 0=全屏边缘叠加灰度
-//   box_en    : 画面中心固定红框(左右面板都画)
 //
-// 未实现(见集成文档): temporal_blend(需 DDR 上一帧)、detect_shapes/otsu(软件函数)、
-//                      GRAY/EDGE 文字标签(需字库 ROM)。
-// 接口: 24bit RGB 像素流 + de/hs/vs(与 imx219_hdmi_720p 工程 hdmi_tx_* 同协议)。
+// 【资源修正版】所有"行级延迟"一律用 line_delay_n(BRAM 行缓存), 不再用 delay_n 移位链;
+//   de/hs/vs 合并为 3bit 一条 BRAM 链; 行列计数 hc/vc 在输出级用延迟后同步实时计数
+//   (天然对齐, 零延迟)。delay_n 仅在 line_delay_n 内部承担几拍零头。
+//
+//   algo      : 0=Sobel(单阈值 thr / mode_dual 双阈值), 1=Canny
+//   median_en : 3x3 中值; isol_en : 孤立点消除
+//   color_mode: 0=白边, 1=红边; split_en: 1=分屏, 0=全屏叠加; box_en: 中心红框
 ///////////////////////////////////////////////////////////////////////////////
 module image_processing_top #(
-    parameter HACT = 1280,   // 行有效像素(行缓存深度)
-    parameter VACT = 720     // 帧有效行数
+    parameter HACT = 1280,
+    parameter VACT = 720
 )(
     input  wire             clk,
     input  wire             rst_n,
@@ -28,7 +25,6 @@ module image_processing_top #(
     input  wire [7:0]       i_r,
     input  wire [7:0]       i_g,
     input  wire [7:0]       i_b,
-    // 参数寄存器(外部按键/UART/VIO 驱动)
     input  wire [7:0]       thr,
     input  wire [7:0]       thr_hi,
     input  wire [7:0]       thr_lo,
@@ -47,21 +43,21 @@ module image_processing_top #(
     output reg  [7:0]       o_b
 );
     // ---- 各级相对输入的延迟(拍) ----
-    localparam D_M   = HACT + 1;        // median
-    localparam D_G   = 3*HACT + 3;      // gauss
-    localparam D_S   = 4*HACT + 4;      // sobel
-    localparam D_N   = 5*HACT + 5;      // nms
-    localparam D_H   = 6*HACT + 6;      // hysteresis
-    localparam D_TOT = 7*HACT + 7;      // isolated(总)
+    localparam D_M   = HACT + 1;
+    localparam D_G   = 3*HACT + 3;
+    localparam D_S   = 4*HACT + 4;
+    localparam D_N   = 5*HACT + 5;
+    localparam D_H   = 6*HACT + 6;
+    localparam D_TOT = 7*HACT + 7;
 
     // =====================================================================
-    // 1. RGB -> gray: (77R+150G+29B)>>8
+    // 1. RGB -> gray
     // =====================================================================
     wire [15:0] ysum = 77*i_r + 150*i_g + 29*i_b;
     wire [7:0]  gray = ysum[15:8];
 
     // =====================================================================
-    // 2. median (输出 D_M)
+    // 2. median (D_M)
     // =====================================================================
     wire [7:0] med;
     wire       med_de, med_hs, med_vs;
@@ -70,17 +66,21 @@ module image_processing_top #(
         .i_de(i_de), .i_hs(i_hs), .i_vs(i_vs), .i_pix(gray),
         .o_de(med_de), .o_hs(med_hs), .o_vs(med_vs), .o_pix(med));
 
-    // gray 对齐各级
+    // gray 对齐各级(BRAM 行延迟, we=i_de)
     wire [7:0] gray_dm, gray_dg, gray_dtot;
-    delay_n #(.N(D_M), .W(8))   u_gm  (.clk(clk), .din(gray), .dout(gray_dm));
-    delay_n #(.N(D_G), .W(8))   u_gg  (.clk(clk), .din(gray), .dout(gray_dg));
-    delay_n #(.N(D_TOT), .W(8)) u_gt  (.clk(clk), .din(gray), .dout(gray_dtot));
-    // med 对齐 gauss 输出(D_G)
+    line_delay_n #(.WIDTH(8), .DEPTH(HACT), .N(D_M))   u_gm
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(gray), .dout(gray_dm));
+    line_delay_n #(.WIDTH(8), .DEPTH(HACT), .N(D_G))   u_gg
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(gray), .dout(gray_dg));
+    line_delay_n #(.WIDTH(8), .DEPTH(HACT), .N(D_TOT)) u_gt
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(gray), .dout(gray_dtot));
+    // med 对齐 gauss 输出(D_G), we=med_de
     wire [7:0] med_align_g;
-    delay_n #(.N(2*HACT+2), .W(8)) u_mag (.clk(clk), .din(med), .dout(med_align_g));
+    line_delay_n #(.WIDTH(8), .DEPTH(HACT), .N(2*HACT+2)) u_mag
+        (.clk(clk), .rst_n(rst_n), .we(med_de), .din(med), .dout(med_align_g));
 
     // =====================================================================
-    // 3. gauss 5x5 (输入 D_M, 输出 D_G)
+    // 3. gauss (D_G)
     // =====================================================================
     wire [7:0] gauss_in = median_en ? med : gray_dm;
     wire [7:0] gauss;
@@ -91,7 +91,7 @@ module image_processing_top #(
         .o_de(gauss_de), .o_hs(gauss_hs), .o_vs(gauss_vs), .o_pix(gauss));
 
     // =====================================================================
-    // 4. sobel (输入 D_G, 输出 D_S): mag12 + dir
+    // 4. sobel (D_S)
     // =====================================================================
     wire [7:0] sobel_in = algo ? gauss : (median_en ? med_align_g : gray_dg);
     wire [11:0] mag12;
@@ -105,15 +105,15 @@ module image_processing_top #(
 
     wire [7:0] mag8   = (mag12 > 8'd255) ? 8'hFF : mag12[7:0];
     wire [7:0] single = (mag8 >= thr) ? 8'hFF : 8'd0;
-    // mag8 对齐 nms 输出(D_N)
-    wire [7:0] mag8_align_n;
-    delay_n #(.N(HACT+1), .W(8)) u_m8n (.clk(clk), .din(mag8), .dout(mag8_align_n));
-    // single 对齐 D_TOT
-    wire [7:0] single_dtot;
-    delay_n #(.N(3*HACT+3), .W(8)) u_s14 (.clk(clk), .din(single), .dout(single_dtot));
+    // mag8 对齐 nms(D_N), single 对齐 D_TOT; we=sobel_de
+    wire [7:0] mag8_align_n, single_dtot;
+    line_delay_n #(.WIDTH(8), .DEPTH(HACT), .N(HACT+1))   u_m8n
+        (.clk(clk), .rst_n(rst_n), .we(sobel_de), .din(mag8),   .dout(mag8_align_n));
+    line_delay_n #(.WIDTH(8), .DEPTH(HACT), .N(3*HACT+3)) u_s14
+        (.clk(clk), .rst_n(rst_n), .we(sobel_de), .din(single), .dout(single_dtot));
 
     // =====================================================================
-    // 5. NMS (输入 D_S, 输出 D_N)
+    // 5. NMS (D_N)
     // =====================================================================
     wire [7:0] nms;
     wire       nms_de, nms_hs, nms_vs;
@@ -124,7 +124,7 @@ module image_processing_top #(
         .o_de(nms_de), .o_hs(nms_hs), .o_vs(nms_vs), .o_mag(nms));
 
     // =====================================================================
-    // 6. hysteresis (输入 D_N, 输出 D_H)
+    // 6. hysteresis (D_H)
     // =====================================================================
     wire [7:0] hys_in = algo ? nms : mag8_align_n;
     wire [7:0] edge_hys;
@@ -135,12 +135,13 @@ module image_processing_top #(
         .i_mag(hys_in), .t_lo(thr_lo), .t_hi(thr_hi),
         .o_de(hys_de), .o_hs(hys_hs), .o_vs(hys_vs), .o_edge(edge_hys));
 
-    // edge_hys 对齐 D_TOT
+    // edge_hys 对齐 D_TOT; we=hys_de
     wire [7:0] edge_hys_dtot;
-    delay_n #(.N(HACT+1), .W(8)) u_ht (.clk(clk), .din(edge_hys), .dout(edge_hys_dtot));
+    line_delay_n #(.WIDTH(8), .DEPTH(HACT), .N(HACT+1)) u_ht
+        (.clk(clk), .rst_n(rst_n), .we(hys_de), .din(edge_hys), .dout(edge_hys_dtot));
 
     // =====================================================================
-    // 7. remove_isolated (输入 D_H, 输出 D_TOT)
+    // 7. remove_isolated (D_TOT)
     // =====================================================================
     wire [7:0] edge_isol;
     wire       isol_de, isol_hs, isol_vs;
@@ -150,39 +151,41 @@ module image_processing_top #(
         .o_de(isol_de), .o_hs(isol_hs), .o_vs(isol_vs), .o_edge(edge_isol));
 
     // =====================================================================
-    // 8. 最终 edge 选择
+    // 8. edge 选择
     // =====================================================================
     wire [7:0] edge_dual  = isol_en ? edge_isol : edge_hys_dtot;
     wire [7:0] edge_final = algo ? edge_dual :
                             (mode_dual ? edge_dual : single_dtot);
 
     // =====================================================================
-    // 9. 行列计数(打拍 D_TOT, 用于分屏/红框)
+    // 9. 同步 de/hs/vs 合并为 3bit, 一条 BRAM 链延迟到 D_TOT
     // =====================================================================
-    reg [15:0] hcnt, vcnt;
+    wire [2:0] sync_d;
+    line_delay_n #(.WIDTH(3), .DEPTH(HACT), .N(D_TOT)) u_sync
+        (.clk(clk), .rst_n(rst_n), .we(i_de),
+         .din({i_de, i_hs, i_vs}), .dout(sync_d));
+    wire fde = sync_d[2];
+    wire fhs = sync_d[1];
+    wire fvs = sync_d[0];
+
+    // =====================================================================
+    // 10. 输出级实时计数(用延迟后同步, 与像素天然对齐, 无需移位链)
+    // =====================================================================
+    reg [15:0] hc, vc;
     always @(posedge clk) begin
         if (!rst_n) begin
-            hcnt <= 16'd0; vcnt <= 16'd0;
-        end else if (i_vs) begin
-            hcnt <= 16'd0; vcnt <= 16'd0;
-        end else if (i_hs) begin
-            hcnt <= 16'd0;
-            vcnt <= vcnt + 1'b1;
-        end else if (i_de) begin
-            hcnt <= hcnt + 1'b1;
+            hc <= 16'd0; vc <= 16'd0;
+        end else if (fvs) begin
+            hc <= 16'd0; vc <= 16'd0;
+        end else if (fhs) begin
+            hc <= 16'd0; vc <= vc + 1'b1;
+        end else if (fde) begin
+            hc <= hc + 1'b1;
         end
     end
-    wire [15:0] hc, vc;
-    delay_n #(.N(D_TOT), .W(16)) u_hc (.clk(clk), .din(hcnt), .dout(hc));
-    delay_n #(.N(D_TOT), .W(16)) u_vc (.clk(clk), .din(vcnt), .dout(vc));
-
-    wire de_d, hs_d, vs_d;
-    delay_n #(.N(D_TOT), .W(1)) u_de (.clk(clk), .din(i_de), .dout(de_d));
-    delay_n #(.N(D_TOT), .W(1)) u_dh (.clk(clk), .din(i_hs), .dout(hs_d));
-    delay_n #(.N(D_TOT), .W(1)) u_dv (.clk(clk), .din(i_vs), .dout(vs_d));
 
     // =====================================================================
-    // 10. 分屏 + 黄色分隔线 + 中心红框
+    // 11. 分屏 + 黄色分隔线 + 中心红框
     // =====================================================================
     wire is_left  = split_en && (hc < (HACT/2 - 1));
     wire is_sep   = split_en && (hc == (HACT/2 - 1) || hc == (HACT/2));
@@ -198,14 +201,12 @@ module image_processing_top #(
     wire box_pixel   = box_en && (box_h_line || box_v_line);
 
     wire is_edge = (edge_final != 8'd0);
-    // 右面板: 白边 或 红边(黑底)
     wire [7:0] right_r = color_mode ? (is_edge ? 8'hFF : 8'd0) : edge_final;
     wire [7:0] right_g = color_mode ? 8'd0 : edge_final;
     wire [7:0] right_b = color_mode ? 8'd0 : edge_final;
-    // 全屏模式: 边缘(白/红)叠加灰度
-    wire [7:0] full_r = is_edge ? (color_mode ? 8'hFF : 8'hFF) : gray_dtot;
-    wire [7:0] full_g = is_edge ? (color_mode ? 8'd0  : 8'hFF) : gray_dtot;
-    wire [7:0] full_b = is_edge ? (color_mode ? 8'h0  : 8'hFF) : gray_dtot;
+    wire [7:0] full_r = is_edge ? 8'hFF : gray_dtot;
+    wire [7:0] full_g = is_edge ? (color_mode ? 8'd0 : 8'hFF) : gray_dtot;
+    wire [7:0] full_b = is_edge ? (color_mode ? 8'd0 : 8'hFF) : gray_dtot;
 
     wire [7:0] r_pix = box_pixel ? 8'hFF :
                        is_sep    ? 8'hFF :
@@ -228,7 +229,7 @@ module image_processing_top #(
             o_de <= 1'b0; o_hs <= 1'b0; o_vs <= 1'b0;
             o_r <= 8'd0; o_g <= 8'd0; o_b <= 8'd0;
         end else begin
-            o_de <= de_d; o_hs <= hs_d; o_vs <= vs_d;
+            o_de <= fde; o_hs <= fhs; o_vs <= fvs;
             o_r <= r_pix; o_g <= g_pix; o_b <= b_pix;
         end
     end

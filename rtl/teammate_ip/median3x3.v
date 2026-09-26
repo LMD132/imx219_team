@@ -118,9 +118,12 @@ module median3x3 #(
 
     // ---- 输出打拍对齐: 中心像素时刻 = 输入后 OUT_DELAY 拍 ----
     wire win_d, hs_d, vs_d;
-    delay_n #(.N(OUT_DELAY), .W(1)) u_dv (.clk(clk), .din(win_valid), .dout(win_d));
-    delay_n #(.N(OUT_DELAY), .W(1)) u_dh (.clk(clk), .din(i_hs),      .dout(hs_d));
-    delay_n #(.N(OUT_DELAY), .W(1)) u_ds (.clk(clk), .din(i_vs),      .dout(vs_d));
+    line_delay_n #(.WIDTH(1), .DEPTH(DEPTH), .N(OUT_DELAY)) u_dv
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(win_valid), .dout(win_d));
+    line_delay_n #(.WIDTH(1), .DEPTH(DEPTH), .N(OUT_DELAY)) u_dh
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(i_hs),      .dout(hs_d));
+    line_delay_n #(.WIDTH(1), .DEPTH(DEPTH), .N(OUT_DELAY)) u_ds
+        (.clk(clk), .rst_n(rst_n), .we(i_de), .din(i_vs),      .dout(vs_d));
 
     always @(posedge clk) begin
         if (!rst_n) begin
