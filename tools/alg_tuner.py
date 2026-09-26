@@ -15,9 +15,9 @@
 
 命令表 (详见 rtl/alg_cfg_uart.v):
     M<n>  工作模式 0=SOBEL单阈值 1=SOBEL双阈值 2=CANNY
-    T<n>  阈值(Sobel/NMS)        0..2047
-    L<n>  迟滞低阈值 LO          0..2047
-    H<n>  迟滞高阈值 HI          0..2047
+    T<n>  阈值(Sobel 单阈值档)  0..2047  (该档比较全量程梯度, 量程 0..2040)
+    L<n>  迟滞低阈值 LO          0..255   (CANNY 档比较 NMS 结果 0..255;
+    H<n>  迟滞高阈值 HI          0..255    SOBEL 双阈值档量程 0..2040)
     N<n>  3x3 中值滤波           0/1
     G<n>  5x5 高斯               0/1
     I<n>  去孤点                 0/1
@@ -58,11 +58,11 @@ PARAMS = [
     dict(key="mode", cmd="M", name="工作模式", lo=0, hi=2, init=2,
          names={0: "0 = SOBEL 单阈值", 1: "1 = SOBEL 双阈值", 2: "2 = CANNY 全链路"}),
     dict(key="t", cmd="T", name="阈值 t", lo=0, hi=2047, init=24,
-         note="Sobel/NMS 比较门限"),
-    dict(key="lo", cmd="L", name="迟滞低阈值 LO", lo=0, hi=2047, init=21,
-         note="lo>hi 时模块内部自动交换"),
-    dict(key="hi", cmd="H", name="迟滞高阈值 HI", lo=0, hi=2047, init=58,
-         note="强边缘门限"),
+         note="只 SOBEL 单阈值档用, 该档量程 0..2040"),
+    dict(key="lo", cmd="L", name="迟滞低阈值 LO", lo=0, hi=255, init=21,
+         note="CANNY 档量程 0..255; SOBEL 双阈值档 0..2040"),
+    dict(key="hi", cmd="H", name="迟滞高阈值 HI", lo=0, hi=255, init=58,
+         note="CANNY 档量程 0..255; SOBEL 双阈值档 0..2040"),
     dict(key="median_en", cmd="N", name="3x3 中值", lo=0, hi=1, init=1,
          note="0=关 1=开"),
     dict(key="gauss_en", cmd="G", name="5x5 高斯", lo=0, hi=1, init=0,

@@ -67,13 +67,28 @@ if got != "1":
     print("FAIL: board did not latch display mode 1")
     fail += 1
 
+# The LO/HI sliders are capped at 255 (in CANNY mode the threshold compares
+# against the 0..255 NMS output), so drag HI to its new maximum.
+tuner.vars["hi"].set(255)
+tuner._on_drag("hi", 255)
+pump(1.5)
+got = tuner.board_labels["hi"].cget("text")
+print("after drag HI=255    : 板端 HI = %s" % got)
+if got != "255":
+    print("FAIL: board did not latch HI 255")
+    fail += 1
+
 # back to the tuned defaults
 tuner.send_reset()
 pump(1.5)
 got = tuner.board_labels["t"].cget("text")
-print("after 恢复默认       : 板端 t = %s" % got)
+hi_got = tuner.board_labels["hi"].cget("text")
+print("after 恢复默认       : 板端 t = %s, HI = %s" % (got, hi_got))
 if got != "24":
     print("FAIL: reset did not restore the default threshold")
+    fail += 1
+if hi_got != "58":
+    print("FAIL: reset did not restore the default HI")
     fail += 1
 
 print("log tail:")
