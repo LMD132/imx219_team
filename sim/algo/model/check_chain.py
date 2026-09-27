@@ -39,6 +39,9 @@ LINE = W + VEXT
 DLY_RGB = 26            # alg_top 模块默认值(被测配置)
 MODE, GAUSS_AUTO = 2, True
 DIR_CODE = {0: 0, 90: 1, 45: 2, 135: 3}   # 角度 -> RTL 2bit 编码
+# NMS 容差: 0 = 与参考 Python 算法逐位一致(被测的默认配置)。
+# 设 CHAIN_EPS=2 可以只跑"eps 那一档"的对比, 默认 0 不影响原有 PASS。
+EPS = int(os.environ.get("CHAIN_EPS", "0"))
 
 _ENV = None
 
@@ -86,7 +89,9 @@ def build(extra=None, name="tb.vvp"):
     return vvp
 
 
-def run(vvp, img, mode, disp, tag=""):
+def run(vvp, img, mode, disp, tag="", eps=None):
+    if eps is None:
+        eps = EPS
     rd = os.path.join(RUN, tag + "m%d_d%d" % (mode, disp))
     if os.path.isdir(rd):
         shutil.rmtree(rd)
@@ -97,7 +102,7 @@ def run(vvp, img, mode, disp, tag=""):
                 r, g, b = img[y, x]
                 f.write("%02x%02x%02x\n" % (r, g, b))
     p = subprocess.run([exe("vvp"), os.path.abspath(vvp),
-                        "+MODE=%d" % mode, "+DISP=%d" % disp],
+                        "+MODE=%d" % mode, "+DISP=%d" % disp, "+EPS=%d" % eps],
                        cwd=rd, capture_output=True, text=True,
                        encoding="utf-8", errors="replace", env=oss_env())
     if p.returncode != 0 or "DONE" not in p.stdout:
@@ -158,6 +163,12 @@ def main():
         rd = run(vvp, img, mode, disp)
         allok &= check_run(rd, img, luma, mode, disp)
 
+    # ---- NMS 容差 eps>0 (只 CANNY 档): 与 rtl_model.nms_rtl(..., eps) 对拍 ----
+    for eps in (2, 4):
+        print("=== MODE=2 DISP=1 EPS=%d ===" % eps)
+        rd = run(vvp, img, 2, 1, tag="eps%d_" % eps, eps=eps)
+        allok &= check_run(rd, img, luma, 2, 1, eps=eps)
+
     # ---- 独立验证: 行周期初值刻意写错(40), 检验实测修正是否自动生效 ----
     print("=== HTOTAL 初值刻意写错(40) -> 实测修正 ===")
     vvp2 = build(extra=["-Ptb_alg_chain.HTOTAL=40"], name="tb_ht.vvp")
@@ -170,14 +181,16 @@ def main():
     return 0 if allok else 1
 
 
-def chain_expected(luma, mode):
+def chain_expected(luma, mode, eps=None):
     """返回逐级期望值(真实图像区域)"""
+    if eps is None:
+        eps = EPS
     med = M.median_3x3_network(luma)
     gauss_on = True if mode == 2 else False
     gau = M.gauss5x5_int(med) if gauss_on else med
     gx, gy, mag = M.sobel_full(gau)
     dirc = M.dir_class(gx, gy)
-    nms = M.nms_rtl(mag, dirc)
+    nms = M.nms_rtl(mag, dirc, eps)
     if mode == 2:
         thr = M.hysteresis_rtl(nms, 21, 58)
     elif mode == 1:
@@ -192,8 +205,8 @@ def d2exp(mat):
     return {(x, y): (int(mat[y, x]),) for y in range(H) for x in range(W)}
 
 
-def check_run(rd, img, luma, mode, disp):
-    E = chain_expected(luma, mode)
+def check_run(rd, img, luma, mode, disp, eps=None):
+    E = chain_expected(luma, mode, eps)
     ok = True
 
     # ---- 1) 各级(真实区域) ----

@@ -855,9 +855,9 @@ wire [7:0]  edge_b;
 // 运行期调参通道 (UART, 115200 8N1)
 //   PC( tools/alg_tuner.py 的滑块 ) --USB串口--> FPGA UART RX
 //   --> alg_cfg_uart 寄存器组 --> alg_cfg_sync 跨时钟域 --> alg_top 的 cfg_* 端口
-//   命令: M/T/L/H/N/G/I/D/C/R/X  (取值范围见 rtl/alg_cfg_uart.v 的文件头)
+//   命令: M/T/L/H/E/N/G/I/D/C/R/X  (取值范围见 rtl/alg_cfg_uart.v 的文件头)
 //   状态: 每 500ms 回一行, 收到命令后立即回一行, 例如
-//         M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 CAM0077=C0
+//         M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 CAM0077=C0
 //   X<n> 读回摄像头寄存器(见下面“摄像头寄存器读回”那一段), CAM 字段就是读回来的值。
 //   alg_top 及其下游算法 RTL 一行未改, 只是参数来源从常量变成了寄存器。
 //==============================================================================
@@ -867,6 +867,7 @@ wire [1:0]  w_cfg_mode;
 wire [10:0] w_cfg_t;
 wire [10:0] w_cfg_lo;
 wire [10:0] w_cfg_hi;
+wire [3:0]  w_cfg_eps;
 wire        w_cfg_median_en;
 wire        w_cfg_gauss_en;
 wire        w_cfg_isol_en;
@@ -878,6 +879,7 @@ wire [1:0]  w_px_mode;
 wire [10:0] w_px_t;
 wire [10:0] w_px_lo;
 wire [10:0] w_px_hi;
+wire [3:0]  w_px_eps;
 wire        w_px_median_en;
 wire        w_px_gauss_en;
 wire        w_px_isol_en;
@@ -898,6 +900,7 @@ alg_cfg_uart #(
     .T_INIT      (11'd24),
     .LO_INIT     (11'd21),
     .HI_INIT     (11'd58),
+    .EPS_INIT    (4'd0),
     .MEDIAN_INIT (1'b1),
     .GAUSS_INIT  (1'b0),
     .ISOL_INIT   (1'b1),
@@ -912,6 +915,7 @@ alg_cfg_uart #(
     .o_t         (w_cfg_t),
     .o_lo        (w_cfg_lo),
     .o_hi        (w_cfg_hi),
+    .o_eps       (w_cfg_eps),
     .o_median_en (w_cfg_median_en),
     .o_gauss_en  (w_cfg_gauss_en),
     .o_isol_en   (w_cfg_isol_en),
@@ -991,6 +995,7 @@ alg_cfg_telemetry #(
     .i_t      (w_cfg_t),
     .i_lo     (w_cfg_lo),
     .i_hi     (w_cfg_hi),
+    .i_eps    (w_cfg_eps),
     .i_median (w_cfg_median_en),
     .i_gauss  (w_cfg_gauss_en),
     .i_isol   (w_cfg_isol_en),
@@ -1006,6 +1011,7 @@ alg_cfg_sync #(
     .T_INIT      (11'd24),
     .LO_INIT     (11'd21),
     .HI_INIT     (11'd58),
+    .EPS_INIT    (4'd0),
     .MEDIAN_INIT (1'b1),
     .GAUSS_INIT  (1'b0),
     .ISOL_INIT   (1'b1),
@@ -1019,6 +1025,7 @@ alg_cfg_sync #(
     .i_t       (w_cfg_t),
     .i_lo      (w_cfg_lo),
     .i_hi      (w_cfg_hi),
+    .i_eps     (w_cfg_eps),
     .i_median  (w_cfg_median_en),
     .i_gauss   (w_cfg_gauss_en),
     .i_isol    (w_cfg_isol_en),
@@ -1030,6 +1037,7 @@ alg_cfg_sync #(
     .o_t       (w_px_t),
     .o_lo      (w_px_lo),
     .o_hi      (w_px_hi),
+    .o_eps     (w_px_eps),
     .o_median  (w_px_median_en),
     .o_gauss   (w_px_gauss_en),
     .o_isol    (w_px_isol_en),
@@ -1048,6 +1056,7 @@ alg_top #(
     .in_r(hdmi_tx_rdata), .in_g(hdmi_tx_gdata), .in_b(hdmi_tx_bdata),
     .cfg_mode(w_px_mode),                 // CANNY 全链路
     .cfg_t(w_px_t), .cfg_lo(w_px_lo), .cfg_hi(w_px_hi),
+    .cfg_eps(w_px_eps),                   // NMS 容差 (只 CANNY 档有效; 0 = 参考算法)
     .cfg_median_en(w_px_median_en),
     .cfg_gauss_en(w_px_gauss_en),             // CANNY 档自动开 5x5 高斯
     .cfg_isol_en(w_px_isol_en),

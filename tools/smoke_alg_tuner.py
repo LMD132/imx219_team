@@ -48,5 +48,21 @@ t._on_line("M0 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0 CAM0075=04")
 print("cam fresh     ->", t.cam_lbl.cget("text"),
       "color:", t.cam_lbl.cget("foreground"), "(应该高亮)")
 print("counts w/ cam ->", t.count_lbl.cget("text"))
+
+# --- EPS (NMS 容差) 字段: 新的 65 字节行必须解析出来, 旧的 60 字节行显示 "--" ---
+t._on_line("M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS3 CAM0077=C0")
+assert t.board_labels["nms_eps"].cget("text") == "3", \
+    t.board_labels["nms_eps"].cget("text")
+print("eps field     ->", t.board_labels["nms_eps"].cget("text"),
+      "| counts:", t.count_lbl.cget("text"))
+
+t._on_line("M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1")
+assert t.board_labels["nms_eps"].cget("text") == "--"
+print("old 60B line  -> eps shows", t.board_labels["nms_eps"].cget("text"),
+      "(旧位流没有该字段, 只提示不报错)")
+
+t._on_line("M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 CAM0077=C0")
+assert t.board_labels["nms_eps"].cget("text") == "0"
+print("eps back to 0 ->", t.board_labels["nms_eps"].cget("text"))
 root.destroy()
 print("SMOKE OK")

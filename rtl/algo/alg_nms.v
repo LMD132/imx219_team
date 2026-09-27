@@ -9,6 +9,10 @@
 //      135(副对角) -> (m > UR) & (m >= DL)
 //  保留则输出 clip(m,0,255), 否则 0   (与 Python nms_rtl() 一致)
 //
+//  cfg_eps (运行期可调, 4bit): NMS 容差. eps=0 时逐位等于上面的参考实现;
+//      eps>0 时比较变成 (m + eps 与两侧邻居比), 容忍半像素相位处两个候选像素
+//      "近等值二选一"的翻转(线条沿轮廓流动抖动的根因). 只在 CANNY 档有效。
+//
 //  流水线延迟: 输入 -> out_de = 4 拍 (窗口 3 + 寄存 1)
 //=============================================================================
 
@@ -26,6 +30,7 @@ module alg_nms #(
     input  wire [12:0] in_y,
     input  wire [10:0] in_mag,
     input  wire [1:0]  in_dir,
+    input  wire [3:0]  cfg_eps,       // NMS 容差 0..8 (0 = 与参考代码逐位一致)
     output wire        out_vs,
     output wire        out_hs,
     output wire        out_de_full,
@@ -62,10 +67,17 @@ wire [10:0] m7 = win[101:91];
 wire [10:0] m8 = win[114:104];
 wire [1:0]  dc = win[64:63];       // 中心方向
 
-wire keep0 = (m4 > m3) & (m4 >= m5);     // 0   : L / R
-wire keep1 = (m4 > m1) & (m4 >= m7);     // 90  : U / D
-wire keep2 = (m4 > m0) & (m4 >= m8);     // 45  : UL / DR
-wire keep3 = (m4 > m2) & (m4 >= m6);     // 135 : UR / DL
+// 容差 eps (运行期可调, 只 CANNY 档用):
+//   eps=0 时 me == m4, 四个 keep 与 edge_pipeline.nms() / rtl_model.nms_rtl() 逐位一致;
+//   eps>0 时中心加 eps 再与邻居比, 容忍半像素相位处两个候选像素"近等值二选一"的
+//   翻转 —— 那是线条沿轮廓上下流动抖动的原因。代价是线宽略增(离线实测 1.00 -> 1.2~1.3 px)。
+//   和 m4 一样是 11bit 量程, 加宽到 12bit 防溢出(最大 2047 + 8 = 2055)。
+wire [11:0] me = {1'b0, m4} + {8'b0, cfg_eps};
+
+wire keep0 = (me > {1'b0, m3}) & (me >= {1'b0, m5});     // 0   : L / R
+wire keep1 = (me > {1'b0, m1}) & (me >= {1'b0, m7});     // 90  : U / D
+wire keep2 = (me > {1'b0, m0}) & (me >= {1'b0, m8});     // 45  : UL / DR
+wire keep3 = (me > {1'b0, m2}) & (me >= {1'b0, m6});     // 135 : UR / DL
 
 wire keep = (dc == 2'd0) ? keep0 :
             (dc == 2'd1) ? keep1 :

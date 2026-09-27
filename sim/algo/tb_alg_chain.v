@@ -9,6 +9,7 @@
 //      - 用 tick 实测彩色/边缘的值对齐延迟是否等于 DLY_RGB
 //      - 显示输出逐像素比对(分屏/叠加/半视野/纯边缘)
 //  * 全部输入用非阻塞赋值驱动(避免与 DUT 同拍竞争)
+//  * +EPS=<n> 覆盖 NMS 容差 cfg_eps (默认 0 = 与参考 Python 算法逐位一致)
 //=============================================================================
 `timescale 1ns/1ps
 
@@ -39,18 +40,21 @@ module tb_alg_chain;
     reg [10:0] cfg_t         = 11'd24;
     reg [10:0] cfg_lo        = 11'd21;
     reg [10:0] cfg_hi        = 11'd58;
+    reg [3:0]  cfg_eps       = 4'd0;
     reg        cfg_median_en = 1'b1;
     reg        cfg_gauss_en  = 1'b0;
     reg        cfg_isol_en   = 1'b1;
     reg [1:0]  cfg_disp_mode = 2'd1;
     reg        cfg_ov_color  = 1'b1;
 
-    integer m_arg, d_arg;
+    integer m_arg, d_arg, e_arg;
     initial begin
         if (!$value$plusargs("MODE=%d", m_arg)) m_arg = 2;
         if (!$value$plusargs("DISP=%d", d_arg)) d_arg = 1;
+        if (!$value$plusargs("EPS=%d",  e_arg)) e_arg = 0;
         cfg_mode      = m_arg[1:0];
         cfg_disp_mode = d_arg[1:0];
+        cfg_eps       = e_arg[3:0];
     end
 
     wire        o_vs, o_hs, o_de;
@@ -67,6 +71,7 @@ module tb_alg_chain;
         .in_vs(vs), .in_hs(hs), .in_de(de),
         .in_r(pdata[23:16]), .in_g(pdata[15:8]), .in_b(pdata[7:0]),
         .cfg_mode(cfg_mode), .cfg_t(cfg_t), .cfg_lo(cfg_lo), .cfg_hi(cfg_hi),
+        .cfg_eps(cfg_eps),
         .cfg_median_en(cfg_median_en), .cfg_gauss_en(cfg_gauss_en),
         .cfg_isol_en(cfg_isol_en), .cfg_disp_mode(cfg_disp_mode),
         .cfg_ov_color(cfg_ov_color),
@@ -186,7 +191,8 @@ module tb_alg_chain;
                         $fclose(fgray); $fclose(fmed); $fclose(fgau);
                         $fclose(fsob); $fclose(fnms); $fclose(fthr);
                         $fclose(fdsp); $fclose(fdisp); $fclose(fin); $fclose(fvs);
-                        $display("TB CHAIN DONE mode=%0d disp=%0d", cfg_mode, cfg_disp_mode);
+                        $display("TB CHAIN DONE mode=%0d disp=%0d eps=%0d",
+                                 cfg_mode, cfg_disp_mode, cfg_eps);
                         $finish;
                     end else cc <= cc + 1'b1;
                 end

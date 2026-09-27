@@ -5,11 +5,11 @@
 // Status line for the runtime edge parameters, the transmit half of the
 // PC tuning channel (alg_cfg_uart.v is the receive half).
 //
-// One 60 byte ASCII line every PERIOD_MS, plus an immediate line after every
+// One 65 byte ASCII line every PERIOD_MS, plus an immediate line after every
 // accepted command, so a slider on the host can be confirmed against what the
 // board actually latched instead of being trusted:
 //
-//     M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 CAM0077=C0\r\n
+//     M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 CAM0077=C0\r\n
 //
 // The line is fixed layout: every field is either a literal or exactly the
 // same width in every message, so the host can find the values by byte
@@ -18,6 +18,10 @@
 // The last field is the answer to the host's X<grp> read-back command:
 // CAM<4 decimal digits of the requested group>=<2 hex digits of the byte the
 // camera returned> (FF until the first read).
+//
+// EPS<n> between OVC and CAM is the NMS tolerance (0..8, see alg_nms.v); it
+// was inserted there so every field before it keeps its byte position, and the
+// host regex accepts both this 65 byte line and the older 60 byte one.
 //
 // The three 11-bit thresholds and the 10-bit read-back group index are
 // converted with the double-dabble shift-and-add-3 algorithm, one value at a
@@ -44,6 +48,7 @@ module alg_cfg_telemetry #(
     input  wire [10:0] i_t,
     input  wire [10:0] i_lo,
     input  wire [10:0] i_hi,
+    input  wire [3:0]  i_eps,
     input  wire        i_median,
     input  wire        i_gauss,
     input  wire        i_isol,
@@ -55,7 +60,7 @@ module alg_cfg_telemetry #(
     output wire        o_txd
 );
 
-    localparam [5:0] MSG_LEN = 6'd60;
+    localparam [6:0] MSG_LEN = 7'd65;
     localparam integer GAP_CLKS = (CLK_HZ / 1000) * PERIOD_MS;
 
     // ------------------------------------------------------------------ text
@@ -75,7 +80,7 @@ module alg_cfg_telemetry #(
     endfunction
 
     function [7:0] msg_byte;
-        input [5:0]  idx;
+        input [6:0]  idx;
         input [15:0] t_bcd;
         input [15:0] lo_bcd;
         input [15:0] hi_bcd;
@@ -87,6 +92,7 @@ module alg_cfg_telemetry #(
         input        gau;
         input        iso;
         input        ovc;
+        input [3:0]  eps;
         begin
             case (idx)
                 6'd0:  msg_byte = "M";
@@ -137,17 +143,22 @@ module alg_cfg_telemetry #(
                 6'd45: msg_byte = "C";
                 6'd46: msg_byte = digit_of({3'b0, ovc});
                 6'd47: msg_byte = " ";
-                6'd48: msg_byte = "C";
-                6'd49: msg_byte = "A";
-                6'd50: msg_byte = "M";
-                6'd51: msg_byte = digit_of(cam_bcd[15:12]);
-                6'd52: msg_byte = digit_of(cam_bcd[11:8]);
-                6'd53: msg_byte = digit_of(cam_bcd[7:4]);
-                6'd54: msg_byte = digit_of(cam_bcd[3:0]);
-                6'd55: msg_byte = "=";
-                6'd56: msg_byte = hex_of(cam_val[7:4]);
-                6'd57: msg_byte = hex_of(cam_val[3:0]);
-                6'd58: msg_byte = 8'h0D;   // CR
+                6'd48: msg_byte = "E";
+                6'd49: msg_byte = "P";
+                6'd50: msg_byte = "S";
+                6'd51: msg_byte = digit_of(eps);
+                6'd52: msg_byte = " ";
+                6'd53: msg_byte = "C";
+                6'd54: msg_byte = "A";
+                6'd55: msg_byte = "M";
+                6'd56: msg_byte = digit_of(cam_bcd[15:12]);
+                6'd57: msg_byte = digit_of(cam_bcd[11:8]);
+                6'd58: msg_byte = digit_of(cam_bcd[7:4]);
+                6'd59: msg_byte = digit_of(cam_bcd[3:0]);
+                6'd60: msg_byte = "=";
+                6'd61: msg_byte = hex_of(cam_val[7:4]);
+                6'd62: msg_byte = hex_of(cam_val[3:0]);
+                6'd63: msg_byte = 8'h0D;   // CR
                 default: msg_byte = 8'h0A; // LF
             endcase
         end
@@ -164,7 +175,7 @@ module alg_cfg_telemetry #(
 
     reg [2:0]  state;
     reg [31:0] gap_cnt;
-    reg [5:0]  char_idx;
+    reg [6:0]  char_idx;        // 65 字节行: 下标要 7 位, 6 位装不下 64 会回卷
     reg        tx_valid;
     reg [7:0]  tx_byte;
     reg        pending;
@@ -174,6 +185,7 @@ module alg_cfg_telemetry #(
     reg [1:0]  d_mode, d_disp;
     reg [10:0] d_t, d_lo, d_hi;
     reg        d_med, d_gau, d_iso, d_ovc;
+    reg [3:0]  d_eps;
     reg [15:0] t_bcd, lo_bcd, hi_bcd, cam_bcd;
     reg [9:0]  d_cam_grp;
     reg [7:0]  d_cam_val;
@@ -222,6 +234,7 @@ module alg_cfg_telemetry #(
             d_gau     <= 1'b0;
             d_iso     <= 1'b0;
             d_ovc     <= 1'b0;
+            d_eps     <= 4'd0;
             t_bcd     <= 16'd0;
             lo_bcd    <= 16'd0;
             hi_bcd    <= 16'd0;
@@ -254,6 +267,7 @@ module alg_cfg_telemetry #(
                             d_iso   <= i_isol;
                             d_disp  <= i_disp;
                             d_ovc   <= i_ovc;
+                            d_eps   <= i_eps;
                             d_cam_grp<= i_cam_grp;
                             d_cam_val<= i_cam_val;
                             state   <= ST_SNAP;
@@ -289,7 +303,7 @@ module alg_cfg_telemetry #(
                         default: cam_bcd <= bcd_reg;
                     endcase
                     if (conv_sel == 2'd3) begin
-                        char_idx <= 6'd0;
+                        char_idx <= 7'd0;
                         state    <= ST_LOAD;
                     end else begin
                         conv_sel <= conv_sel + 2'd1;
@@ -306,7 +320,8 @@ module alg_cfg_telemetry #(
                     tx_valid <= 1'b1;
                     tx_byte  <= msg_byte(char_idx, t_bcd, lo_bcd, hi_bcd,
                                          cam_bcd, d_cam_val,
-                                         d_mode, d_disp, d_med, d_gau, d_iso, d_ovc);
+                                         d_mode, d_disp, d_med, d_gau, d_iso, d_ovc,
+                                         d_eps);
                     state    <= ST_START;
                 end
 
@@ -318,10 +333,10 @@ module alg_cfg_telemetry #(
                 // Frame is on the wire; wait for it to finish, then advance.
                 ST_SEND: begin
                     if (!tx_busy) begin
-                        if (char_idx == (MSG_LEN - 6'd1)) begin
+                        if (char_idx == (MSG_LEN - 7'd1)) begin
                             state <= ST_GAP;
                         end else begin
-                            char_idx <= char_idx + 6'd1;
+                            char_idx <= char_idx + 7'd1;
                             state    <= ST_LOAD;
                         end
                     end

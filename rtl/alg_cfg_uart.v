@@ -20,6 +20,12 @@
 //     T<n>   cfg_t          Sobel / NMS threshold   0..2047
 //     L<n>   cfg_lo         hysteresis low          0..2047
 //     H<n>   cfg_hi         hysteresis high         0..2047
+//     E<n>   cfg_nms_eps    NMS tolerance           0..8 (above 8 clamps to 8)
+//                           Only the CANNY path reads it.  0 = the value the
+//                           reference Python algorithm uses, so the default
+//                           build is bit-identical to it; dragging it up on
+//                           the PC tuner trades ~0.2 px of line width for a
+//                           much steadier contour (see alg_nms.v).
 //     N<n>   cfg_median_en  0/1
 //     G<n>   cfg_gauss_en   0/1
 //     I<n>   cfg_isol_en    0/1
@@ -50,6 +56,7 @@ module alg_cfg_uart #(
     parameter [10:0] T_INIT      = 11'd24,
     parameter [10:0] LO_INIT     = 11'd21,
     parameter [10:0] HI_INIT     = 11'd58,
+    parameter [3:0]  EPS_INIT    = 4'd0,
     parameter        MEDIAN_INIT = 1'b1,
     parameter        GAUSS_INIT  = 1'b0,
     parameter        ISOL_INIT   = 1'b1,
@@ -64,6 +71,7 @@ module alg_cfg_uart #(
     output reg  [10:0] o_t,
     output reg  [10:0] o_lo,
     output reg  [10:0] o_hi,
+    output reg  [3:0]  o_eps,
     output reg         o_median_en,
     output reg         o_gauss_en,
     output reg         o_isol_en,
@@ -85,7 +93,8 @@ module alg_cfg_uart #(
                      K_DSP  = 4'd8,
                      K_OVC  = 4'd9,
                      K_RST  = 4'd10,
-                     K_CAM  = 4'd11;
+                     K_CAM  = 4'd11,
+                     K_EPS  = 4'd12;
 
     localparam S_KEY = 1'b0,
                S_VAL = 1'b1;
@@ -102,6 +111,7 @@ module alg_cfg_uart #(
                 8'h54, 8'h74: key_of = K_T;      // T t
                 8'h4C, 8'h6C: key_of = K_LO;     // L l
                 8'h48, 8'h68: key_of = K_HI;     // H h
+                8'h45, 8'h65: key_of = K_EPS;    // E e
                 8'h4E, 8'h6E: key_of = K_MED;    // N n
                 8'h47, 8'h67: key_of = K_GAU;    // G g
                 8'h49, 8'h69: key_of = K_ISO;    // I i
@@ -191,6 +201,7 @@ module alg_cfg_uart #(
             o_t         <= T_INIT;
             o_lo        <= LO_INIT;
             o_hi        <= HI_INIT;
+            o_eps       <= EPS_INIT;
             o_median_en <= MEDIAN_INIT;
             o_gauss_en  <= GAUSS_INIT;
             o_isol_en   <= ISOL_INIT;
@@ -208,6 +219,8 @@ module alg_cfg_uart #(
                     K_T:    o_t         <= (apply_val > 12'd2047) ? 11'd2047 : apply_val[10:0];
                     K_LO:   o_lo        <= (apply_val > 12'd2047) ? 11'd2047 : apply_val[10:0];
                     K_HI:   o_hi        <= (apply_val > 12'd2047) ? 11'd2047 : apply_val[10:0];
+                    // NMS 容差: 4bit 寄存器, 超过 8 直接夹到 8 (再大只会把线糊粗)
+                    K_EPS:  o_eps       <= (apply_val > 12'd8)    ? 4'd8    : apply_val[3:0];
                     K_MED:  o_median_en <= (apply_val != 12'd0);
                     K_GAU:  o_gauss_en  <= (apply_val != 12'd0);
                     K_ISO:  o_isol_en   <= (apply_val != 12'd0);
@@ -218,6 +231,7 @@ module alg_cfg_uart #(
                         o_t         <= T_INIT;
                         o_lo        <= LO_INIT;
                         o_hi        <= HI_INIT;
+                        o_eps       <= EPS_INIT;
                         o_median_en <= MEDIAN_INIT;
                         o_gauss_en  <= GAUSS_INIT;
                         o_isol_en   <= ISOL_INIT;

@@ -32,7 +32,7 @@
 //    = 26  (见 docs/ALGO_RTL.md 的延迟表, 由 check_chain.py 实测复核)
 //  图像最外 7 行/列是流式固有边界: 窗口需要未来行/列, 该处 de=0, 边缘显示为 0。
 //
-//  运行期可配: MODE / 阈值 / 中值开关 / 去孤点开关 / 显示模式 / 叠加底色
+//  运行期可配: MODE / 阈值 / NMS 容差 eps / 中值开关 / 去孤点开关 / 显示模式 / 叠加底色
 //=============================================================================
 
 module alg_top #(
@@ -60,6 +60,7 @@ module alg_top #(
     input  wire [10:0] cfg_t,
     input  wire [10:0] cfg_lo,
     input  wire [10:0] cfg_hi,
+    input  wire [3:0]  cfg_eps,         // NMS 容差 0..8 (只 CANNY 档有效, 0 = 参考代码)
     input  wire        cfg_median_en,
     input  wire        cfg_gauss_en,
     input  wire        cfg_isol_en,
@@ -159,6 +160,7 @@ alg_nms #(.W(W), .VEXT(VEXT), .H(H)) u_nms (
     .clk(clk), .rst_n(rst_n),
     .in_vs(sob_vs), .in_hs(sob_hs), .in_de(sob_def),
     .in_x(sob_x), .in_y(sob_y), .in_mag(sob_mag), .in_dir(sob_dir),
+    .cfg_eps(cfg_eps),
     .out_vs(nms_vs), .out_hs(nms_hs), .out_de_full(nms_def), .out_de(nms_de),
     .out_x(nms_x), .out_y(nms_y), .out_data(nms_d)
 );

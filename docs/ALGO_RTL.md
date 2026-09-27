@@ -133,6 +133,10 @@ RESULT: PASS (仓库 Python == RTL 金标准模型, 逐级逐位)
 RESULT: PASS
 ```
 
+2026-09-27 追加两档（`+EPS=` 覆盖 NMS 容差）：
+`=== MODE=2 DISP=1 EPS=2 ===` 与 `=== ... EPS=4 ===`，`nms` 级同样 **0 mismatch**
+（期望值来自 `rtl_model.nms_rtl(mag, dirs, eps)`），全部档位合起来仍是 `RESULT: PASS`。
+
 最后一段是**鲁棒性验证**：把 `HTOTAL` 参数初值故意写成错的 40，验证 `alg_vdisp`
 能靠运行期实测行周期自动修正（见 §8.4）。
 
@@ -159,6 +163,12 @@ RESULT: PASS
    （1697/4096 ≈ tan(22.5°)）
 6. **NMS 非对称比较**（打破平局，把粗边细化为单像素；与 OpenCV 一致）：
    `0°: (m>L)&(m>=R)`；`90°: (m>U)&(m>=D)`；`45°: (m>UL)&(m>=DR)`；`135°: (m>UR)&(m>=DL)`。
+   - **运行期容差 `eps`**（`alg_nms.v` 的 `cfg_eps`，0..8，2026-09-27 加）：
+     比较放宽成 `(m+eps > 邻居)`。**`eps=0` 退回上面四条，逐位一致**——
+     §4 里所有 0 mismatch 都是在 `eps=0` 下测的（默认值就是 0）。
+     `eps>0` 治的是 NMS 在**半像素相位**处"近等值二选一"被噪声推来推去
+     造成的线条流动抖动；代价是线宽 1.00 → 1.2~1.3 px。
+     硬件代价：一个 12bit 加法器 + 比较器加宽，**流水线延迟不变（仍 4 拍）**。
 7. **滞后**：`strong = mag>=hi`；`weak = mag>=lo`；`edge = weak & dilate3x3(strong)`。
    膨胀的视场外补 **0**（等价 `cv2.dilate` 默认边界）。`lo>hi` 时自动交换。
 8. **去孤点**：Python 判据是"3×3 内白邻居数 ≥ 1"；RTL 等价写成"自身为白且 3×3 计数 ≥ 2"。
@@ -295,6 +305,22 @@ SOBEL 档（mode 0/1）走 NMS 旁路，但 `alg_stream_delay` 依然补足 4 �
 ## 10. 编译、时序、资源实测
 
 命令见 §12。`map / interface / pnr / pgm` 全部 `PASS`。
+
+2026-09-27 加了 NMS 容差 `cfg_eps`（§5 第 6 条）后重新全新编译，四阶段仍全 `PASS`，
+`No Synchronizer warnings`，全设计 0 条负 slack：
+
+| 指标 | 2026-09-26（无 eps） | 2026-09-27（加 cfg_eps） |
+| --- | --- | --- |
+| XLRs | 21593 / 60800 | **22708 / 60800（37.35 %）** |
+| Memory Blocks | 208 / 256 | **208 / 256（81.25 %，未变）** |
+| DSP Blocks | 4 / 160 | 4 / 160 |
+| LUT4 / FF | — | 13164 / 9803 |
+| `hdmi_tx_slow_clk` setup slack | +5.316 ns | **+5.155 ns** |
+| `hdmi_tx_slow_clk` hold slack | +0.031 ns | **+0.043 ns** |
+| 全设计最小 setup slack | — | +0.493 ns（`tx_cal_clk`，与本改动无关的既有路径） |
+| `hdmi_tx_slow_clk` 最大可分析频率 | 122.669 MHz | **120.294 MHz**（约束 74.25 MHz） |
+
+结论：**新增一个 12bit 加法器 + 比较器加宽，没有触碰存储器和时序余量。**
 
 | 指标 | 旧基线（`edge_display_720p`，灰度+Sobel） | 现在（全算法链） |
 | --- | --- | --- |

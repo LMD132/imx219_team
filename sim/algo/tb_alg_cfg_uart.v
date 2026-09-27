@@ -10,7 +10,7 @@
 //   1. 解码 o_txd 用本文件独立写的采样任务 uart_get_byte, 不复用 DUT 的
 //      uart_rx, 否则收发同源错误会互相抵消, 测试就成了自言自语。
 //      uart_rx 本身另有一段直接喂线的用例(第 2 节起都是走真实串口时序的)。
-//   2. 状态行用 60 字节滑窗匹配(末尾多了 CAM 字段), 不需要刻意对齐到行首。
+//   2. 状态行用 65 字节滑窗匹配(EPS 字段 + 末尾 CAM 字段), 不需要刻意对齐到行首。
 // 期望值里的 CR/LF 写成 8'h0D/8'h0A 拼在字符串后面, 免去转义。
 //=============================================================================
 `timescale 1ns/1ps
@@ -18,7 +18,7 @@
 module tb_alg_cfg_uart;
 
     localparam integer BIT_NS = 8680;   // 115200 baud = 217 x 40 ns
-    localparam integer NB = 60;         // 状态行字节数(含 CAM 字段, 见 alg_cfg_telemetry.v)
+    localparam integer NB = 65;         // 状态行字节数(含 EPS/CAM 字段, 见 alg_cfg_telemetry.v)
 
     integer errors = 0;
     integer checks = 0;
@@ -37,6 +37,7 @@ module tb_alg_cfg_uart;
     wire [1:0] c_mode, c_disp;
     wire [10:0] c_t, c_lo, c_hi;
     wire       c_med, c_gau, c_iso, c_ovc, c_commit;
+    wire [3:0] c_eps;
     wire [9:0] c_cam_grp;
     wire       c_cam_rd;
     reg  [7:0] cam_val = 8'hFF;   // 冒充 piv2_config 读回来的那个字节
@@ -48,6 +49,7 @@ module tb_alg_cfg_uart;
     wire [1:0] p_mode, p_disp;
     wire [10:0] p_t, p_lo, p_hi;
     wire       p_med, p_gau, p_iso, p_ovc;
+    wire [3:0] p_eps;
 
     uart_rx #(
         .CLK_HZ (25000000),
@@ -65,6 +67,7 @@ module tb_alg_cfg_uart;
         .T_INIT      (11'd24),
         .LO_INIT     (11'd21),
         .HI_INIT     (11'd58),
+        .EPS_INIT    (4'd0),
         .MEDIAN_INIT (1'b1),
         .GAUSS_INIT  (1'b0),
         .ISOL_INIT   (1'b1),
@@ -79,6 +82,7 @@ module tb_alg_cfg_uart;
         .o_t         (c_t),
         .o_lo        (c_lo),
         .o_hi        (c_hi),
+        .o_eps       (c_eps),
         .o_median_en (c_med),
         .o_gauss_en  (c_gau),
         .o_isol_en   (c_iso),
@@ -102,6 +106,7 @@ module tb_alg_cfg_uart;
         .i_t      (c_t),
         .i_lo     (c_lo),
         .i_hi     (c_hi),
+        .i_eps    (c_eps),
         .i_median (c_med),
         .i_gauss  (c_gau),
         .i_isol   (c_iso),
@@ -118,6 +123,7 @@ module tb_alg_cfg_uart;
         .T_INIT      (11'd24),
         .LO_INIT     (11'd21),
         .HI_INIT     (11'd58),
+        .EPS_INIT    (4'd0),
         .MEDIAN_INIT (1'b1),
         .GAUSS_INIT  (1'b0),
         .ISOL_INIT   (1'b1),
@@ -131,6 +137,7 @@ module tb_alg_cfg_uart;
         .i_t      (c_t),
         .i_lo     (c_lo),
         .i_hi     (c_hi),
+        .i_eps    (c_eps),
         .i_median (c_med),
         .i_gauss  (c_gau),
         .i_isol   (c_iso),
@@ -142,6 +149,7 @@ module tb_alg_cfg_uart;
         .o_t      (p_t),
         .o_lo     (p_lo),
         .o_hi     (p_hi),
+        .o_eps    (p_eps),
         .o_median (p_med),
         .o_gauss  (p_gau),
         .o_isol   (p_iso),
@@ -273,8 +281,8 @@ module tb_alg_cfg_uart;
     reg [8*NB-1:0] exp_cam;
 
     initial begin
-        exp_default = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1", " CAM0000=FF", 8'h0D, 8'h0A};
-        exp_after   = {"M2 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0", " CAM0000=FF", 8'h0D, 8'h0A};
+        exp_default = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1", " EPS0 CAM0000=FF", 8'h0D, 8'h0A};
+        exp_after   = {"M2 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0", " EPS2 CAM0000=FF", 8'h0D, 8'h0A};
 
         rst_n = 1'b0;
         repeat (20) @(posedge clk25);
@@ -291,6 +299,7 @@ module tb_alg_cfg_uart;
         chk1 ("isol",   c_iso, 1'b1);
         chk2 ("disp",   c_disp, 2'd0);
         chk1 ("ovc",    c_ovc, 1'b1);
+        chk11("eps",    {8'b0, c_eps}, 11'd0);
         chk2 ("px_mode_reset", p_mode, 2'd2);
         chk11("px_t_reset",    p_t,    11'd24);
         chk11("px_lo_reset",   p_lo,   11'd21);
@@ -318,6 +327,12 @@ module tb_alg_cfg_uart;
         chk2 ("disp_D2", c_disp, 2'd2);
         send_str("C0");
         chk1 ("ovc_C0", c_ovc, 1'b0);
+        send_str("E3");
+        chk11("eps_E3", {8'b0, c_eps}, 11'd3);
+        send_str("E99");                  // 上限 8: 再大只会把线糊粗, 直接夹住
+        chk11("eps_clamp8", {8'b0, c_eps}, 11'd8);
+        send_str("e2");                   // 小写 e 同样识别
+        chk11("eps_lower_e2", {8'b0, c_eps}, 11'd2);
 
         $display("--- 3. separators, lower case, clamps, saturation");
         send_str("t=42");
@@ -354,6 +369,7 @@ module tb_alg_cfg_uart;
         chk1 ("isol_R",   c_iso, 1'b1);
         chk2 ("disp_R",   c_disp, 2'd0);
         chk1 ("ovc_R",    c_ovc, 1'b1);
+        chk11("eps_R",    {8'b0, c_eps}, 11'd0);
 
         $display("--- 6. the pixel-clock domain copy follows");
         send_str("T100");
@@ -363,6 +379,7 @@ module tb_alg_cfg_uart;
         send_str("I0");
         send_str("D2");
         send_str("C0");
+        send_str("E2");
         repeat (40) @(posedge clkpx);
         chk2 ("px_mode", p_mode, 2'd2);
         chk11("px_t",    p_t,    11'd100);
@@ -373,6 +390,7 @@ module tb_alg_cfg_uart;
         chk1 ("px_isol",   p_iso, 1'b0);
         chk2 ("px_disp",   p_disp, 2'd2);
         chk1 ("px_ovc",    p_ovc, 1'b0);
+        chk11("px_eps",    {8'b0, p_eps}, 11'd2);
 
         $display("--- 7. status line reflects the new values");
         expect_line(exp_after);
@@ -389,7 +407,7 @@ module tb_alg_cfg_uart;
         chk11("cam_rd_pulses", cam_rd_cnt[10:0], 11'd1);
         cam_val = 8'hC0;                  // 相当于 piv2_config 把那一个字节读回来了
         @(posedge clk25); cam_upd = 1'b1; @(posedge clk25); cam_upd = 1'b0;
-        exp_cam = {"M0 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0", " CAM0077=C0", 8'h0D, 8'h0A};
+        exp_cam = {"M0 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0", " EPS2 CAM0077=C0", 8'h0D, 8'h0A};
         expect_line(exp_cam);
 
         send_str("X999");                 // 越界要夹到最后一个真实组合 (78)
@@ -399,7 +417,7 @@ module tb_alg_cfg_uart;
         chk11("cam_rd_pulses3", cam_rd_cnt[10:0], 11'd3);
         cam_val = 8'h04;                  // 曝光高字节 0x04
         @(posedge clk25); cam_upd = 1'b1; @(posedge clk25); cam_upd = 1'b0;
-        exp_cam = {"M0 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0", " CAM0005=04", 8'h0D, 8'h0A};
+        exp_cam = {"M0 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0", " EPS2 CAM0005=04", 8'h0D, 8'h0A};
         expect_line(exp_cam);
 
         if (errors == 0) $display("ALL PASS  (%0d checks)", checks);

@@ -8,7 +8,7 @@
 
 板子每 500ms 回一行状态, 收到命令后还会立刻回一行:
 
-    M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 CAM0077=C0
+    M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 CAM0077=C0
 
 界面右边"板端"那一列显示的就是这行回读值, 也就是 FPGA 里真正生效的值。
 如果它和滑块不一致(比如串口没接好), 会变成红色并在状态栏提示。
@@ -19,6 +19,10 @@
     T<n>  阈值(Sobel 单阈值档)  0..2047  (该档比较全量程梯度, 量程 0..2040)
     L<n>  迟滞低阈值 LO          0..255   (CANNY 档比较 NMS 结果 0..255;
     H<n>  迟滞高阈值 HI          0..255    SOBEL 双阈值档量程 0..2040)
+    E<n>  NMS 容差 eps           0..8     (只 CANNY 档有效, 超过 8 夹到 8)
+          0 = 与参考 Python 算法逐位一致; 调大能压住轮廓线沿线条上下流动的
+          抖动(根因是 NMS 在半像素相位处"近等值二选一"被噪声推来推去),
+          代价是线宽从 1 像素变成 1.2~1.3 像素。建议从 1 试到 3。
     N<n>  3x3 中值滤波           0/1
     G<n>  5x5 高斯               0/1
     I<n>  去孤点                 0/1
@@ -68,6 +72,8 @@ PARAMS = [
          note="CANNY 档量程 0..255; SOBEL 双阈值档 0..2040"),
     dict(key="hi", cmd="H", name="迟滞高阈值 HI", lo=0, hi=255, init=58,
          note="CANNY 档量程 0..255; SOBEL 双阈值档 0..2040"),
+    dict(key="nms_eps", cmd="E", name="NMS 容差 eps", lo=0, hi=8, init=0,
+         note="只 CANNY 有效; 0=参考算法, 1~3 治线条流动抖动"),
     dict(key="median_en", cmd="N", name="3x3 中值", lo=0, hi=1, init=1,
          note="0=关 1=开"),
     dict(key="gauss_en", cmd="G", name="5x5 高斯", lo=0, hi=1, init=0,
@@ -85,6 +91,7 @@ TELEM_RE = re.compile(
     r"M(?P<mode>\d+)\s+T(?P<t>\d+)\s+LO(?P<lo>\d+)\s+HI(?P<hi>\d+)"
     r"\s+MED(?P<median_en>\d+)\s+GAU(?P<gauss_en>\d+)\s+ISO(?P<isol_en>\d+)"
     r"\s+DSP(?P<disp_mode>\d+)\s+OVC(?P<ov_color>\d+)"
+    r"(?:\s+EPS(?P<nms_eps>\d+))?"      # 65 字节新行才有; 旧位流(60 字节)缺这一段
     r"(?:\s+CAM(?P<cam_grp>\d+)=(?P<cam_val>[0-9A-Fa-f]{2}))?")
 
 # 状态行里 CAM 组的已知含义 (见 rtl/cam/piv2_config.v 的寄存器表)
@@ -357,6 +364,10 @@ class Tuner:
         bad = []
         for p in PARAMS:
             k = p["key"]
+            if k not in vals:
+                # 旧位流的状态行没有 EPS 字段: 显示 "--" 而不是报不一致
+                self.board_labels[k].configure(text="--", foreground="#888")
+                continue
             got = vals[k]
             lab = self.board_labels[k]
             lab.configure(text=str(got))
@@ -380,7 +391,7 @@ class Tuner:
         else:
             self.status.set("已连接, 板端与滑块一致 (%s)" % time.strftime("%H:%M:%S"))
         self.count_lbl.configure(text="最近回读: " + " ".join(
-            "%s%d" % (p["cmd"], vals[p["key"]]) for p in PARAMS))
+            "%s%s" % (p["cmd"], vals.get(p["key"], "-")) for p in PARAMS))
 
     # -------------------------------------------------------------- 下发命令
     def _on_drag(self, key, value):

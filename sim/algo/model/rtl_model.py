@@ -153,8 +153,14 @@ def dir_class(gx, gy):
     return d
 
 
-def nms_rtl(mag, dirs):
-    """NMS(EDGE 边界), 与 Python nms() 的非对称比较 + 截位一致, 输出 8bit。"""
+def nms_rtl(mag, dirs, eps=0):
+    """NMS(EDGE 边界), 与 Python nms() 的非对称比较 + 截位一致, 输出 8bit。
+
+    eps: NMS 容差, 对应 alg_nms.v 的 cfg_eps。 eps=0 时逐位等于
+    edge_pipeline.nms(); eps>0 时中心加 eps 再与两侧邻居比, 容忍半像素相位处
+    两个候选像素"近等值二选一"的翻转(线条沿轮廓流动抖动的根因)。
+    只在 CANNY 档有意义, 上限 8(见 alg_cfg_uart.v 的 K_EPS)。
+    """
     m = mag.astype(np.int32)
     p = pad_edge(m, 1)
     h, w = m.shape
@@ -162,10 +168,11 @@ def nms_rtl(mag, dirs):
     U, D = p[0:h, 1:w + 1], p[2:h + 2, 1:w + 1]
     UL, DR = p[0:h, 0:w], p[2:h + 2, 2:w + 2]
     UR, DL = p[0:h, 2:w + 2], p[2:h + 2, 0:w]
-    keep = np.where(dirs == 0, (m > L) & (m >= R),
-                    np.where(dirs == 90, (m > U) & (m >= D),
-                             np.where(dirs == 45, (m > UL) & (m >= DR),
-                                      (m > UR) & (m >= DL))))
+    me = m + int(eps)
+    keep = np.where(dirs == 0, (me > L) & (me >= R),
+                    np.where(dirs == 90, (me > U) & (me >= D),
+                             np.where(dirs == 45, (me > UL) & (me >= DR),
+                                      (me > UR) & (me >= DL))))
     return np.clip(np.where(keep, m, 0), 0, 255).astype(np.uint8)
 
 
@@ -212,10 +219,11 @@ def threshold_rtl(mag, t):
 # 整条 RTL 流水线(对应 edge_process_core.v)
 # --------------------------------------------------------------------------
 def rtl_pipeline(gray_in, mode, thr=24, thr_lo=21, thr_hi=58,
-                 median_en=True, gauss5_en=None, isol_en=True):
+                 median_en=True, gauss5_en=None, isol_en=True, nms_eps=0):
     """gray_in: 8bit 灰度(已灰度化/时间域平均后)。
     mode: 0=SOBEL 单阈值, 1=SOBEL 双阈值, 2=CANNY
     gauss5_en: None -> CANNY 自动开, SOBEL 档关(与 live_tune 一致)
+    nms_eps: NMS 容差 0..8, 只在 CANNY 档生效(0 = 参考算法逐位一致)
     返回 dict: edge / gray_processed / mag_full / mag_nms
     """
     if gauss5_en is None:
@@ -227,7 +235,7 @@ def rtl_pipeline(gray_in, mode, thr=24, thr_lo=21, thr_hi=58,
         g = gauss5x5_int(g)
     gx, gy, mag = sobel_full(g)
     if mode == 2:
-        mag_nms = nms_rtl(mag, dir_class(gx, gy))
+        mag_nms = nms_rtl(mag, dir_class(gx, gy), nms_eps)
         edge = hysteresis_rtl(mag_nms, thr_lo, thr_hi)
         mag_out = mag_nms
     elif mode == 1:
