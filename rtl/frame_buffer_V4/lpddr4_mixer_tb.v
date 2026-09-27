@@ -143,7 +143,7 @@ frame_buffer #(
 .I_VID_WIDTH (16),
 .O_VID_WIDTH (16),
 .START_ADDR     (32'h00120        ),
-.FB_NUM			    (3),   
+.FB_NUM			    (4),   
 .MAX_VID_WIDTH  (1920),		
 .MAX_VID_HIGHT	(1080)	,
 .BURST_LEN  	(63),

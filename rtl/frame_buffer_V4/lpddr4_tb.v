@@ -99,7 +99,7 @@ reg rd_start = 'd0;
 
 
 
- // ÊµÀý»¯´ý²âÄ£¿é
+ // Êµï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ä£ï¿½ï¿½
     video_gen_top # (
     .SYMBOL_WIDTH(8),
     .SYMBOL_NUM(1),
@@ -141,7 +141,7 @@ frame_buffer #(
 .I_VID_WIDTH (64),
 .O_VID_WIDTH (64),
 .START_ADDR     (32'h00120        ),
-.FB_NUM			    (3),   
+.FB_NUM			    (4),   
 .MAX_VID_WIDTH  (1920),		
 .MAX_VID_HIGHT	(1080)	,
 .BURST_LEN  	(63),

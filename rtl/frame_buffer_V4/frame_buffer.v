@@ -174,7 +174,10 @@ ddr_buffer #(
 .RD_FIFO_DEPTH 	( RD_FIFO_DEPTH 	),
 .START_ADDR		( START_ADDR        ),
 .I_VID_WIDTH    ( I_VID_WIDTH       ),
-.BURST_LEN      (BURST_LEN          )
+.BURST_LEN      (BURST_LEN          ),
+.FB_NUM         (FB_NUM             ),
+.MAX_VID_WIDTH  (MAX_VID_WIDTH      ),
+.MAX_VID_HIGHT  (MAX_VID_HIGHT      )
 )u_ddr_buffer(
     .axi_clk		    (axi_clk	),
     .wr_clk_rst_n (wr_clk_rst_n),

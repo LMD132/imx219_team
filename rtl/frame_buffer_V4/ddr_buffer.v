@@ -106,8 +106,10 @@ wire		                        wr_sw_ack           ;
 wire		                        wr_sw 		          ;
 wire		                        rd_sw			          ;
 wire		                        rd_sw_ack           ;
+wire		[AXI_ADDR_WIDTH-1:0]		rd_start_addr_prev  ;
 wire		[AXI_ADDR_WIDTH-1:0]		wr_start_addr       ;
 wire		[AXI_ADDR_WIDTH-1:0]    rd_start_addr       ; 
+// 上一帧基址(bank_switch 四缓冲输出): 时域降噪读第二条流用它
 
 //=============================================================  
 //RTL                                                     
@@ -233,7 +235,8 @@ bank_switch #(
 /*o*/.rd_sw_ack	(rd_sw_ack),
 /*o*/.wr_sw_ack (wr_sw_ack),
 /*o*/.rd_start_addr(rd_start_addr),
-/*o*/.wr_start_addr(wr_start_addr)
+/*o*/.wr_start_addr(wr_start_addr),
+/*o*/.rd_start_addr_prev(rd_start_addr_prev)
 );
 
 

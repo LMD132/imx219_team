@@ -558,7 +558,7 @@ wire  fifo_rd_period;
 .WR_FIFO_DEPTH	      ( 1024		),    
 .RD_FIFO_DEPTH 	      ( 1024 	),
 .BURST_LEN  	        (127),
-.FB_NUM	              (3),
+.FB_NUM	              (4),
 .MAX_VID_WIDTH	      (640) ,
 .MAX_VID_HIGHT	      (720),
 .O_FRAME_WIDTH      (640),
