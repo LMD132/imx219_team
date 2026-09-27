@@ -28,6 +28,13 @@
 //    mode 2: 左右分区(1:1): 左半=画面左半灰度, 右半=画面右半边缘
 //    mode 3: 全屏二值边缘
 //
+//  ★ mode 0 的"2:1 抽取"只发生在显示侧(参考实现是两幅全分辨率并排, 我们塞进
+//    1280 宽必须 2:1)。旧版读地址是 2*rx -> 只留偶列, 奇数整列被丢掉: 一条 1px
+//    细边缘会被打成断续虚线/珠状, 一动就像"电流在流"。修法 = 边缘行缓存改成一个
+//    字存相邻两列(总位数不变), mode 0 读出时两列按位取或 -> 信息不丢(等效把边缘
+//    加粗到 2px, 这正是消珠状需要的); 1:1 档(mode 1/2/3)按列奇偶选字节, 与改动
+//    前逐像素完全一致, 零回归。
+//
 //  参数约束:
 //    ROWD 必须 = 算法各级 H2 之和(本设计 = 7), ROWS = ROWD+1 必须是 2 的幂;
 //    TDLY = ROWS*HTOTAL 必须 < 2**14(时延 RAM 深度)。
@@ -35,7 +42,8 @@
 //    才会被下一行覆盖 -> 读总是落在"本 bank 上一次写"上(余量 1~2 拍)。
 //    边缘写地址门控 ed_y < H 把帧尾复现行(alg_gray 的 REXT 行)排除在外。
 //
-//  资源: 彩色 8xW x24bit + 边缘 8xW x8bit + 时延 RAM 2 块(3bit / 2bit)
+//  资源: 彩色 8xW x24bit + 边缘 8xceil(W/2) x16bit(两列合一字, 位数同旧版)
+//        + 时延 RAM 2 块(3bit / 2bit)
 //=============================================================================
 
 module alg_vdisp #(
@@ -76,6 +84,9 @@ module alg_vdisp #(
 localparam integer ROWS = 1 << $clog2(ROWD+1);      // 行缓存行数(2 的幂)
 localparam integer SIZE = ROWS * W;                 // 行缓存字数
 localparam integer AW   = $clog2(SIZE);             // 行缓存地址位宽
+localparam integer WS   = (W + 1) / 2;              // 边缘行缓存: 一个字存相邻两列
+localparam integer SIZEE = ROWS * WS;               // 边缘行缓存字数
+localparam integer AWE  = $clog2(SIZEE);            // 边缘行缓存地址位宽
 localparam integer TW   = 14;                       // 时延 RAM 地址位宽(16384 深)
 localparam integer HTL0 = (HTOTAL > 2047) ? 2047 : HTOTAL;  // 保证 ROWS*HTL0 < 2**TW
 // 显示整体延迟 TDLY = ROWS * 行周期(运行时值, 见下面的实测)
@@ -215,17 +226,38 @@ wire [12:0] rx2  = {rx, 1'b0};                      // 2*rx   (mode 0 左半)
 wire [12:0] rxh  = (rx - HALF) << 1;                // 2*(rx-HALF) (mode 0 右半)
 wire [12:0] col_c = (mode == 2'd0) ? (lft ? rx2 : rxh) : {1'b0, rx};
 
+// mode 2 拍延迟: 行缓存地址在"当前 rx/mode"这拍给出, 数据 2 拍后才出来,
+// 所以读出端的选列/mode 判断必须用同拍的 mode_d2 与 ox2(= rx 晚 2 拍)
+reg [1:0] mode_d1, mode_d2;
+always @(posedge clk) begin
+    if (!rst_n) begin mode_d1 <= 2'd0; mode_d2 <= 2'd0; end
+    else        begin mode_d1 <= mode; mode_d2 <= mode_d1; end
+end
+
 wire [13:0] c_base = ry[2:0] * W;
 wire [14:0] c_ra   = c_base + col_c;                // 可能越过 SIZE -> 回卷
 wire [13:0] r_rd   = (c_ra >= SIZE) ? (c_ra - SIZE) : c_ra[13:0];
 
 //--------------------------------------------------------------------------
-// 3) 彩色行缓存 + 边缘行缓存(同地址, 一块 simple_dual_port_ram 各一)
+// 3) 彩色行缓存(24bit x W) + 边缘行缓存(16bit x W/2, 一个字存相邻两列)
+//
+//    边缘字 = {奇列, 偶列}(低字节 = 偶列)。写侧: 偶列先暂存, 奇列到达那一拍
+//    整字写入(ed_x 只在 ed_de 时 +1, 同一行的偶列一定紧邻其奇列到达, 不会错配);
+//    W 为奇数时最后一对只有偶列, 偶列那一拍就把高字节写 0(不会被误读成边缘)。
+//    读侧: 地址按"列号>>1"算, 与彩色同一列;
+//      mode 0      -> 相邻两列取或, 2:1 抽取不丢奇数整列(修"细线被打成虚线")
+//      其余 1:1 档 -> 按列奇偶选字节, 输出与旧版逐像素一致
+//    注意取或/选字节用的 ox2[0] 必须与 edg_pair 同拍(见上面的 2 拍延迟推导)。
 //--------------------------------------------------------------------------
 wire [23:0] col_dout;
+wire [15:0] edg_pair;
 wire [7:0]  edg_dout;
-wire        ed_we = ed_de & (ed_x < W) & (ed_y < H);
-wire [14:0] e_waddr = (ed_y[2:0] * W) + ed_x;
+
+wire        ed_in   = ed_de & (ed_x < W) & (ed_y < H);
+wire [13:0] e_waddr = (ed_y[2:0] * WS) + {1'b0, ed_x[11:1]};
+wire [13:0] e_ra    = (ry[2:0] * WS) + {1'b0, col_c[12:1]};   // 与彩色同一列 -> 所属字
+reg  [7:0]  edg_even;                                  // 偶列暂存
+wire [15:0] e_wdata = ed_x[0] ? {ed_d, edg_even} : {8'h00, ed_d};
 
 simple_dual_port_ram #(
     .DATA_WIDTH(24), .ADDR_WIDTH(AW), .OUTPUT_REG("TRUE"), .RAM_INIT_FILE("")
@@ -235,11 +267,19 @@ simple_dual_port_ram #(
 );
 
 simple_dual_port_ram #(
-    .DATA_WIDTH(8), .ADDR_WIDTH(AW), .OUTPUT_REG("TRUE"), .RAM_INIT_FILE("")
+    .DATA_WIDTH(16), .ADDR_WIDTH(AWE), .OUTPUT_REG("TRUE"), .RAM_INIT_FILE("")
 ) u_ering (
-    .wdata(ed_d), .waddr(e_waddr[AW-1:0]), .we(ed_we), .wclk(clk),
-    .raddr(r_rd[AW-1:0]), .re(1'b1), .rclk(clk), .rdata(edg_dout)
+    .wdata(e_wdata), .waddr(e_waddr[AWE-1:0]), .we(ed_in), .wclk(clk),
+    .raddr(e_ra[AWE-1:0]), .re(1'b1), .rclk(clk), .rdata(edg_pair)
 );
+
+always @(posedge clk) begin
+    if (!rst_n) edg_even <= 8'd0;
+    else if (ed_in & ~ed_x[0]) edg_even <= ed_d;
+end
+
+assign edg_dout = (mode_d2 == 2'd0) ? (edg_pair[7:0] | edg_pair[15:8])
+                                    : (ox2[0] ? edg_pair[15:8] : edg_pair[7:0]);
 
 //--------------------------------------------------------------------------
 // 4) 输出级(2 级流水): 行缓存读出先寄存, 再算灰度/合成并寄存输出。

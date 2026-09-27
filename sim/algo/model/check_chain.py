@@ -305,6 +305,9 @@ def check_disp(rd, img, luma, E, amode, ddisp, only_last=False):
                 r, g, b = (int(v) for v in img[y, col])
                 lg = int(luma[y, col])
                 ed = int(E["dsp"][y, col])
+                if ddisp == 0 and col + 1 < W:
+                    # 边缘行缓存"两列合一字", 2:1 抽取时相邻两列取或(不丢奇列)
+                    ed |= int(E["dsp"][y, col + 1])
                 if ddisp == 1:                      # 彩色 + 红边叠加
                     e = (255, 0, 0) if ed else (r, g, b)
                 elif ddisp == 3:                    # 纯边缘
