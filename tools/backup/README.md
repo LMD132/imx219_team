@@ -81,3 +81,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\backup\make_backup.ps1
 ```powershell
 Get-FileHash tools\backup\make_backup.ps1, D:\FPGA_Project\_backups\make_backup.ps1 -Algorithm SHA256
 ```
+## 已验证的证据（2026-09-27，不是推断）
+
+| 检查 | 命令 | 结果 |
+| --- | --- | --- |
+| 文件副本完整性 | `verify_backup.ps1 -Snapshot latest` | 249 / 249 文件 SHA-256 全匹配，现网无遗漏文件 |
+| bundle 完整性 | `git bundle verify <快照>\git_all.bundle` | `is okay`，**19 个 ref** 全在包内（7 个本地分支 + 8 个远端跟踪 + HEAD + `refs/original/*`） |
+| 对象库完整性 | `verify_backup.ps1` 第 4 项 | `gitdir\objects\` 存在且完整，含全部 reflog |
+| **还原演练** | `robocopy /MIR <快照>\worktree <临时目录>`，再与现网逐字节比对 | robocopy 退出码 1（成功），**249 文件 0 损坏 0 缺失**，`RESULT: RESTORE DRILL PASS` |
+| 从 bundle 独立重建 | `git clone <快照>\git_all.bundle` | 7 个本地分支全部可恢复为远端跟踪分支，HEAD 落在正确的提交 |
+
+已验证的两份快照：
+
+| 快照 | 覆盖的提交 | 说明 |
+| --- | --- | --- |
+| `20260927_144635_baseline-f39fa95` | `f39fa95` | 引入备份机制**之前**的状态 |
+| `20260927_144941_post-backup-policy-f67acb1` | `f67acb1` | 引入备份机制之后的状态 |
