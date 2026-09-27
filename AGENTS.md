@@ -33,3 +33,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\backup\verify_backup.p
 - **还原走 `worktree\` 文件副本，不要用 `git clone` bundle**：`.gitattributes` 把 `*.v` 等标成
   `text`，clone 出的源文件会被改写成 CRLF，内容相同但哈希不同；`*.bit` 是 `binary`，两条路径都一致。
 - `tools\backup\*.ps1` 与 `D:\FPGA_Project\_backups\*.ps1` 是两份，改动后手工同步并比对 SHA-256。
+
+## 找代码 / 判断哪一份最新（2026-09-27）
+
+不要凭记忆回答"最新代码在哪"。跑 `tools/code_map.ps1`，或直接双击
+`D:\FPGA_Project\代码在哪.bat`。脚本只读，结果同时打印到屏幕并写入
+`D:\FPGA_Project\CODE_MAP.txt`：每个 worktree 的分支/HEAD/提交时间/工作区是否干净/
+该提交在不在 GitHub、所有分支按时间排序及各自检出在哪个目录、所有候选位流的时间与
+SHA-256、最后给出两行结论（提交时间最新的代码、赛题4 交付物所在）。
+
+当前事实（2026-09-27 实测）：
+
+- **赛题4 代码 = `D:\FPGA_Project\imx219_pyrtl`，分支 `py-algo-rtl`。**
+- `D:\FPGA_Project\imx219_team` 是**另一条已经分叉的线**（分支 `teammate-ip-v2`，队友 IP
+  与画质验证，81 个提交我们这边没有）。它不是"更新的版本"，也不含赛题4 交付物。
+- 两边**共享同一个 `.git`**（`D:\FPGA_Project\imx219_team\.git`），所以那两个目录不是两份
+  拷贝，而是同一仓库两个分支的检出；在任一个里切分支都会换掉那个目录的内容。
+- 板上正在跑的位流来自 `py-algo-rtl`，该文件只存在于 `imx219_pyrtl\candidate_bitstreams\`。
+- "在不在 GitHub"要用 `git branch -r --contains <sha>` 判断，**不能**看
+  `%(upstream:short)` 是否为空：本地分支没配跟踪关系并不代表没推送过。

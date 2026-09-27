@@ -81,6 +81,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\backup\make_backup.ps1
 ```powershell
 Get-FileHash tools\backup\make_backup.ps1, D:\FPGA_Project\_backups\make_backup.ps1 -Algorithm SHA256
 ```
+
+同一条规则也适用于诊断脚本 `tools\code_map.ps1`（镜像在
+`D:\FPGA_Project\_backups\code_map.ps1`，供 `代码在哪.bat` 兜底）：它回答
+"现在最新的代码在哪个目录"，用法见 `AGENTS.md` 的"找代码 / 判断哪一份最新"。
+
 ## 已验证的证据（2026-09-27，不是推断）
 
 | 检查 | 命令 | 结果 |
@@ -91,9 +96,10 @@ Get-FileHash tools\backup\make_backup.ps1, D:\FPGA_Project\_backups\make_backup.
 | **还原演练** | `robocopy /MIR <快照>\worktree <临时目录>`，再与现网逐字节比对 | robocopy 退出码 1（成功），**249 文件 0 损坏 0 缺失**，`RESULT: RESTORE DRILL PASS` |
 | 从 bundle 独立重建 | `git clone <快照>\git_all.bundle` | 7 个本地分支全部可恢复为远端跟踪分支，HEAD 落在正确的提交 |
 
-已验证的两份快照：
+已验证的三份快照：
 
 | 快照 | 覆盖的提交 | 说明 |
 | --- | --- | --- |
 | `20260927_144635_baseline-f39fa95` | `f39fa95` | 引入备份机制**之前**的状态 |
 | `20260927_144941_post-backup-policy-f67acb1` | `f67acb1` | 引入备份机制之后的状态 |
+| `20260927_145018_pre-next-change-fbbe628` | `fbbe628` | 本轮改动前的状态 |
