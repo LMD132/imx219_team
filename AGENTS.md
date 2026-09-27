@@ -34,6 +34,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File tools\backup\verify_backup.p
   `text`，clone 出的源文件会被改写成 CRLF，内容相同但哈希不同；`*.bit` 是 `binary`，两条路径都一致。
 - `tools\backup\*.ps1` 与 `D:\FPGA_Project\_backups\*.ps1` 是两份，改动后手工同步并比对 SHA-256。
 
+## 冻结版本：先复制、再修改（板子持有人 2026-09-27 再次强调）
+
+> 现在这个版本的代码先放那不动；后面如果要修改，不能直接在这个代码上改，
+> 应该把这个代码复制一份，再在它基础上修改，记住了。
+
+- 冻结版 = `D:\FPGA_Project\imx219_pyrtl`（分支 `py-algo-rtl`，提交 `691a46d`，对应板上
+  位流 SHA-256 `BEAF7321…3A51`）。此后视作只读样板，不直接在它里面改代码。
+- 新改动一律先复制出新工作目录再改，示例（基于冻结提交建新分支 + 新检出）：
+  `git -C D:\FPGA_Project\imx219_pyrtl worktree add -b <新分支名> D:\FPGA_Project\<新目录名> 691a46d`
+- 新目录与主仓库共享同一个 `.git`（与 `imx219_team` 属同一种“同一仓库、两份检出”关系）；
+  对外交付/移交时用 `tools\make_archive.ps1` 打包，不要直接拷 `.git`。
+- 动手改任何文件之前，仍要先跑 `tools\backup\make_backup.ps1`（见上一节），双保险。
+- 每个版本上板验证通过后，都用 `tools\make_archive.ps1` 另存压缩包归档；旧版本目录一律保留、不清理。
+
 ## 找代码 / 判断哪一份最新（2026-09-27）
 
 不要凭记忆回答"最新代码在哪"。跑 `tools/code_map.ps1`，或直接双击
