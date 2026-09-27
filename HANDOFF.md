@@ -12,6 +12,26 @@ Ti60F225I3 DemoBoard V4 + IMX219 2-lane MIPI → DDR → 720p HDMI 已出图。`
 该分支现在还提供**运行期调参**：PC 上跑 `tools/alg_tuner.py` 拖滑块，画面立即变化，
 **不需要重新编译或烧录**（见 `docs/运行期调参.md`）。
 
+## 备份机制（2026-09-27）
+
+板子持有人要求：**每次改代码前必须确保上一版的代码有备份，不要直接在上一版里改**。
+
+`tools/backup/` 下新增两个脚本：
+
+- `make_backup.ps1` —— 动手前把当前版本拍成一份**与 git 无关、可独立还原**的快照，
+  落在仓库外的 `D:\FPGA_Project\_backups\<时间戳>_<标签>\`，内容为
+  `worktree\` 逐字节文件副本 + `worktree_team\` + `gitdir\`（完整对象库与 reflog）
+  + `git_all.bundle`（全部分支）+ `STATUS.txt` + `MANIFEST.sha256` + `RESTORE.txt`。
+- `verify_backup.ps1` —— 逐项验证快照可还原，输出 `RESULT: BACKUP VERIFIED RESTORABLE`。
+
+已用提交 `f39fa95` 实测：**246 个源文件哈希全匹配、19 个 ref 全在包内、
+`git bundle verify` 通过、`gitdir` 对象库完整、结果 VERIFIED RESTORABLE**。
+一份快照约 78 MB（默认排除可再生的 `outflow/`、`work_*/`、`work/` 工具链；加 `-Full` 则为全量）。
+
+还原请走 `worktree\` 文件副本，**不要 `git clone` bundle**：`.gitattributes` 把 `*.v` 等标成
+`text`，clone 出的源文件会被改写成 CRLF，内容相同但哈希不同（实测 `rtl/algo/alg_top.v`：
+工作区 10862 B 纯 LF vs clone 11101 B 纯 CRLF）。详见 `tools/backup/README.md`。
+
 ## 分支 `py-algo-rtl` 当前状态（2026-09-26）
 
 | 维度 | 状态 |
