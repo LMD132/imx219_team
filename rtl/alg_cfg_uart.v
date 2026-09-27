@@ -26,6 +26,13 @@
 //     D<n>   cfg_disp_mode  0..3
 //     C<n>   cfg_ov_color   0/1
 //     R      every parameter back to its power-on default
+//     X<n>   read camera register group <n> (0..78) back over I2C and show
+//            it as the CAM field of the status line.  <n> indexes this
+//            build's register table (piv2_720p_7M_2L_reg.mem): group g
+//            occupies bytes 3g..3g+2 = [addr_hi, addr_lo, value], so the
+//            read re-issues those two address bytes and clocks out the one
+//            data byte.  Examples: X77 -> AGAIN (0x0157), X75 -> exposure
+//            high (0x015A), X71 -> frame length high (0x0160).
 //
 // "T24", "T=24" and "T 24" are the same command: every character that is
 // neither a digit nor a key letter is a separator. The value is a
@@ -62,7 +69,9 @@ module alg_cfg_uart #(
     output reg         o_isol_en,
     output reg  [1:0]  o_disp_mode,
     output reg         o_ov_color,
-    output reg         o_commit
+    output reg         o_commit,
+    output reg  [9:0]  o_cam_grp,      // last X<grp> value (read-back index)
+    output reg         o_cam_rd        // 1-cycle pulse: start one read-back
 );
 
     localparam [3:0] K_NONE = 4'd0,
@@ -75,7 +84,8 @@ module alg_cfg_uart #(
                      K_ISO  = 4'd7,
                      K_DSP  = 4'd8,
                      K_OVC  = 4'd9,
-                     K_RST  = 4'd10;
+                     K_RST  = 4'd10,
+                     K_CAM  = 4'd11;
 
     localparam S_KEY = 1'b0,
                S_VAL = 1'b1;
@@ -98,6 +108,7 @@ module alg_cfg_uart #(
                 8'h44, 8'h64: key_of = K_DSP;    // D d
                 8'h43, 8'h63: key_of = K_OVC;    // C c
                 8'h52, 8'h72: key_of = K_RST;    // R r
+                8'h58, 8'h78: key_of = K_CAM;    // X x
                 default:      key_of = K_NONE;
             endcase
         end
@@ -186,8 +197,11 @@ module alg_cfg_uart #(
             o_disp_mode <= DISP_INIT;
             o_ov_color  <= OVC_INIT;
             o_commit    <= 1'b0;
+            o_cam_grp   <= 10'd0;
+            o_cam_rd    <= 1'b0;
         end else begin
             o_commit <= apply_en;
+            o_cam_rd <= 1'b0;      // X reads are one-clock request pulses
             if (apply_en) begin
                 case (apply_key)
                     K_MODE: o_mode      <= (apply_val > 12'd2)    ? 2'd2    : apply_val[1:0];
@@ -209,6 +223,13 @@ module alg_cfg_uart #(
                         o_isol_en   <= ISOL_INIT;
                         o_disp_mode <= DISP_INIT;
                         o_ov_color  <= OVC_INIT;
+                    end
+                    // Index into the register table this build actually programs:
+                    // MEM_DEPTH=237 bytes / 3 = groups 0..78.  Above that the
+                    // re-issued address bytes are all zero, so clamp instead.
+                    K_CAM: begin
+                        o_cam_grp <= (apply_val > 12'd78) ? 10'd78 : apply_val[9:0];
+                        o_cam_rd  <= 1'b1;
                     end
                     default: ;   // K_NONE can only appear if a line was empty
                 endcase

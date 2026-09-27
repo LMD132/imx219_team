@@ -35,5 +35,18 @@ t.vars["t"].set(100)
 t._on_line("M2 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0")
 print("aligned       -> t label color:", t.board_labels["t"].cget("foreground"),
       "| status:", t.status.get())
+
+# 60 字节的新状态行 (末尾带 CAM 字段): 解析、显示、以及"组号对得上才高亮"
+t._on_line("M2 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0 CAM0077=C0")
+print("cam default   ->", t.cam_lbl.cget("text"),
+      "color:", t.cam_lbl.cget("foreground"), "(spinbox=77 -> 应该高亮)")
+t.cam_grp_var.set("75")
+t._on_line("M2 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0 CAM0077=C0")
+print("cam stale     ->", t.cam_lbl.cget("text"),
+      "color:", t.cam_lbl.cget("foreground"), "(spinbox=75 -> 不应该高亮)")
+t._on_line("M0 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0 CAM0075=04")
+print("cam fresh     ->", t.cam_lbl.cget("text"),
+      "color:", t.cam_lbl.cget("foreground"), "(应该高亮)")
+print("counts w/ cam ->", t.count_lbl.cget("text"))
 root.destroy()
 print("SMOKE OK")

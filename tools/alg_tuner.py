@@ -8,10 +8,11 @@
 
 板子每 500ms 回一行状态, 收到命令后还会立刻回一行:
 
-    M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1
+    M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 CAM0077=C0
 
 界面右边"板端"那一列显示的就是这行回读值, 也就是 FPGA 里真正生效的值。
 如果它和滑块不一致(比如串口没接好), 会变成红色并在状态栏提示。
+末尾的 CAM 是摄像头寄存器读回的结果(见下面的 X 命令), 上电默认 CAM0000=FF。
 
 命令表 (详见 rtl/alg_cfg_uart.v):
     M<n>  工作模式 0=SOBEL单阈值 1=SOBEL双阈值 2=CANNY
@@ -24,6 +25,10 @@
     D<n>  显示模式               0..3
     C<n>  边缘彩色叠加           0/1
     R     全部恢复上电默认值
+    X<n>  读回摄像头寄存器组 n (0..78), 结果显示在状态行末尾的 CAM 字段。
+          组号 = piv2_720p_7M_2L_reg.mem 里 3 字节一组的序号, 一组是
+          [地址高, 地址低, 值], 所以 X77 就是读 0x0157 (AGAIN) 的当前值,
+          X75/X76 是曝光 0x015A/0x015B。越界会夹到 78。
 
 用法:  python tools/alg_tuner.py
 依赖:  pip install pyserial   (标准库自带 tkinter)
@@ -79,7 +84,11 @@ PARAMS = [
 TELEM_RE = re.compile(
     r"M(?P<mode>\d+)\s+T(?P<t>\d+)\s+LO(?P<lo>\d+)\s+HI(?P<hi>\d+)"
     r"\s+MED(?P<median_en>\d+)\s+GAU(?P<gauss_en>\d+)\s+ISO(?P<isol_en>\d+)"
-    r"\s+DSP(?P<disp_mode>\d+)\s+OVC(?P<ov_color>\d+)")
+    r"\s+DSP(?P<disp_mode>\d+)\s+OVC(?P<ov_color>\d+)"
+    r"(?:\s+CAM(?P<cam_grp>\d+)=(?P<cam_val>[0-9A-Fa-f]{2}))?")
+
+# 状态行里 CAM 组的已知含义 (见 rtl/cam/piv2_config.v 的寄存器表)
+CAM_HINT = "77=AGAIN 0x0157   75/76=曝光 0x015A/B   71=帧长 0x0160"
 
 
 class Tuner:
@@ -186,6 +195,20 @@ class Tuner:
                    command=self._clear_log).pack(side="left")
         self.count_lbl = ttk.Label(bar, text="")
         self.count_lbl.pack(side="right")
+
+        # 摄像头寄存器读回: 直接把 X<组号> 发下去, 结果读状态行末尾的 CAM 字段。
+        cam = ttk.Frame(self.root, padding=(10, 0, 10, 6))
+        cam.pack(fill="x")
+        ttk.Label(cam, text="摄像头寄存器读回 (X):").pack(side="left")
+        self.cam_grp_var = tk.StringVar(value="77")
+        ttk.Spinbox(cam, from_=0, to=78, width=5,
+                    textvariable=self.cam_grp_var).pack(side="left", padx=4)
+        ttk.Button(cam, text="读回", width=6,
+                   command=self.send_cam_read).pack(side="left")
+        self.cam_lbl = ttk.Label(cam, text="CAM----=--",
+                                 font=("Consolas", 10, "bold"))
+        self.cam_lbl.pack(side="left", padx=(10, 6))
+        ttk.Label(cam, text=CAM_HINT, foreground="#555").pack(side="left")
 
         box = ttk.Frame(self.root, padding=(10, 0, 10, 10))
         box.pack(fill="both", expand=True)
@@ -326,7 +349,11 @@ class Tuner:
         if not m:
             self._log("RX  %s" % line)
             return
-        vals = {k: int(v) for k, v in m.groupdict().items()}
+        vals = {}
+        for k, v in m.groupdict().items():
+            if v is None:
+                continue
+            vals[k] = int(v, 16) if k == "cam_val" else int(v)
         bad = []
         for p in PARAMS:
             k = p["key"]
@@ -339,6 +366,15 @@ class Tuner:
                 bad.append("%s: 本机%d/板端%d" % (p["name"], mine, got))
             else:
                 lab.configure(foreground="#080")
+        if "cam_grp" in vals:
+            g, v = vals["cam_grp"], vals["cam_val"]
+            self.cam_lbl.configure(text="CAM%04d=%02X" % (g, v))
+            try:
+                want = int(float(self.cam_grp_var.get()))
+            except Exception:
+                want = -1
+            # 周期行里 CAM 会一直是上次读回的值, 只有组号对得上才高亮
+            self.cam_lbl.configure(foreground="#080" if g == want else "#555")
         if bad:
             self.status.set("回读与滑块不一致 -> " + "; ".join(bad[:3]))
         else:
@@ -393,6 +429,19 @@ class Tuner:
         for p in PARAMS:
             self.vars[p["key"]].set(p["init"])
             self.value_labels[p["key"]].configure(text=str(p["init"]))
+
+    def send_cam_read(self):
+        """X<组号>: 让板子重发那组寄存器的两个地址字节, 再读回一个数据字节。"""
+        if self.ser is None:
+            messagebox.showinfo("未连接", "先点「连接」")
+            return
+        try:
+            g = int(float(self.cam_grp_var.get()))
+        except Exception:
+            g = 77
+        g = max(0, min(78, g))
+        self.cam_grp_var.set(str(g))
+        self._send("X%d" % g)
 
     def _desc(self, key):
         pass

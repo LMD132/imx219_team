@@ -516,12 +516,12 @@ piv2_config #(
     .o_error         (camera_config_error),
     .i_dbg_we        (1'b0),
     .i_dbg_din       (8'h00),
-    .i_dbg_addr      (10'h000),
+    .i_dbg_addr      (w_cam_byte_addr),
     .o_dbg_dout      (),
     .i_dbg_reconfig  (1'b0),
-    .i_dbg_i2c_rd    (1'b0),
-    .o_dbg_i2c_dout  (),
-    .o_dbg_i2c_state (),
+    .i_dbg_i2c_rd    (w_cam_rd),
+    .o_dbg_i2c_dout  (w_cam_val),
+    .o_dbg_i2c_state (w_cam_state),
     .o_dbg_reg_cnt   (),
     .o_dbg_byte_cnt  (),
     .o_dbg_rsr       (),
@@ -855,9 +855,10 @@ wire [7:0]  edge_b;
 // 运行期调参通道 (UART, 115200 8N1)
 //   PC( tools/alg_tuner.py 的滑块 ) --USB串口--> FPGA UART RX
 //   --> alg_cfg_uart 寄存器组 --> alg_cfg_sync 跨时钟域 --> alg_top 的 cfg_* 端口
-//   命令: M/T/L/H/N/G/I/D/C/R   (取值范围见 rtl/alg_cfg_uart.v 的文件头)
+//   命令: M/T/L/H/N/G/I/D/C/R/X  (取值范围见 rtl/alg_cfg_uart.v 的文件头)
 //   状态: 每 500ms 回一行, 收到命令后立即回一行, 例如
-//         M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1
+//         M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 CAM0077=C0
+//   X<n> 读回摄像头寄存器(见下面“摄像头寄存器读回”那一段), CAM 字段就是读回来的值。
 //   alg_top 及其下游算法 RTL 一行未改, 只是参数来源从常量变成了寄存器。
 //==============================================================================
 wire [7:0]  w_uart_byte;
@@ -916,8 +917,69 @@ alg_cfg_uart #(
     .o_isol_en   (w_cfg_isol_en),
     .o_disp_mode (w_cfg_disp_mode),
     .o_ov_color  (w_cfg_ov_color),
-    .o_commit    (w_cfg_commit)
+    .o_commit    (w_cfg_commit),
+    .o_cam_grp   (w_cam_grp),
+    .o_cam_rd    (w_cam_rd)
 );
+
+//==============================================================================
+// 摄像头寄存器读回 (X<grp> 命令 -> I2C 读 -> 状态行 CAM 字段)
+//
+// piv2_config 内部已经把整张寄存器表 (piv2_720p_7M_2L_reg.mem) 初始化进一块
+// 8bit x 1024 的 RAM, 每个组合 g 占 3 个字节: [addr_hi, addr_lo, value]。
+// 它那个调试读口做的事就是: 取 RAM[3g]、RAM[3g+1] 当作寄存器地址重新发起
+// "写地址 -> repeated start -> 读 1 字节", 读到的那一字节留在 o_dbg_i2c_dout。
+// 顶层只要给 i_dbg_i2c_rd 一个脉冲 + i_dbg_addr = 3*g, 不需要改 piv2_config。
+//
+// 完成判定: 那个脉冲先被 piv2_config 里的两级同步寄存器吃掉 (它只在 s_DONE
+// 状态里采样), 所以这里要等"状态先离开 s_DONE、再回到 s_DONE"才算读完。
+// 读完那一拍 w_cam_done 会顺手让状态行立刻重发一行, 主机不用等 500ms 周期。
+//==============================================================================
+wire [9:0]  w_cam_grp;        // alg_cfg_uart: X<grp> 的组号
+wire        w_cam_rd;         // alg_cfg_uart: 1 拍请求脉冲
+wire [9:0]  w_cam_byte_addr;  // = 3 * grp, RAM 里的字节地址
+wire [7:0]  w_cam_val;        // piv2_config: 最近一次读回的字节
+wire [2:0]  w_cam_state;      // piv2_config: 内部状态 (s_DONE = 3'b001)
+reg         w_cam_busy;
+reg         w_cam_seen;       // 已经看到它离开 s_DONE, 说明这次请求被受理
+reg         w_cam_done;       // 读回完成脉冲
+
+// 乘 3 只移位加: 组号 x 3 = (组号 << 1) + 组号
+assign w_cam_byte_addr = {w_cam_grp, 1'b0} + w_cam_grp;
+
+localparam [2:0] CAM_ST_DONE = 3'b001;   // piv2_config 的 s_DONE
+
+always @(posedge CLK_25M or negedge w_arstn)
+begin
+    if (!w_arstn)
+    begin
+        w_cam_busy <= 1'b0;
+        w_cam_seen <= 1'b0;
+        w_cam_done <= 1'b0;
+    end
+    else
+    begin
+        w_cam_done <= 1'b0;
+        if (w_cam_rd)
+        begin
+            w_cam_busy <= 1'b1;
+            w_cam_seen <= 1'b0;
+        end
+        else if (w_cam_busy)
+        begin
+            if (!w_cam_seen)
+            begin
+                if (w_cam_state != CAM_ST_DONE) w_cam_seen <= 1'b1;
+            end
+            else if (w_cam_state == CAM_ST_DONE)
+            begin
+                w_cam_busy <= 1'b0;
+                w_cam_done <= 1'b1;
+            end
+        end
+    end
+end
+
 alg_cfg_telemetry #(
     .CLK_HZ    (25000000),
     .BAUD      (115200),
@@ -934,7 +996,9 @@ alg_cfg_telemetry #(
     .i_isol   (w_cfg_isol_en),
     .i_disp   (w_cfg_disp_mode),
     .i_ovc    (w_cfg_ov_color),
-    .i_update (w_cfg_commit),
+    .i_cam_grp(w_cam_grp),
+    .i_cam_val(w_cam_val),
+    .i_update (w_cfg_commit | w_cam_done),
     .o_txd    (o_uart_txd)
 );
 alg_cfg_sync #(
