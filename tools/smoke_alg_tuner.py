@@ -64,5 +64,40 @@ print("old 60B line  -> eps shows", t.board_labels["nms_eps"].cget("text"),
 t._on_line("M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 CAM0077=C0")
 assert t.board_labels["nms_eps"].cget("text") == "0"
 print("eps back to 0 ->", t.board_labels["nms_eps"].cget("text"))
+
+# --- EPF / GF eps 字段: 77 字节行; 缺字段的旧行显示 "--" ---
+t._on_line("M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 CAM0077=C0")
+assert t.board_labels["epf"].cget("text") == "2"
+assert t.board_labels["gf_eps"].cget("text") == "400"
+print("epf/gf fields ->", t.board_labels["epf"].cget("text"),
+      t.board_labels["gf_eps"].cget("text"), "| counts:", t.count_lbl.cget("text"))
+
+t.vars["gf_eps"].set(400)
+t.vars["epf"].set(2)
+t._on_line("M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 CAM0077=C0")
+print("epf/gf match  -> colors:", t.board_labels["epf"].cget("foreground"),
+      t.board_labels["gf_eps"].cget("foreground"), "| status:", t.status.get())
+
+t._on_line("M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 CAM0077=C0")
+assert t.board_labels["epf"].cget("text") == "--"
+assert t.board_labels["gf_eps"].cget("text") == "--"
+print("old 65B line  -> epf/gf show", t.board_labels["epf"].cget("text"),
+      "(旧位流没有该字段, 只提示不报错)")
+
+# 命令下发: 记录写进假串口, 确认滑块拖出来的就是 "P2" / "F400"
+class _FakeSer(object):
+    def __init__(self):
+        self.written = []
+    def write(self, b):
+        self.written.append(b.decode("ascii").strip())
+
+t.ser = _FakeSer()
+t.vars["epf"].set(1)
+t.vars["gf_eps"].set(650)
+t.dirty = {"epf": 1, "gf_eps": 650}
+t._flush()
+print("cmds          ->", t.ser.written)
+assert "P1" in t.ser.written and "F650" in t.ser.written, t.ser.written
+t.ser = None
 root.destroy()
 print("SMOKE OK")

@@ -28,6 +28,8 @@ module alg_cfg_sync #(
     parameter [10:0] LO_INIT     = 11'd21,
     parameter [10:0] HI_INIT     = 11'd58,
     parameter [3:0]  EPS_INIT    = 4'd0,
+    parameter [1:0]  EPF_INIT    = 2'd2,
+    parameter [10:0] GFEPS_INIT  = 11'd400,
     parameter        MEDIAN_INIT = 1'b1,
     parameter        GAUSS_INIT  = 1'b0,
     parameter        ISOL_INIT   = 1'b1,
@@ -42,6 +44,8 @@ module alg_cfg_sync #(
     input  wire [10:0] i_lo,
     input  wire [10:0] i_hi,
     input  wire [3:0]  i_eps,
+    input  wire [1:0]  i_epf,
+    input  wire [10:0] i_gf_eps,
     input  wire        i_median,
     input  wire        i_gauss,
     input  wire        i_isol,
@@ -54,6 +58,8 @@ module alg_cfg_sync #(
     output reg  [10:0] o_lo,
     output reg  [10:0] o_hi,
     output reg  [3:0]  o_eps,
+    output reg  [1:0]  o_epf,
+    output reg  [10:0] o_gf_eps,
     output reg         o_median,
     output reg         o_gauss,
     output reg         o_isol,
@@ -61,20 +67,23 @@ module alg_cfg_sync #(
     output reg         o_ovc
 );
 
-    // {mode, t, lo, hi} = 35 bits, {median, gauss, isol, disp, ovc, eps} = 10 bits
-    // (eps 占低 4 位: snap_flg[3:0]; 高位顺序不变, 免得动 bus 位序)
-    wire [34:0] a_bus = {i_mode, i_t, i_lo, i_hi};
-    wire [9:0]  a_flg = {i_median, i_gauss, i_isol, i_disp, i_ovc, i_eps};
+    // {mode, t, lo, hi, gf_eps} = 46 bits, {median, gauss, isol, disp, ovc,
+    // epf, eps} = 12 bits.  New fields are appended at the low end (after eps)
+    // and the map is written out once here, so the payload order is never in
+    // doubt: bus[45:44]=mode [43:33]=t [32:22]=lo [21:11]=hi [10:0]=gf_eps;
+    // flg[11]=median [10]=gauss [9]=isol [8:7]=disp [6]=ovc [5:4]=epf [3:0]=eps.
+    wire [45:0] a_bus = {i_mode, i_t, i_lo, i_hi, i_gf_eps};
+    wire [11:0] a_flg = {i_median, i_gauss, i_isol, i_disp, i_ovc, i_epf, i_eps};
 
-    reg [34:0] snap_bus;
-    reg [9:0]  snap_flg;
+    reg [45:0] snap_bus;
+    reg [11:0] snap_flg;
     reg        tog;
 
     always @(posedge clk_a or negedge rst_a_n) begin
         if (!rst_a_n) begin
-            snap_bus <= {MODE_INIT, T_INIT, LO_INIT, HI_INIT};
+            snap_bus <= {MODE_INIT, T_INIT, LO_INIT, HI_INIT, GFEPS_INIT};
             snap_flg <= {MEDIAN_INIT, GAUSS_INIT, ISOL_INIT, DISP_INIT, OVC_INIT,
-                         EPS_INIT};
+                         EPF_INIT, EPS_INIT};
             tog      <= 1'b0;
         end else if (i_commit) begin
             snap_bus <= a_bus;
@@ -94,6 +103,8 @@ module alg_cfg_sync #(
             o_lo     <= LO_INIT;
             o_hi     <= HI_INIT;
             o_eps    <= EPS_INIT;
+            o_epf    <= EPF_INIT;
+            o_gf_eps <= GFEPS_INIT;
             o_median <= MEDIAN_INIT;
             o_gauss  <= GAUSS_INIT;
             o_isol   <= ISOL_INIT;
@@ -102,16 +113,18 @@ module alg_cfg_sync #(
         end else begin
             tog_sync <= {tog_sync[1:0], tog};
             if (take) begin
-                o_mode   <= snap_bus[34:33];
-                o_t      <= snap_bus[32:22];
-                o_lo     <= snap_bus[21:11];
-                o_hi     <= snap_bus[10:0];
+                o_mode   <= snap_bus[45:44];
+                o_t      <= snap_bus[43:33];
+                o_lo     <= snap_bus[32:22];
+                o_hi     <= snap_bus[21:11];
+                o_gf_eps <= snap_bus[10:0];
                 o_eps    <= snap_flg[3:0];
-                o_median <= snap_flg[9];
-                o_gauss  <= snap_flg[8];
-                o_isol   <= snap_flg[7];
-                o_disp   <= snap_flg[6:5];
-                o_ovc    <= snap_flg[4];
+                o_epf    <= snap_flg[5:4];
+                o_ovc    <= snap_flg[6];
+                o_disp   <= snap_flg[8:7];
+                o_isol   <= snap_flg[9];
+                o_gauss  <= snap_flg[10];
+                o_median <= snap_flg[11];
             end
         end
     end

@@ -20,19 +20,21 @@
 //                                                    (行缓存对齐 + 4 种显示模式)
 //
 //  === 显示对齐(本文件最容易写错的地方, 已逐拍仿真验证) ===
-//  主链每级窗口模块把"窗口中心"的标签减去 H2, 且 de 从前端被切掉 H2 拍。6 级窗口
-//    H2 合计 = 1(中值)+2(高斯)+1(Sobel)+1(NMS)+1(阈值膨胀)+1(去孤点) = 7
+//  主链每级窗口模块把"窗口中心"的标签减去 H2, 且 de 从前端被切掉 H2 拍。7 级窗口
+//    H2 合计 = 1(中值)+4(导向滤波: 两级 6x6)+2(高斯)+1(Sobel)+1(NMS)+1(阈值膨胀)+1(去孤点) = 11
 //  所以 dsp 级在时钟 t 输出的"边缘值"对应的源像素 = 顶层输入在 t-L 时刻的像素,
-//  而它的 (x,y) 标签 = 源坐标 - 7 (标签是"源像素坐标", 不是屏幕坐标)。
-//  因此 dsp 标签不能直接当屏幕坐标用: 边缘值出现时, 彩色光栅已经跑到 (x+7, y+7),
-//  直接叠加会让边缘整体右下移 7 行 7 列(实测 306 显示像素里错 80 个)。
+//  而它的 (x,y) 标签 = 源坐标 - 11 (标签是"源像素坐标", 不是屏幕坐标)。
+//  因此 dsp 标签不能直接当屏幕坐标用: 边缘值出现时, 彩色光栅已经跑到 (x+11, y+11),
+//  直接叠加会让边缘整体右下移 11 行 11 列(实测 306 显示像素里错 80 个)。
 //  正确做法是交给 alg_vdisp 用行缓存重建对齐: 彩色行缓存按"显示坐标"读写、边缘行
 //  缓存按"dsp 标签"写, 两者各自归位 -> 逐像素严格对齐(实测 0 mismatch)。
-//  L = 1(灰度) + 4(中值) + 5(高斯, 旁路也保持 5 拍) + 4(Sobel) + 4(NMS) + 4(阈值) + 4(去孤点)
-//    = 26  (见 docs/ALGO_RTL.md 的延迟表, 由 check_chain.py 实测复核)
-//  图像最外 7 行/列是流式固有边界: 窗口需要未来行/列, 该处 de=0, 边缘显示为 0。
+//  L = 1(灰度) + 4(中值) + 25(导向滤波, 三档都跑同一套流水, 旁路也保持 25 拍)
+//    + 5(高斯, 旁路也保持 5 拍) + 4(Sobel) + 4(NMS) + 4(阈值) + 4(去孤点)
+//    = 51  (见 docs/ALGO_RTL.md 的延迟表, 由 check_chain.py 实测复核)
+//  图像最外 11 行/列是流式固有边界: 窗口需要未来行/列, 该处 de=0, 边缘显示为 0。
 //
-//  运行期可配: MODE / 阈值 / NMS 容差 eps / 中值开关 / 去孤点开关 / 显示模式 / 叠加底色
+//  运行期可配: MODE / 阈值 / NMS 容差 eps / 前置滤波 EPF(0 关 1 高斯 2 导向) /
+//              导向滤波 eps / 中值开关 / 去孤点开关 / 显示模式 / 叠加底色
 //=============================================================================
 
 module alg_top #(
@@ -42,7 +44,7 @@ module alg_top #(
     parameter integer REXT     = 8,
     parameter integer HTOTAL   = 1650,          // 输入光栅行周期(clk 数, 含消隐)
     parameter integer HALF     = 640,           // W/2
-    parameter integer ROWD     = 7              // 算法各级 H2 累计(垂直/水平提前量)
+    parameter integer ROWD     = 11             // 算法各级 H2 累计(垂直/水平提前量)
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -61,6 +63,8 @@ module alg_top #(
     input  wire [10:0] cfg_lo,
     input  wire [10:0] cfg_hi,
     input  wire [3:0]  cfg_eps,         // NMS 容差 0..8 (只 CANNY 档有效, 0 = 参考代码)
+    input  wire [1:0]  cfg_epf,         // 前置滤波 0=关 1=3x3高斯 2=导向滤波(参考代码默认档)
+    input  wire [10:0] cfg_gf_eps,      // 导向滤波 eps 0..2000 (参考代码 400)
     input  wire        cfg_median_en,
     input  wire        cfg_gauss_en,
     input  wire        cfg_isol_en,
@@ -114,7 +118,26 @@ alg_median3 #(.W(W), .VEXT(VEXT), .H(H)) u_med (
 );
 
 //--------------------------------------------------------------------------
-// 4) 5x5 整数高斯(Canny 档前置)
+// 4a) 前置滤波 EPF(live_tune.py 的 EPF 滑条, 插在中值之后):
+//       0 = 关(直通)   1 = 3x3 高斯   2 = 导向滤波 guided_filter(radius=6, eps)
+//     ★ 三档共用同一套流水, 延迟恒为 25 拍 -> 换档不会让画面跳, ROWD 也不变。
+//--------------------------------------------------------------------------
+wire        epf_vs, epf_hs, epf_de, epf_def;
+wire [11:0] epf_x;
+wire [12:0] epf_y;
+wire [7:0]  epf_d;
+
+alg_gf #(.W(W), .VEXT(VEXT), .H(H)) u_epf (
+    .clk(clk), .rst_n(rst_n),
+    .epf(cfg_epf), .gf_eps(cfg_gf_eps),
+    .in_vs(med_vs), .in_hs(med_hs), .in_de(med_def),
+    .in_x(med_x), .in_y(med_y), .in_data(med_d),
+    .out_vs(epf_vs), .out_hs(epf_hs), .out_de_full(epf_def), .out_de(epf_de),
+    .out_x(epf_x), .out_y(epf_y), .out_data(epf_d)
+);
+
+//--------------------------------------------------------------------------
+// 4b) 5x5 整数高斯(Canny 档前置)
 //--------------------------------------------------------------------------
 wire        gau_vs, gau_hs, gau_de, gau_def;
 wire [11:0] gau_x;
@@ -123,8 +146,8 @@ wire [7:0]  gau_d;
 
 alg_gauss5 #(.W(W), .VEXT(VEXT), .H(H)) u_gau (
     .clk(clk), .rst_n(rst_n), .en(gauss_on),
-    .in_vs(med_vs), .in_hs(med_hs), .in_de(med_def),
-    .in_x(med_x), .in_y(med_y), .in_data(med_d),
+    .in_vs(epf_vs), .in_hs(epf_hs), .in_de(epf_def),
+    .in_x(epf_x), .in_y(epf_y), .in_data(epf_d),
     .out_vs(gau_vs), .out_hs(gau_hs), .out_de_full(gau_def), .out_de(gau_de),
     .out_x(gau_x), .out_y(gau_y), .out_data(gau_d)
 );

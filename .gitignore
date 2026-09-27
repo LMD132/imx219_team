@@ -34,5 +34,9 @@ Desktop.ini
 *.vvp
 __pycache__/
 /sim/algo/run/
+/sim/algo/run_gf/
 /sim/algo/dbg_gauss.txt
 /sim/algo/in_rgb.hex
+
+# Local scratch (helper scripts kept under tools/ instead)
+/work/

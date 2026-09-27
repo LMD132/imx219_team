@@ -11,6 +11,9 @@
         <efx:design_file name="rtl/algo/alg_gray.v" version="default" library="default" />
         <efx:design_file name="rtl/algo/alg_win.v" version="default" library="default" />
         <efx:design_file name="rtl/algo/alg_median3.v" version="default" library="default" />
+<efx:design_file name="rtl/algo/alg_gauss3.v" version="default" library="default" />
+<efx:design_file name="rtl/algo/alg_gf.v" version="default" library="default" />
+<efx:design_file name="rtl/algo/alg_gf_div.v" version="default" library="default" />
         <efx:design_file name="rtl/algo/alg_gauss5.v" version="default" library="default" />
         <efx:design_file name="rtl/algo/alg_sobel3.v" version="default" library="default" />
         <efx:design_file name="rtl/algo/alg_nms.v" version="default" library="default" />

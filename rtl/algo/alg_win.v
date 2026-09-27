@@ -48,8 +48,40 @@ localparam integer AW   = $clog2(LINE);
 localparam integer H2   = (N-1)/2;    // 半窗
 localparam integer RB   = N-1;        // 历史行 bank 数
 localparam integer SB   = (RB < 2) ? 1 : $clog2(RB);
+localparam integer RB_P2 = ((RB & (RB-1)) == 0) ? 1 : 0;   // RB 是 2 的幂?
 localparam integer HLASEL = (H - 1) % RB;   // 第 H-1 行所在 bank(常量下标, 无桶形移位器)
 localparam integer HLAST  = H - 1;          // 最后一行行号
+
+//--------------------------------------------------------------------------
+// 0) 行号 modulo RB
+//    RB 是 2 的幂(中值/高斯/Sobel/NMS/阈值/去孤点的 N=3/5) 时, 直接用 y[SB-1:0]
+//    位选, 与本模块旧版逐位一致(零回归)。
+//    RB 不是 2 的幂(EPF 的 6x6 窗 -> RB=5) 时, y[2:0] 不等于 y mod 5, 位选会读错
+//    行, 因此改用"行号计数器": 计数器按 in_y 变化 +1、到 RB-1 回卷、每帧 y==0
+//    对齐一次(帧首/帧尾扩展行也照常 +1), 于是 wrow == in_y mod RB 恒成立。
+//    wrow_n 与 in_y 同拍(组合), wrow 打一拍; rrow2 = wrow_n 延迟 2 拍, 与 y2 同拍。
+//--------------------------------------------------------------------------
+reg  [12:0]   in_y_d;
+reg  [SB-1:0] wrow;
+reg  [SB-1:0] rrow1, rrow2;
+
+wire [SB-1:0] wrow_n = ((PAD_EDGE != 0) && (in_y == 13'd0)) ? {SB{1'b0}}
+                      : (in_y == in_y_d) ? wrow
+                      : ((wrow == (RB-1)) ? {SB{1'b0}} : (wrow + 1'b1));
+
+always @(posedge clk) begin
+    if (!rst_n) begin
+        in_y_d <= 13'd0;
+        wrow   <= {SB{1'b0}};
+        rrow1  <= {SB{1'b0}};
+        rrow2  <= {SB{1'b0}};
+    end else begin
+        in_y_d <= in_y;
+        wrow   <= wrow_n;
+        rrow1  <= wrow_n;
+        rrow2  <= rrow1;
+    end
+end
 
 //--------------------------------------------------------------------------
 // 0) PAD_EDGE=0 时, 视场外(x>=W 或 y>=H)的数据一律按 0 处理, 等价 np.pad(0)
@@ -67,7 +99,10 @@ wire [DW-1:0] bank_dout [0:RB-1];
 genvar gk;
 generate
 for (gk = 0; gk < RB; gk = gk + 1) begin : g_bank
-    wire we_k = in_de & ( (in_y[SB-1:0] == gk) | ((PAD_EDGE != 0) & (in_y == 13'd0)) );
+    // RB 是 2 的幂 -> 直接用位选(与旧版逐位一致); 否则用 mod-RB 计数器 wrow_n
+    // (wrow_n 与 in_y 同拍, 见上面 0) 段)
+    wire [SB-1:0] wsel_k = (RB_P2 != 0) ? in_y[SB-1:0] : wrow_n;
+    wire we_k = in_de & ( (wsel_k == gk) | ((PAD_EDGE != 0) & (in_y == 13'd0)) );
     true_dual_port_ram #(
         .DATA_WIDTH  (DW),
         .ADDR_WIDTH  (AW),
@@ -150,7 +185,13 @@ wire [DW-1:0] sr_in [0:N-1];
 //   以上只改"读哪一 bank / 是否用保持值", 不新增行缓存, 不引入桶形移位器。
 generate
 for (gk = 0; gk < N; gk = gk + 1) begin : g_tap
-    wire [SB-1:0] sel_g = y2[SB-1:0] - gk;              // = (y2 - gk) mod RB
+    // 读侧 bank 号 = (y2 - gk) mod RB:
+    //   RB 是 2 的幂 -> 位减法天然就是 mod RB(与旧版逐位一致);
+    //   否则用 rrow2(= y2 mod RB, 见 0) 段) 做带回卷的减法。
+    wire [SB-1:0] rsel_g = (RB_P2 != 0) ? y2[SB-1:0] : rrow2;
+    wire [SB:0]   dif_g  = {1'b0, rsel_g} - gk;                 // 可能为负
+    wire [SB:0]   mod_g  = dif_g[SB] ? (dif_g + RB) : dif_g;    // 负 -> +RB
+    wire [SB-1:0] sel_g  = (RB_P2 != 0) ? (y2[SB-1:0] - gk) : mod_g[SB-1:0];
     wire [DW-1:0] raw_g = bank_pack >> (DW * sel_g);
     wire top_g  = (PAD_EDGE != 0) && (y2 < gk);                 // 顶部越界 -> 第 0 行
     wire bot_g  = (PAD_EDGE != 0) && (y2 >= (HLAST + gk));      // 底部越界 -> 第 H-1 行

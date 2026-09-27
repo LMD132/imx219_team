@@ -36,21 +36,26 @@
 //    前逐像素完全一致, 零回归。
 //
 //  参数约束:
-//    ROWD 必须 = 算法各级 H2 之和(本设计 = 7), ROWS = ROWD+1 必须是 2 的幂;
-//    TDLY = ROWS*HTOTAL 必须 < 2**14(时延 RAM 深度)。
+//    ROWD 必须 = 算法各级 H2 之和(本设计 = 11: 中值1+导向滤波4+高斯2+Sobel1+
+//    NMS1+阈值1+去孤点1), ROWS = ROWD+1 = 12(不再要求 2 的幂, 行号用 mod-12
+//    计数器, 见下面 1)/2) 段);
+//    TDLY = ROWS*HTOTAL 必须 < 2**TW(时延 RAM 深度, 本设计 TW=15 -> 32768,
+//    而 12*2047 = 24564 < 32768 ✓)。
 //    行缓存安全性(实测推导): 读一行比写晚 ROWS 行, 而同一 bank 要再过 ROWS 行
 //    才会被下一行覆盖 -> 读总是落在"本 bank 上一次写"上(余量 1~2 拍)。
 //    边缘写地址门控 ed_y < H 把帧尾复现行(alg_gray 的 REXT 行)排除在外。
 //
-//  资源: 彩色 8xW x24bit + 边缘 8xceil(W/2) x16bit(两列合一字, 位数同旧版)
-//        + 时延 RAM 2 块(3bit / 2bit)
+//  资源(12 行): 彩色 12xW x16bit(RGB565; 原来是 24bit, 加导向滤波的 15 个行
+//        缓存后 BRAM 预算不够, 显示侧降到 565 —— 算法/边缘完全不受影响) +
+//        边缘 12xceil(W/2) x16bit(两列合一字) + 时延 RAM 1 块(3bit, 32768 深)。
+//        显示灰度由 565 还原的 RGB 现算(与 alg_gray 同式), 最多差 1~2 LSB。
 //=============================================================================
 
 module alg_vdisp #(
     parameter integer W      = 1280,   // 有效像素宽度
     parameter integer H      = 720,    // 有效行数
     parameter integer HTOTAL = 1650,   // 输入光栅行周期初值(clk 数, 含消隐)
-    parameter integer ROWD   = 7,      // 算法垂直/水平提前量(各级 H2 累计)
+    parameter integer ROWD   = 11,     // 算法垂直/水平提前量(各级 H2 累计)
     parameter integer HALF   = 640     // W/2
 )(
     input  wire        clk,
@@ -81,13 +86,14 @@ module alg_vdisp #(
     output wire [7:0]  out_b
 );
 
-localparam integer ROWS = 1 << $clog2(ROWD+1);      // 行缓存行数(2 的幂)
+localparam integer ROWS = ROWD + 1;                 // 行缓存行数 = 提前量 + 1
+localparam integer RWB  = $clog2(ROWS);             // 行号 mod ROWS 计数位宽
 localparam integer SIZE = ROWS * W;                 // 行缓存字数
 localparam integer AW   = $clog2(SIZE);             // 行缓存地址位宽
 localparam integer WS   = (W + 1) / 2;              // 边缘行缓存: 一个字存相邻两列
 localparam integer SIZEE = ROWS * WS;               // 边缘行缓存字数
 localparam integer AWE  = $clog2(SIZEE);            // 边缘行缓存地址位宽
-localparam integer TW   = 14;                       // 时延 RAM 地址位宽(16384 深)
+localparam integer TW   = 15;                       // 时延 RAM 地址位宽(32768 深)
 localparam integer HTL0 = (HTOTAL > 2047) ? 2047 : HTOTAL;  // 保证 ROWS*HTL0 < 2**TW
 // 显示整体延迟 TDLY = ROWS * 行周期(运行时值, 见下面的实测)
 
@@ -131,28 +137,28 @@ end
 wire [31:0]   tdly_w = lper * ROWS;         // 常数乘 -> 移位, 无 DSP
 wire [TW-1:0] TDLY   = tdly_w[TW-1:0];
 
-wire [TW-1:0] ra_out = wctr + 2 - TDLY;             // 输出相位
-wire [TW-1:0] ra_rd  = wctr + 4 - TDLY;             // 读地址相位(提前 2 拍)
+wire [TW-1:0] ra_rd  = wctr + 4 - TDLY;             // 读地址相位(比显示相位提前 2 拍)
 
-wire [2:0] tim_o;                                   // {vs,hs,de}
-wire [1:0] tim_e;                                   // {vs,de}
+// 只留一套时延 RAM(读相位), 显示相位由它的输出再打 2 拍得到 —— 与原来
+// u_tim_o(raddr = wctr+2-TDLY) + u_tim_e(raddr = wctr+4-TDLY) 两套 RAM
+// 逐位等价(RAM 读延迟相同, 丢掉的那 4 块 RAM 正好被行缓存扩到 12 行吃掉)。
+wire [2:0] tim_rd;                                  // 读相位 {vs,hs,de}
 
 simple_dual_port_ram #(
     .DATA_WIDTH(3), .ADDR_WIDTH(TW), .OUTPUT_REG("TRUE"), .RAM_INIT_FILE("")
-) u_tim_o (
+) u_tim (
     .wdata({in_vs, in_hs, in_de}), .waddr(wctr), .we(1'b1), .wclk(clk),
-    .raddr(ra_out), .re(1'b1), .rclk(clk), .rdata(tim_o)
+    .raddr(ra_rd), .re(1'b1), .rclk(clk), .rdata(tim_rd)
 );
 
-simple_dual_port_ram #(
-    .DATA_WIDTH(2), .ADDR_WIDTH(TW), .OUTPUT_REG("TRUE"), .RAM_INIT_FILE("")
-) u_tim_e (
-    .wdata({in_vs, in_de}), .waddr(wctr), .we(1'b1), .wclk(clk),
-    .raddr(ra_rd), .re(1'b1), .rclk(clk), .rdata(tim_e)
-);
+reg [2:0] tim_rd1, tim_rd2;
+always @(posedge clk) begin
+    if (!rst_n) begin tim_rd1 <= 3'd0; tim_rd2 <= 3'd0; end
+    else        begin tim_rd1 <= tim_rd; tim_rd2 <= tim_rd1; end
+end
 
-wire d_vs = tim_o[2], d_hs = tim_o[1], d_de = tim_o[0];
-wire e_vs = tim_e[1], e_de = tim_e[0];
+wire d_vs = tim_rd2[2], d_hs = tim_rd2[1], d_de = tim_rd2[0];   // 显示相位
+wire e_vs = tim_rd[2],  e_de = tim_rd[0];                       // 读相位(早 2 拍)
 
 // 上电后前 TDLY 拍, 读地址还没被写过(仿真为 x), 用 primed 把输出关掉
 reg primed;
@@ -167,24 +173,29 @@ end
 reg [11:0] wx;
 reg [12:0] wy;
 reg        in_de_r;
+reg [RWB-1:0] wy_m;                 // wy mod ROWS (ROWS=12 不是 2 的幂, 位选不行)
 
 always @(posedge clk) begin
     if (!rst_n) begin
-        wx <= 12'd0; wy <= 13'd0; in_de_r <= 1'b0;
+        wx <= 12'd0; wy <= 13'd0; in_de_r <= 1'b0; wy_m <= {RWB{1'b0}};
     end else begin
         in_de_r <= in_de;
         if (in_vs) begin
             wx <= 12'd0;
             wy <= 13'd0;
+            wy_m <= {RWB{1'b0}};
         end else begin
             if (in_de) wx <= (wx == (W-1)) ? 12'd0 : (wx + 12'd1);
             else       wx <= 12'd0;
-            if (~in_de & in_de_r) wy <= (wy == (H-1)) ? 13'd0 : (wy + 13'd1);
+            if (~in_de & in_de_r) begin
+                wy   <= (wy == (H-1)) ? 13'd0 : (wy + 13'd1);
+                wy_m <= (wy_m == (ROWS-1)) ? {RWB{1'b0}} : (wy_m + 1'b1);
+            end
         end
     end
 end
 
-wire [13:0] c_waddr = (wy[2:0] * W) + wx;
+wire [13:0] c_waddr = (wy_m * W) + wx;
 
 //--------------------------------------------------------------------------
 // 2) 读相位列计数(提前 2 拍) -> 行缓存读地址 + 显示坐标
@@ -192,19 +203,24 @@ wire [13:0] c_waddr = (wy[2:0] * W) + wx;
 reg [11:0] rx;
 reg [12:0] ry;
 reg        e_de_r;
+reg [RWB-1:0] ry_m;                 // ry mod ROWS
 
 always @(posedge clk) begin
     if (!rst_n) begin
-        rx <= 12'd0; ry <= 13'd0; e_de_r <= 1'b0;
+        rx <= 12'd0; ry <= 13'd0; e_de_r <= 1'b0; ry_m <= {RWB{1'b0}};
     end else begin
         e_de_r <= e_de;
         if (e_vs) begin
             rx <= 12'd0;
             ry <= 13'd0;
+            ry_m <= {RWB{1'b0}};
         end else begin
             if (e_de) rx <= (rx == (W-1)) ? 12'd0 : (rx + 12'd1);
             else      rx <= 12'd0;
-            if (~e_de & e_de_r) ry <= (ry == (H-1)) ? 13'd0 : (ry + 13'd1);
+            if (~e_de & e_de_r) begin
+                ry   <= (ry == (H-1)) ? 13'd0 : (ry + 13'd1);
+                ry_m <= (ry_m == (ROWS-1)) ? {RWB{1'b0}} : (ry_m + 1'b1);
+            end
         end
     end
 end
@@ -234,7 +250,7 @@ always @(posedge clk) begin
     else        begin mode_d1 <= mode; mode_d2 <= mode_d1; end
 end
 
-wire [13:0] c_base = ry[2:0] * W;
+wire [13:0] c_base = ry_m * W;
 wire [14:0] c_ra   = c_base + col_c;                // 可能越过 SIZE -> 回卷
 wire [13:0] r_rd   = (c_ra >= SIZE) ? (c_ra - SIZE) : c_ra[13:0];
 
@@ -249,22 +265,53 @@ wire [13:0] r_rd   = (c_ra >= SIZE) ? (c_ra - SIZE) : c_ra[13:0];
 //      其余 1:1 档 -> 按列奇偶选字节, 输出与旧版逐像素一致
 //    注意取或/选字节用的 ox2[0] 必须与 edg_pair 同拍(见上面的 2 拍延迟推导)。
 //--------------------------------------------------------------------------
-wire [23:0] col_dout;
+wire [15:0] col_dout;                               // RGB565
 wire [15:0] edg_pair;
 wire [7:0]  edg_dout;
 
 wire        ed_in   = ed_de & (ed_x < W) & (ed_y < H);
-wire [13:0] e_waddr = (ed_y[2:0] * WS) + {1'b0, ed_x[11:1]};
-wire [13:0] e_ra    = (ry[2:0] * WS) + {1'b0, col_c[12:1]};   // 与彩色同一列 -> 所属字
+// 边缘写行号 = 帧内行号 mod ROWS(与读侧 ry_m 同一套编号)。
+// ★ 行首必须用 ed_de 的"上升沿"判: dsp 标签 ed_y 在行间消隐里就跳到下一行,
+//   若用 (ed_de & ed_y!=ed_y_d) 判, ed_y_d 在消隐期已经追平 -> 行首永不触发 ->
+//   所有边缘都写进 bank0, 其余行读出 x(实测 mode3 只有 y=0 有值, 正是此因)。
+//   另外不能用 wy_m: 边缘值到达时输入光栅已经流过 ROWD 行去了。
+// ★ 写地址必须用"组合的下一 bank"(ed_rm_w): ed_rm 寄存器要到行首之后一拍才更新,
+//   若写地址直接用 ed_rm, 每行第 0 个像素(偶列 x=0)会落进上一行的 bank, 而它写的
+//   是 {8'h00, ed_d} -> 把上一行那个字的奇列字节清成 0(实测 (y=7,x=1) 边缘丢失)。
+reg           ed_de_r;
+reg [RWB-1:0] ed_rm;
+wire          ed_row_start = ed_de & ~ed_de_r;
+wire [RWB-1:0] ed_rm_nxt = (ed_y == 13'd0) ? {RWB{1'b0}}
+                         : ((ed_rm == (ROWS-1)) ? {RWB{1'b0}} : (ed_rm + 1'b1));
+wire [RWB-1:0] ed_rm_w  = ed_row_start ? ed_rm_nxt : ed_rm;
+
+always @(posedge clk) begin
+    if (!rst_n) begin ed_de_r <= 1'b0; ed_rm <= {RWB{1'b0}}; end
+    else begin
+        ed_de_r <= ed_de;
+        if (ed_row_start) ed_rm <= ed_rm_nxt;
+    end
+end
+
+wire [13:0] e_waddr = (ed_rm_w * WS) + {1'b0, ed_x[11:1]};
+wire [13:0] e_ra    = (ry_m * WS) + {1'b0, col_c[12:1]};   // 与彩色同一列 -> 所属字
 reg  [7:0]  edg_even;                                  // 偶列暂存
 wire [15:0] e_wdata = ed_x[0] ? {ed_d, edg_even} : {8'h00, ed_d};
 
+// 彩色行缓存: 写侧压成 RGB565(16bit), 读侧还原回 888(位复制, 再做灰度和叠加)。
+// 24bit -> 16bit 是为了腾出 BRAM 给导向滤波(行数 8 -> 12 之后 24bit 放不下)。
+wire [15:0] col_565 = {in_rgb[23:19], in_rgb[15:10], in_rgb[7:3]};
+
 simple_dual_port_ram #(
-    .DATA_WIDTH(24), .ADDR_WIDTH(AW), .OUTPUT_REG("TRUE"), .RAM_INIT_FILE("")
+    .DATA_WIDTH(16), .ADDR_WIDTH(AW), .OUTPUT_REG("TRUE"), .RAM_INIT_FILE("")
 ) u_cring (
-    .wdata(in_rgb), .waddr(c_waddr[AW-1:0]), .we(in_de), .wclk(clk),
+    .wdata(col_565), .waddr(c_waddr[AW-1:0]), .we(in_de), .wclk(clk),
     .raddr(r_rd[AW-1:0]), .re(1'b1), .rclk(clk), .rdata(col_dout)
 );
+
+wire [23:0] col_888 = {col_dout[15:11], col_dout[15:13],
+                       col_dout[10:5],  col_dout[10:9],
+                       col_dout[4:0],   col_dout[4:2]};
 
 simple_dual_port_ram #(
     .DATA_WIDTH(16), .ADDR_WIDTH(AWE), .OUTPUT_REG("TRUE"), .RAM_INIT_FILE("")
@@ -297,7 +344,7 @@ always @(posedge clk) begin
         col_q <= 24'd0; edg_q <= 8'd0; x_q <= 12'd0; y_q <= 13'd0;
         de_q  <= 1'b0;  vs_q  <= 1'b0; hs_q <= 1'b0;
     end else begin
-        col_q <= col_dout; edg_q <= edg_dout;
+        col_q <= col_888; edg_q <= edg_dout;
         x_q   <= ox2;      y_q   <= oy2;
         de_q  <= d_de;     vs_q  <= d_vs;  hs_q <= d_hs;
     end

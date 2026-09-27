@@ -8,7 +8,7 @@
 
 板子每 500ms 回一行状态, 收到命令后还会立刻回一行:
 
-    M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 CAM0077=C0
+    M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 CAM0077=C0
 
 界面右边"板端"那一列显示的就是这行回读值, 也就是 FPGA 里真正生效的值。
 如果它和滑块不一致(比如串口没接好), 会变成红色并在状态栏提示。
@@ -23,6 +23,12 @@
           0 = 与参考 Python 算法逐位一致; 调大能压住轮廓线沿线条上下流动的
           抖动(根因是 NMS 在半像素相位处"近等值二选一"被噪声推来推去),
           代价是线宽从 1 像素变成 1.2~1.3 像素。建议从 1 试到 3。
+    P<n>  前置滤波 EPF            0..2     (超过 2 夹到 2)
+          0 = 关, 1 = 3x3 高斯, 2 = 导向滤波(guided filter, 参考算法默认档)。
+          对应参考 live_tune.py 的 EPF 滑条; 只有 EPF=2 会用到下面的 F。
+    F<n>  导向滤波 eps           0..2047  (超过 2047 夹到 2047, 参考值 400)
+          导向滤波的正则项: 越大画面越平(弱纹理被抹掉), 越小保留的细节越多、
+          去噪越弱。仓库 edge_pipeline.py 的 guided_filter 默认 400。
     N<n>  3x3 中值滤波           0/1
     G<n>  5x5 高斯               0/1
     I<n>  去孤点                 0/1
@@ -74,6 +80,10 @@ PARAMS = [
          note="CANNY 档量程 0..255; SOBEL 双阈值档 0..2040"),
     dict(key="nms_eps", cmd="E", name="NMS 容差 eps", lo=0, hi=8, init=0,
          note="只 CANNY 有效; 0=参考算法, 1~3 治线条流动抖动"),
+    dict(key="epf", cmd="P", name="前置滤波 EPF", lo=0, hi=2, init=2,
+         names={0: "0 = 关", 1: "1 = 高斯3x3", 2: "2 = 导向滤波(参考)"}),
+    dict(key="gf_eps", cmd="F", name="导向滤波 eps", lo=0, hi=2047, init=400,
+         note="只 EPF=2 有效; 400=参考值, 越大越平/越糊"),
     dict(key="median_en", cmd="N", name="3x3 中值", lo=0, hi=1, init=1,
          note="0=关 1=开"),
     dict(key="gauss_en", cmd="G", name="5x5 高斯", lo=0, hi=1, init=0,
@@ -92,6 +102,8 @@ TELEM_RE = re.compile(
     r"\s+MED(?P<median_en>\d+)\s+GAU(?P<gauss_en>\d+)\s+ISO(?P<isol_en>\d+)"
     r"\s+DSP(?P<disp_mode>\d+)\s+OVC(?P<ov_color>\d+)"
     r"(?:\s+EPS(?P<nms_eps>\d+))?"      # 65 字节新行才有; 旧位流(60 字节)缺这一段
+    r"(?:\s+EPF(?P<epf>\d+))?"          # 77 字节新行才有
+    r"(?:\s+GF(?P<gf_eps>\d+))?"
     r"(?:\s+CAM(?P<cam_grp>\d+)=(?P<cam_val>[0-9A-Fa-f]{2}))?")
 
 # 状态行里 CAM 组的已知含义 (见 rtl/cam/piv2_config.v 的寄存器表)

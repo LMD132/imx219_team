@@ -125,6 +125,67 @@ def gauss5x5_int(gray):
     return ((s >> 10) + ((s >> 9) & 1)).astype(np.uint8)
 
 
+def box6_sum_int(a):
+    """6x6 盒窗"和"(整数, 未除 36), 对应 cv2.boxFilter(ksize=6) 的锚点=3:
+    窗口 = [x-3..x+2] x [y-3..y+2]。边界用复制边缘(本工程统一约定, 见 alg_win.v
+    的 PAD_EDGE=1; 参考 Python 用 cv2 默认的 BORDER_REFLECT_101, 属已知差异)。
+    硬件对应 alg_win(N=6) 的 36 个 tap 直接求和。
+    """
+    p = pad_edge(a.astype(np.int64), 3)
+    h, w = a.shape
+    s = np.zeros((h, w), dtype=np.int64)
+    for i in range(6):
+        for j in range(6):
+            s += p[i:i + h, j:j + w]
+    return s
+
+
+def guided_filter_int(gray, eps=400):
+    """导向滤波(EPF=2)的定点模型 —— 与 rtl/algo/alg_epf.v 逐位一致。
+
+    参考: FPGA-Python/edge_pipeline.py :: guided_filter(radius=6, eps=400)
+        mean_I = box(I)      mean_II = box(I*I)
+        var = mean_II - mean_I^2 ;  a = var/(var+eps) ;  b = mean_I - a*mean_I
+        out = clip(box(a)*I + box(b), 0, 255)
+    ksize=6 的盒滤波 = 6 抽头 [x-3..x+2](cv2 锚点 3), 硬件上就是 alg_win N=6。
+
+    定点化(唯一的硬件难点是那一处除法, 用逐位流水除法器):
+        S1 = ΣI, S2 = ΣI²            (36 tap, 14bit / 22bit)
+        V  = 36*S2 - S1²             ( = 1296*var, <= 21067776, 25bit)
+        K  = 1296*eps                (eps 运行期可调, 默认 400 -> K=518400)
+        a_q8 = sat8( round(256*V/(V+K)) )   8bit, 表示 256*a (a<1)
+        mI_q8 = round(256*mean_I) = (S1*455+32)>>6     (455/64 ≈ 256/36)
+        b_q  = round(mI_q8*(256-a_q8)/65536)  = mean_I*(1-a)  8bit
+        Sa = Σa_q8, Sb = Σb_q                 (stage-2 盒窗和, <=9180 各 14bit)
+        q  = round( ((Sa*I+128)>>8 + Sb) / 36 ) = round(w*455/16384)
+    误差: a 量化 <=0.5/256 -> mean_a*I 偏差 <=0.5 LSB; b 取整 <=0.5 LSB;
+    定点 vs 参考浮点整体 <=1 LSB(见 tools/.../gf_fixed.log 的统计)。
+    """
+    g = gray.astype(np.int64)
+    s1 = box6_sum_int(g)
+    s2 = box6_sum_int(g * g)
+    v = 36 * s2 - s1 * s1                     # >= 0 (数学上); 25bit
+    k = 1296 * int(eps)
+    d = v + k
+    num = v << 8
+    # 逐位恢复除法: q = num//d, r = num - q*d; 再 2r>=d 进 1; 夹到 255
+    # d==0 (V==0 且 eps==0) 是退化点: 硬件比较器全真 -> q=255, 模型照此。
+    a_q8 = np.where(d == 0, np.int64(255), np.int64(0))
+    if np.any(d > 0):
+        q = np.where(d > 0, num // np.maximum(d, 1), 0)
+        r = np.where(d > 0, num - q * np.maximum(d, 1), 0)
+        q = q + np.where(2 * r >= np.maximum(d, 1), 1, 0)
+        a_q8 = np.where(d > 0, np.minimum(q, 255), a_q8)
+    a_q8 = a_q8.astype(np.int64)
+    mI_q8 = (s1 * 455 + 32) >> 6              # ~256*mean_I (<=65264)
+    b_q = (mI_q8 * (256 - a_q8) + 32768) >> 16
+    sa = box6_sum_int(a_q8)
+    sb = box6_sum_int(b_q)
+    u = (sa * g + 128) >> 8                   # ~36*mean_a*I
+    q = ((u + sb) * 455 + 8192) >> 14         # /36
+    return np.clip(q, 0, 255).astype(np.uint8)
+
+
 def sobel_full(gray):
     """Sobel 全量程: gx/gy 有符号(±1020), mag=|gx|+|gy| (0..2040)"""
     p = pad_edge(gray, 1).astype(np.int32)
@@ -219,11 +280,15 @@ def threshold_rtl(mag, t):
 # 整条 RTL 流水线(对应 edge_process_core.v)
 # --------------------------------------------------------------------------
 def rtl_pipeline(gray_in, mode, thr=24, thr_lo=21, thr_hi=58,
-                 median_en=True, gauss5_en=None, isol_en=True, nms_eps=0):
+                 median_en=True, gauss5_en=None, isol_en=True, nms_eps=0,
+                 epf=0, gf_eps=400):
     """gray_in: 8bit 灰度(已灰度化/时间域平均后)。
     mode: 0=SOBEL 单阈值, 1=SOBEL 双阈值, 2=CANNY
     gauss5_en: None -> CANNY 自动开, SOBEL 档关(与 live_tune 一致)
     nms_eps: NMS 容差 0..8, 只在 CANNY 档生效(0 = 参考算法逐位一致)
+    epf: 前置滤波档位(对应 live_tune 的 EPF, 插在中值之后):
+         0 = 关(旁路), 1 = 3x3 高斯, 2 = 导向滤波(guided_filter_int)
+    gf_eps: 导向滤波的正则项 eps, 参考值 400 (0..2000, 越大越平滑)
     返回 dict: edge / gray_processed / mag_full / mag_nms
     """
     if gauss5_en is None:
@@ -231,6 +296,10 @@ def rtl_pipeline(gray_in, mode, thr=24, thr_lo=21, thr_hi=58,
     g = gray_in
     if median_en:
         g = median_3x3_network(g)
+    if epf == 1:
+        g = gauss3x3_int(g)
+    elif epf == 2:
+        g = guided_filter_int(g, gf_eps)
     if gauss5_en:
         g = gauss5x5_int(g)
     gx, gy, mag = sobel_full(g)

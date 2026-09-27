@@ -5,11 +5,11 @@
 // Status line for the runtime edge parameters, the transmit half of the
 // PC tuning channel (alg_cfg_uart.v is the receive half).
 //
-// One 65 byte ASCII line every PERIOD_MS, plus an immediate line after every
+// One 77 byte ASCII line every PERIOD_MS, plus an immediate line after every
 // accepted command, so a slider on the host can be confirmed against what the
 // board actually latched instead of being trusted:
 //
-//     M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 CAM0077=C0\r\n
+//     M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 CAM0077=C0\r\n
 //
 // The line is fixed layout: every field is either a literal or exactly the
 // same width in every message, so the host can find the values by byte
@@ -19,9 +19,11 @@
 // CAM<4 decimal digits of the requested group>=<2 hex digits of the byte the
 // camera returned> (FF until the first read).
 //
-// EPS<n> between OVC and CAM is the NMS tolerance (0..8, see alg_nms.v); it
-// was inserted there so every field before it keeps its byte position, and the
-// host regex accepts both this 65 byte line and the older 60 byte one.
+// EPS<n> between OVC and CAM is the NMS tolerance (0..8, see alg_nms.v).
+// EPF<n> (0..2, pre-filter: off / gaussian3x3 / guided) and GF<nnnn>
+// (guided-filter eps, 0..2047) were appended after it for the same reason:
+// every field before them keeps its byte position, and the host regex accepts
+// the 77 byte line as well as the older 65 and 60 byte ones.
 //
 // The three 11-bit thresholds and the 10-bit read-back group index are
 // converted with the double-dabble shift-and-add-3 algorithm, one value at a
@@ -49,6 +51,8 @@ module alg_cfg_telemetry #(
     input  wire [10:0] i_lo,
     input  wire [10:0] i_hi,
     input  wire [3:0]  i_eps,
+    input  wire [1:0]  i_epf,
+    input  wire [10:0] i_gf_eps,
     input  wire        i_median,
     input  wire        i_gauss,
     input  wire        i_isol,
@@ -60,7 +64,7 @@ module alg_cfg_telemetry #(
     output wire        o_txd
 );
 
-    localparam [6:0] MSG_LEN = 7'd65;
+    localparam [6:0] MSG_LEN = 7'd77;
     localparam integer GAP_CLKS = (CLK_HZ / 1000) * PERIOD_MS;
 
     // ------------------------------------------------------------------ text
@@ -84,6 +88,7 @@ module alg_cfg_telemetry #(
         input [15:0] t_bcd;
         input [15:0] lo_bcd;
         input [15:0] hi_bcd;
+        input [15:0] gf_bcd;
         input [15:0] cam_bcd;
         input [7:0]  cam_val;
         input [1:0]  mode;
@@ -93,6 +98,7 @@ module alg_cfg_telemetry #(
         input        iso;
         input        ovc;
         input [3:0]  eps;
+        input [1:0]  epf;
         begin
             case (idx)
                 6'd0:  msg_byte = "M";
@@ -148,17 +154,29 @@ module alg_cfg_telemetry #(
                 6'd50: msg_byte = "S";
                 6'd51: msg_byte = digit_of(eps);
                 6'd52: msg_byte = " ";
-                6'd53: msg_byte = "C";
-                6'd54: msg_byte = "A";
-                6'd55: msg_byte = "M";
-                6'd56: msg_byte = digit_of(cam_bcd[15:12]);
-                6'd57: msg_byte = digit_of(cam_bcd[11:8]);
-                6'd58: msg_byte = digit_of(cam_bcd[7:4]);
-                6'd59: msg_byte = digit_of(cam_bcd[3:0]);
-                6'd60: msg_byte = "=";
-                6'd61: msg_byte = hex_of(cam_val[7:4]);
-                6'd62: msg_byte = hex_of(cam_val[3:0]);
-                6'd63: msg_byte = 8'h0D;   // CR
+                6'd53: msg_byte = "E";
+                6'd54: msg_byte = "P";
+                6'd55: msg_byte = "F";
+                6'd56: msg_byte = digit_of({4'b0, epf});
+                6'd57: msg_byte = " ";
+                6'd58: msg_byte = "G";
+                6'd59: msg_byte = "F";
+                6'd60: msg_byte = digit_of(gf_bcd[15:12]);
+                6'd61: msg_byte = digit_of(gf_bcd[11:8]);
+                6'd62: msg_byte = digit_of(gf_bcd[7:4]);
+                6'd63: msg_byte = digit_of(gf_bcd[3:0]);
+                6'd64: msg_byte = " ";
+                6'd65: msg_byte = "C";
+                6'd66: msg_byte = "A";
+                6'd67: msg_byte = "M";
+                6'd68: msg_byte = digit_of(cam_bcd[15:12]);
+                6'd69: msg_byte = digit_of(cam_bcd[11:8]);
+                6'd70: msg_byte = digit_of(cam_bcd[7:4]);
+                6'd71: msg_byte = digit_of(cam_bcd[3:0]);
+                6'd72: msg_byte = "=";
+                6'd73: msg_byte = hex_of(cam_val[7:4]);
+                6'd74: msg_byte = hex_of(cam_val[3:0]);
+                6'd75: msg_byte = 8'h0D;   // CR
                 default: msg_byte = 8'h0A; // LF
             endcase
         end
@@ -186,15 +204,18 @@ module alg_cfg_telemetry #(
     reg [10:0] d_t, d_lo, d_hi;
     reg        d_med, d_gau, d_iso, d_ovc;
     reg [3:0]  d_eps;
-    reg [15:0] t_bcd, lo_bcd, hi_bcd, cam_bcd;
+    reg [1:0]  d_epf;
+    reg [10:0] d_gf_eps;
+    reg [15:0] t_bcd, lo_bcd, hi_bcd, gf_bcd, cam_bcd;
     reg [9:0]  d_cam_grp;
     reg [7:0]  d_cam_val;
 
-    // One double-dabble engine, used four times per line (t, lo, hi, and the
-    // read-back group index).  conv_sel therefore counts to 3 instead of 2.
+    // One double-dabble engine, used five times per line (t, lo, hi, the
+    // guided-filter eps, and the read-back group index).  conv_sel therefore
+    // counts to 4; it was 0..3 when the line was 65 bytes.
     reg [15:0] bcd_reg;
     reg [10:0] bin_reg;
-    reg [1:0]  conv_sel;
+    reg [2:0]  conv_sel;
     reg [3:0]  conv_cnt;
 
     wire [3:0] adj3 = (bcd_reg[15:12] >= 4'd5) ? 4'd3 : 4'd0;
@@ -235,15 +256,18 @@ module alg_cfg_telemetry #(
             d_iso     <= 1'b0;
             d_ovc     <= 1'b0;
             d_eps     <= 4'd0;
+            d_epf     <= 2'd0;
+            d_gf_eps  <= 11'd0;
             t_bcd     <= 16'd0;
             lo_bcd    <= 16'd0;
             hi_bcd    <= 16'd0;
+            gf_bcd    <= 16'd0;
             cam_bcd   <= 16'd0;
             d_cam_grp <= 10'd0;
             d_cam_val <= 8'hFF;   // piv2_config's read register resets to FF
             bcd_reg   <= 16'd0;
             bin_reg   <= 11'd0;
-            conv_sel  <= 2'd0;
+            conv_sel  <= 3'd0;
             conv_cnt  <= 4'd0;
         end else begin
             tx_valid <= 1'b0;       // i_valid is a one-clock pulse
@@ -268,6 +292,8 @@ module alg_cfg_telemetry #(
                             d_disp  <= i_disp;
                             d_ovc   <= i_ovc;
                             d_eps   <= i_eps;
+                            d_epf   <= i_epf;
+                            d_gf_eps<= i_gf_eps;
                             d_cam_grp<= i_cam_grp;
                             d_cam_val<= i_cam_val;
                             state   <= ST_SNAP;
@@ -281,7 +307,7 @@ module alg_cfg_telemetry #(
                 ST_SNAP: begin
                     bcd_reg  <= 16'd0;
                     bin_reg  <= d_t;
-                    conv_sel <= 2'd0;
+                    conv_sel <= 3'd0;
                     conv_cnt <= 4'd0;
                     state    <= ST_CONV;
                 end
@@ -297,19 +323,22 @@ module alg_cfg_telemetry #(
                 // bcd_reg settles one clock after the last shift.
                 ST_LATCH: begin
                     case (conv_sel)
-                        2'd0:    t_bcd   <= bcd_reg;
-                        2'd1:    lo_bcd  <= bcd_reg;
-                        2'd2:    hi_bcd  <= bcd_reg;
+                        3'd0:    t_bcd   <= bcd_reg;
+                        3'd1:    lo_bcd  <= bcd_reg;
+                        3'd2:    hi_bcd  <= bcd_reg;
+                        3'd3:    gf_bcd  <= bcd_reg;
                         default: cam_bcd <= bcd_reg;
                     endcase
-                    if (conv_sel == 2'd3) begin
+                    if (conv_sel == 3'd4) begin
                         char_idx <= 7'd0;
                         state    <= ST_LOAD;
                     end else begin
-                        conv_sel <= conv_sel + 2'd1;
+                        conv_sel <= conv_sel + 3'd1;
                         bcd_reg  <= 16'd0;
-                        bin_reg  <= (conv_sel == 2'd0) ? d_lo :
-                                    (conv_sel == 2'd1) ? d_hi : {1'b0, d_cam_grp};
+                        bin_reg  <= (conv_sel == 3'd0) ? d_lo :
+                                    (conv_sel == 3'd1) ? d_hi :
+                                    (conv_sel == 3'd2) ? d_gf_eps :
+                                                         {1'b0, d_cam_grp};
                         conv_cnt <= 4'd0;
                         state    <= ST_CONV;
                     end
@@ -319,9 +348,9 @@ module alg_cfg_telemetry #(
                 ST_LOAD: begin
                     tx_valid <= 1'b1;
                     tx_byte  <= msg_byte(char_idx, t_bcd, lo_bcd, hi_bcd,
-                                         cam_bcd, d_cam_val,
+                                         gf_bcd, cam_bcd, d_cam_val,
                                          d_mode, d_disp, d_med, d_gau, d_iso, d_ovc,
-                                         d_eps);
+                                         d_eps, d_epf);
                     state    <= ST_START;
                 end
 

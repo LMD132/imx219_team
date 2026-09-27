@@ -26,6 +26,14 @@
 //                           build is bit-identical to it; dragging it up on
 //                           the PC tuner trades ~0.2 px of line width for a
 //                           much steadier contour (see alg_nms.v).
+//     P<n>   cfg_epf        pre-filter (EPF)          0..2 (above 2 clamps to 2)
+//                           0 = off, 1 = 3x3 gaussian, 2 = guided filter.
+//                           Same three settings as the reference live_tune.py
+//                           EPF slider, whose default is 2 (guided filter).
+//     F<n>   cfg_gf_eps     guided-filter eps        0..2047 (reference 400)
+//                           The regularisation term of guided_filter(): the
+//                           larger it is the flatter the result becomes.  Only
+//                           the EPF=2 path reads it (see algo/alg_gf.v).
 //     N<n>   cfg_median_en  0/1
 //     G<n>   cfg_gauss_en   0/1
 //     I<n>   cfg_isol_en    0/1
@@ -57,6 +65,8 @@ module alg_cfg_uart #(
     parameter [10:0] LO_INIT     = 11'd21,
     parameter [10:0] HI_INIT     = 11'd58,
     parameter [3:0]  EPS_INIT    = 4'd0,
+    parameter [1:0]  EPF_INIT    = 2'd2,
+    parameter [10:0] GFEPS_INIT  = 11'd400,
     parameter        MEDIAN_INIT = 1'b1,
     parameter        GAUSS_INIT  = 1'b0,
     parameter        ISOL_INIT   = 1'b1,
@@ -72,6 +82,8 @@ module alg_cfg_uart #(
     output reg  [10:0] o_lo,
     output reg  [10:0] o_hi,
     output reg  [3:0]  o_eps,
+    output reg  [1:0]  o_epf,
+    output reg  [10:0] o_gf_eps,
     output reg         o_median_en,
     output reg         o_gauss_en,
     output reg         o_isol_en,
@@ -94,7 +106,9 @@ module alg_cfg_uart #(
                      K_OVC  = 4'd9,
                      K_RST  = 4'd10,
                      K_CAM  = 4'd11,
-                     K_EPS  = 4'd12;
+                     K_EPS  = 4'd12,
+                     K_EPF  = 4'd13,
+                     K_GFE  = 4'd14;
 
     localparam S_KEY = 1'b0,
                S_VAL = 1'b1;
@@ -112,6 +126,8 @@ module alg_cfg_uart #(
                 8'h4C, 8'h6C: key_of = K_LO;     // L l
                 8'h48, 8'h68: key_of = K_HI;     // H h
                 8'h45, 8'h65: key_of = K_EPS;    // E e
+                8'h50, 8'h70: key_of = K_EPF;    // P p
+                8'h46, 8'h66: key_of = K_GFE;    // F f
                 8'h4E, 8'h6E: key_of = K_MED;    // N n
                 8'h47, 8'h67: key_of = K_GAU;    // G g
                 8'h49, 8'h69: key_of = K_ISO;    // I i
@@ -125,16 +141,18 @@ module alg_cfg_uart #(
     endfunction
 
     // Saturating accumulate of the digits in the line.  The intermediate has to
-    // be wide enough for the *unsaturated* product (2047 * 10 + 9 = 20479), or
+    // be wide enough for the *unsaturated* product (4095 * 10 + 9 = 40959), or
     // the comparison against the ceiling never fires and the value silently
     // wraps: a 13 bit intermediate turned "T9999" into 1807 instead of 2047.
+    // The ceiling is the 12 bit accumulator limit (4095); every field clamps
+    // again to its own width when it is applied.
     function [11:0] acc_next;
         input [11:0] a;
         input [7:0]  d;
         reg   [15:0] t;
         begin
             t = {4'b0, a} * 16'd10 + {8'b0, d};
-            acc_next = (t > 16'd2047) ? 12'd2047 : t[11:0];
+            acc_next = (t > 16'd4095) ? 12'd4095 : t[11:0];
         end
     endfunction
 
@@ -202,6 +220,8 @@ module alg_cfg_uart #(
             o_lo        <= LO_INIT;
             o_hi        <= HI_INIT;
             o_eps       <= EPS_INIT;
+            o_epf       <= EPF_INIT;
+            o_gf_eps    <= GFEPS_INIT;
             o_median_en <= MEDIAN_INIT;
             o_gauss_en  <= GAUSS_INIT;
             o_isol_en   <= ISOL_INIT;
@@ -221,6 +241,10 @@ module alg_cfg_uart #(
                     K_HI:   o_hi        <= (apply_val > 12'd2047) ? 11'd2047 : apply_val[10:0];
                     // NMS 容差: 4bit 寄存器, 超过 8 直接夹到 8 (再大只会把线糊粗)
                     K_EPS:  o_eps       <= (apply_val > 12'd8)    ? 4'd8    : apply_val[3:0];
+                    // EPF 档位: 0 关 / 1 高斯3x3 / 2 导向滤波, 超过 2 夹到 2
+                    K_EPF:  o_epf       <= (apply_val > 12'd2)    ? 2'd2    : apply_val[1:0];
+                    // 导向滤波 eps: 11bit 寄存器, 超过 2047 夹到 2047 (参考值 400)
+                    K_GFE:  o_gf_eps    <= (apply_val > 12'd2047) ? 11'd2047 : apply_val[10:0];
                     K_MED:  o_median_en <= (apply_val != 12'd0);
                     K_GAU:  o_gauss_en  <= (apply_val != 12'd0);
                     K_ISO:  o_isol_en   <= (apply_val != 12'd0);
@@ -232,6 +256,8 @@ module alg_cfg_uart #(
                         o_lo        <= LO_INIT;
                         o_hi        <= HI_INIT;
                         o_eps       <= EPS_INIT;
+                        o_epf       <= EPF_INIT;
+                        o_gf_eps    <= GFEPS_INIT;
                         o_median_en <= MEDIAN_INIT;
                         o_gauss_en  <= GAUSS_INIT;
                         o_isol_en   <= ISOL_INIT;

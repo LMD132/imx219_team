@@ -33,15 +33,19 @@ def exe(name):
 sys.path.insert(0, HERE)
 import rtl_model as M  # noqa: E402
 
-W, VEXT, H, REXT = 17, 9, 9, 8
+W, VEXT, H, REXT = 17, 12, 9, 12     # VEXT/REXT >= ROWD(11): 窗口的未来行/列余量
 NFRM, GAP, HALF, AW = 2, 40, 8, 4
 LINE = W + VEXT
-DLY_RGB = 26            # alg_top 模块默认值(被测配置)
+DLY_RGB = 51            # alg_top 模块默认值(被测配置, 见 alg_top.v 的 L 累加)
 MODE, GAUSS_AUTO = 2, True
 DIR_CODE = {0: 0, 90: 1, 45: 2, 135: 3}   # 角度 -> RTL 2bit 编码
 # NMS 容差: 0 = 与参考 Python 算法逐位一致(被测的默认配置)。
 # 设 CHAIN_EPS=2 可以只跑"eps 那一档"的对比, 默认 0 不影响原有 PASS。
 EPS = int(os.environ.get("CHAIN_EPS", "0"))
+# 前置滤波档位(EPF)与导向滤波 eps: 默认 2/400 = 参考 Python 算法默认档。
+#   CHAIN_EPF=0/1/2 可以只跑某一档; CHAIN_GFEPS=0/1000 可以测 eps 的端点。
+EPF = int(os.environ.get("CHAIN_EPF", "2"))
+GFEPS = int(os.environ.get("CHAIN_GFEPS", "400"))
 
 _ENV = None
 
@@ -89,9 +93,13 @@ def build(extra=None, name="tb.vvp"):
     return vvp
 
 
-def run(vvp, img, mode, disp, tag="", eps=None):
+def run(vvp, img, mode, disp, tag="", eps=None, epf=None, gf_eps=None):
     if eps is None:
         eps = EPS
+    if epf is None:
+        epf = EPF
+    if gf_eps is None:
+        gf_eps = GFEPS
     rd = os.path.join(RUN, tag + "m%d_d%d" % (mode, disp))
     if os.path.isdir(rd):
         shutil.rmtree(rd)
@@ -102,7 +110,8 @@ def run(vvp, img, mode, disp, tag="", eps=None):
                 r, g, b = img[y, x]
                 f.write("%02x%02x%02x\n" % (r, g, b))
     p = subprocess.run([exe("vvp"), os.path.abspath(vvp),
-                        "+MODE=%d" % mode, "+DISP=%d" % disp, "+EPS=%d" % eps],
+                        "+MODE=%d" % mode, "+DISP=%d" % disp, "+EPS=%d" % eps,
+                        "+EPF=%d" % epf, "+GFEPS=%d" % gf_eps],
                        cwd=rd, capture_output=True, text=True,
                        encoding="utf-8", errors="replace", env=oss_env())
     if p.returncode != 0 or "DONE" not in p.stdout:
@@ -169,6 +178,12 @@ def main():
         rd = run(vvp, img, 2, 1, tag="eps%d_" % eps, eps=eps)
         allok &= check_run(rd, img, luma, 2, 1, eps=eps)
 
+    # ---- 前置滤波 EPF: 0=关 1=高斯3x3 2=导向滤波(参考默认), 含 eps 端点 ----
+    for epf, gf in ((2, 400), (2, 0), (2, 1000), (1, 400), (0, 400)):
+        print("=== MODE=2 DISP=1 EPF=%d GF=%d ===" % (epf, gf))
+        rd = run(vvp, img, 2, 1, tag="epf%d_%d_" % (epf, gf), epf=epf, gf_eps=gf)
+        allok &= check_run(rd, img, luma, 2, 1, epf=epf, gf_eps=gf)
+
     # ---- 独立验证: 行周期初值刻意写错(40), 检验实测修正是否自动生效 ----
     print("=== HTOTAL 初值刻意写错(40) -> 实测修正 ===")
     vvp2 = build(extra=["-Ptb_alg_chain.HTOTAL=40"], name="tb_ht.vvp")
@@ -181,13 +196,24 @@ def main():
     return 0 if allok else 1
 
 
-def chain_expected(luma, mode, eps=None):
+def chain_expected(luma, mode, eps=None, epf=None, gf_eps=None):
     """返回逐级期望值(真实图像区域)"""
     if eps is None:
         eps = EPS
+    if epf is None:
+        epf = EPF
+    if gf_eps is None:
+        gf_eps = GFEPS
     med = M.median_3x3_network(luma)
+    # 4a) 前置滤波: 0=直通 1=3x3高斯 2=导向滤波(参考默认)
+    if epf == 2:
+        ep = M.guided_filter_int(med, gf_eps)
+    elif epf == 1:
+        ep = M.gauss3x3_int(med)
+    else:
+        ep = med
     gauss_on = True if mode == 2 else False
-    gau = M.gauss5x5_int(med) if gauss_on else med
+    gau = M.gauss5x5_int(ep) if gauss_on else ep
     gx, gy, mag = M.sobel_full(gau)
     dirc = M.dir_class(gx, gy)
     nms = M.nms_rtl(mag, dirc, eps)
@@ -205,8 +231,20 @@ def d2exp(mat):
     return {(x, y): (int(mat[y, x]),) for y in range(H) for x in range(W)}
 
 
-def check_run(rd, img, luma, mode, disp, eps=None):
-    E = chain_expected(luma, mode, eps)
+def q565(r, g, b):
+    """显示侧彩色行缓存是 RGB565(12 行 x W 放不下 24bit, 见 alg_vdisp.v),
+    读回 888 时高位复制补齐: R={r5,r5[4:2]} G={g6,g6[5:4]} B={b5,b5[2:0]}。"""
+    r5, g6, b5 = r >> 3, g >> 2, b >> 3
+    return ((r5 << 3) | (r5 >> 2), (g6 << 2) | (g6 >> 4), (b5 << 3) | (b5 >> 2))
+
+
+def luma565(r, g, b):
+    """alg_vdisp 里由(565 还原的)彩色现算灰度, 与 alg_gray 同一式子。"""
+    return ((r * 77 + g * 150 + b * 29) >> 8) & 0xFF
+
+
+def check_run(rd, img, luma, mode, disp, eps=None, epf=None, gf_eps=None):
+    E = chain_expected(luma, mode, eps, epf, gf_eps)
     ok = True
 
     # ---- 1) 各级(真实区域) ----
@@ -243,7 +281,7 @@ def check_run(rd, img, luma, mode, disp, eps=None):
     din_r = {(k[0], k[1], k[2]): v[0] for k, v in din.items()}
     deltas = {}
     for (fr, lx, ly), (tk, val) in ddp.items():
-        sx, sy = lx + 7, ly + 7          # dsp 标签 = 源像素坐标, 出现时输入光栅已 +7
+        sx, sy = lx + 11, ly + 11        # dsp 标签 = 源像素坐标, 出现时输入光栅已 +11
         if sx >= W or sy >= H:
             continue
         t_in = din_r.get((fr, sx, sy))
@@ -302,8 +340,9 @@ def check_disp(rd, img, luma, E, amode, ddisp, only_last=False):
                 if ddisp == 0:      # 2:1 水平抽取(左右各显示一遍全画幅)
                     col = (2 * x) if x < HALF else (2 * (x - HALF))
                 col = min(col, W - 1)
-                r, g, b = (int(v) for v in img[y, col])
-                lg = int(luma[y, col])
+                # 显示侧彩色经 RGB565 量化(行缓存位宽), 灰度由还原后的彩色现算
+                r, g, b = q565(*(int(v) for v in img[y, col]))
+                lg = luma565(r, g, b)
                 ed = int(E["dsp"][y, col])
                 if ddisp == 0 and col + 1 < W:
                     # 边缘行缓存"两列合一字", 2:1 抽取时相邻两列取或(不丢奇列)

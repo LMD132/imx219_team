@@ -10,23 +10,24 @@
 //      - 显示输出逐像素比对(分屏/叠加/半视野/纯边缘)
 //  * 全部输入用非阻塞赋值驱动(避免与 DUT 同拍竞争)
 //  * +EPS=<n> 覆盖 NMS 容差 cfg_eps (默认 0 = 与参考 Python 算法逐位一致)
+//  * +EPF=<n>/+GFEPS=<n> 覆盖前置滤波档位与导向滤波 eps (默认 2/400 = 参考算法)
 //=============================================================================
 `timescale 1ns/1ps
 
 module tb_alg_chain;
     parameter integer W     = 17;
-    parameter integer VEXT  = 9;
+    parameter integer VEXT  = 12;      // >= ROWD(11): 窗口需要右侧 11 列未来像素
     parameter integer H     = 9;
-    parameter integer REXT  = 8;
+    parameter integer REXT  = 12;      // >= ROWD(11): 帧尾复现行要够窗口取未来行
     parameter integer LINE  = W + VEXT;
     parameter integer NPIX  = W * H;
     parameter integer NFRM  = 2;
     parameter integer GAP   = 40;      // 行间水平消隐
-    parameter integer VBLK  = 12;      // 帧间垂直消隐行数
+    parameter integer VBLK  = 16;      // 帧间垂直消隐行数(必须 > REXT 才塞得下帧尾复现行)
     parameter integer HALF  = 8;       // W/2
     parameter integer AW    = 4;       // clog2(HALF)
     parameter integer HTOTAL = W + GAP;     // 输入光栅行周期(含消隐)
-    parameter integer TDLY  = 8 * HTOTAL;   // alg_vdisp 显示整体延迟
+    parameter integer TDLY  = 12 * HTOTAL;  // alg_vdisp 显示整体延迟 = ROWS*行周期
 
     reg clk = 1'b0;
     reg rst_n = 1'b0;
@@ -41,20 +42,26 @@ module tb_alg_chain;
     reg [10:0] cfg_lo        = 11'd21;
     reg [10:0] cfg_hi        = 11'd58;
     reg [3:0]  cfg_eps       = 4'd0;
+    reg [1:0]  cfg_epf       = 2'd2;
+    reg [10:0] cfg_gf_eps    = 11'd400;
     reg        cfg_median_en = 1'b1;
     reg        cfg_gauss_en  = 1'b0;
     reg        cfg_isol_en   = 1'b1;
     reg [1:0]  cfg_disp_mode = 2'd1;
     reg        cfg_ov_color  = 1'b1;
 
-    integer m_arg, d_arg, e_arg;
+    integer m_arg, d_arg, e_arg, p_arg, f_arg;
     initial begin
         if (!$value$plusargs("MODE=%d", m_arg)) m_arg = 2;
         if (!$value$plusargs("DISP=%d", d_arg)) d_arg = 1;
         if (!$value$plusargs("EPS=%d",  e_arg)) e_arg = 0;
+        if (!$value$plusargs("EPF=%d",  p_arg)) p_arg = 2;
+        if (!$value$plusargs("GFEPS=%d", f_arg)) f_arg = 400;
         cfg_mode      = m_arg[1:0];
         cfg_disp_mode = d_arg[1:0];
         cfg_eps       = e_arg[3:0];
+        cfg_epf       = p_arg[1:0];
+        cfg_gf_eps    = f_arg[10:0];
     end
 
     wire        o_vs, o_hs, o_de;
@@ -62,16 +69,17 @@ module tb_alg_chain;
     wire [12:0] o_y;
     wire [7:0]  o_r, o_g, o_b;
 
-    // DLY_RGB/DLY_GRAY 用模块默认值(26/25), 即被测的最终配置
+    // DLY_RGB/DLY_GRAY 用模块默认值, 即被测的最终配置
     alg_top #(
         .W(W), .VEXT(VEXT), .H(H), .REXT(REXT), .HTOTAL(HTOTAL),
-        .HALF(HALF), .ROWD(7)
+        .HALF(HALF), .ROWD(11)
     ) u_top (
         .clk(clk), .rst_n(rst_n),
         .in_vs(vs), .in_hs(hs), .in_de(de),
         .in_r(pdata[23:16]), .in_g(pdata[15:8]), .in_b(pdata[7:0]),
         .cfg_mode(cfg_mode), .cfg_t(cfg_t), .cfg_lo(cfg_lo), .cfg_hi(cfg_hi),
         .cfg_eps(cfg_eps),
+        .cfg_epf(cfg_epf), .cfg_gf_eps(cfg_gf_eps),
         .cfg_median_en(cfg_median_en), .cfg_gauss_en(cfg_gauss_en),
         .cfg_isol_en(cfg_isol_en), .cfg_disp_mode(cfg_disp_mode),
         .cfg_ov_color(cfg_ov_color),
@@ -191,8 +199,8 @@ module tb_alg_chain;
                         $fclose(fgray); $fclose(fmed); $fclose(fgau);
                         $fclose(fsob); $fclose(fnms); $fclose(fthr);
                         $fclose(fdsp); $fclose(fdisp); $fclose(fin); $fclose(fvs);
-                        $display("TB CHAIN DONE mode=%0d disp=%0d eps=%0d",
-                                 cfg_mode, cfg_disp_mode, cfg_eps);
+                        $display("TB CHAIN DONE mode=%0d disp=%0d eps=%0d epf=%0d gfeps=%0d",
+                                 cfg_mode, cfg_disp_mode, cfg_eps, cfg_epf, cfg_gf_eps);
                         $finish;
                     end else cc <= cc + 1'b1;
                 end
