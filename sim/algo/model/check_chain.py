@@ -3,7 +3,7 @@
 流程:
   1. 生成小尺寸测试图 -> in_rgb.hex
   2. iverilog 编译 tb_alg_chain.v + rtl/algo/*.v + RAM 原语, vvp 运行(+MODE= +DISP=)
-  3. 逐级对比: alg_gray / median3 / gauss5 / sobel3(mag,dir) / nms / thresh / despeckle
+  3. 逐级对比: alg_gray / median3 / gauss5 / sobel3(mag,dir) / nms / thresh / ebridge / despeckle
      -> 只比"真实图像区域"(x<W, y<H), 该区域 RTL 必须逐位等于 rtl_model.py
   4. 对齐核查: 用 dump 的 tick 实测 dsp 标签流与输入流的延迟差 == DLY_RGB
   5. 显示核查: 按显示光栅重建 (帧,行,列), 逐像素对比四种显示模式的模型
@@ -33,10 +33,10 @@ def exe(name):
 sys.path.insert(0, HERE)
 import rtl_model as M  # noqa: E402
 
-W, VEXT, H, REXT = 17, 12, 9, 12     # VEXT/REXT >= ROWD(11): 窗口的未来行/列余量
+W, VEXT, H, REXT = 17, 15, 9, 15     # VEXT/REXT >= ROWD(14): 窗口的未来行/列余量
 NFRM, GAP, HALF, AW = 2, 40, 8, 4
 LINE = W + VEXT
-DLY_RGB = 51            # alg_top 模块默认值(被测配置, 见 alg_top.v 的 L 累加)
+DLY_RGB = 55            # alg_top 模块默认值(被测配置, 见 alg_top.v 的 L 累加)
 MODE, GAUSS_AUTO = 2, True
 DIR_CODE = {0: 0, 90: 1, 45: 2, 135: 3}   # 角度 -> RTL 2bit 编码
 # NMS 容差: 0 = 与参考 Python 算法逐位一致(被测的默认配置)。
@@ -46,6 +46,8 @@ EPS = int(os.environ.get("CHAIN_EPS", "0"))
 #   CHAIN_EPF=0/1/2 可以只跑某一档; CHAIN_GFEPS=0/1000 可以测 eps 的端点。
 EPF = int(os.environ.get("CHAIN_EPF", "2"))
 GFEPS = int(os.environ.get("CHAIN_GFEPS", "400"))
+# 断线桥接档位(只双阈值档生效): 0=关, 1/2/3=填 1/3/5 像素空洞。默认 2。
+BRG = int(os.environ.get("CHAIN_BRG", "2"))
 
 _ENV = None
 
@@ -93,13 +95,15 @@ def build(extra=None, name="tb.vvp"):
     return vvp
 
 
-def run(vvp, img, mode, disp, tag="", eps=None, epf=None, gf_eps=None):
+def run(vvp, img, mode, disp, tag="", eps=None, epf=None, gf_eps=None, brg=None):
     if eps is None:
         eps = EPS
     if epf is None:
         epf = EPF
     if gf_eps is None:
         gf_eps = GFEPS
+    if brg is None:
+        brg = BRG
     rd = os.path.join(RUN, tag + "m%d_d%d" % (mode, disp))
     if os.path.isdir(rd):
         shutil.rmtree(rd)
@@ -111,7 +115,7 @@ def run(vvp, img, mode, disp, tag="", eps=None, epf=None, gf_eps=None):
                 f.write("%02x%02x%02x\n" % (r, g, b))
     p = subprocess.run([exe("vvp"), os.path.abspath(vvp),
                         "+MODE=%d" % mode, "+DISP=%d" % disp, "+EPS=%d" % eps,
-                        "+EPF=%d" % epf, "+GFEPS=%d" % gf_eps],
+                        "+EPF=%d" % epf, "+GFEPS=%d" % gf_eps, "+BRG=%d" % brg],
                        cwd=rd, capture_output=True, text=True,
                        encoding="utf-8", errors="replace", env=oss_env())
     if p.returncode != 0 or "DONE" not in p.stdout:
@@ -184,6 +188,12 @@ def main():
         rd = run(vvp, img, 2, 1, tag="epf%d_%d_" % (epf, gf), epf=epf, gf_eps=gf)
         allok &= check_run(rd, img, luma, 2, 1, epf=epf, gf_eps=gf)
 
+    # ---- 断线桥接 BRG: 0=关 1/2/3=填 1/3/5px 空洞, 与 rtl_model.bridge_rtl 对拍 ----
+    for k in (0, 1, 3):
+        print("=== MODE=2 DISP=1 BRG=%d ===" % k)
+        rd = run(vvp, img, 2, 1, tag="brg%d_" % k, brg=k)
+        allok &= check_run(rd, img, luma, 2, 1, brg=k)
+
     # ---- 独立验证: 行周期初值刻意写错(40), 检验实测修正是否自动生效 ----
     print("=== HTOTAL 初值刻意写错(40) -> 实测修正 ===")
     vvp2 = build(extra=["-Ptb_alg_chain.HTOTAL=40"], name="tb_ht.vvp")
@@ -196,7 +206,7 @@ def main():
     return 0 if allok else 1
 
 
-def chain_expected(luma, mode, eps=None, epf=None, gf_eps=None):
+def chain_expected(luma, mode, eps=None, epf=None, gf_eps=None, brg=None):
     """返回逐级期望值(真实图像区域)"""
     if eps is None:
         eps = EPS
@@ -204,6 +214,8 @@ def chain_expected(luma, mode, eps=None, epf=None, gf_eps=None):
         epf = EPF
     if gf_eps is None:
         gf_eps = GFEPS
+    if brg is None:
+        brg = BRG
     med = M.median_3x3_network(luma)
     # 4a) 前置滤波: 0=直通 1=3x3高斯 2=导向滤波(参考默认)
     if epf == 2:
@@ -223,8 +235,10 @@ def chain_expected(luma, mode, eps=None, epf=None, gf_eps=None):
         thr = M.hysteresis_rtl(mag, 21, 58)
     else:
         thr = M.threshold_rtl(mag, 24)
-    dsp = M.isolated_rtl(thr)
-    return dict(med=med, gau=gau, mag=mag, dirc=dirc, nms=nms, thr=thr, dsp=dsp)
+    brg_m = M.bridge_rtl(thr, brg, mode)
+    dsp = M.isolated_rtl(brg_m)
+    return dict(med=med, gau=gau, mag=mag, dirc=dirc, nms=nms, thr=thr,
+                brg=brg_m, dsp=dsp)
 
 
 def d2exp(mat):
@@ -243,8 +257,8 @@ def luma565(r, g, b):
     return ((r * 77 + g * 150 + b * 29) >> 8) & 0xFF
 
 
-def check_run(rd, img, luma, mode, disp, eps=None, epf=None, gf_eps=None):
-    E = chain_expected(luma, mode, eps, epf, gf_eps)
+def check_run(rd, img, luma, mode, disp, eps=None, epf=None, gf_eps=None, brg=None):
+    E = chain_expected(luma, mode, eps, epf, gf_eps, brg)
     ok = True
 
     # ---- 1) 各级(真实区域) ----
@@ -265,6 +279,7 @@ def check_run(rd, img, luma, mode, disp, eps=None, epf=None, gf_eps=None):
                          ("sobel3", "c_sob.txt", E["mag"]),
                          ("nms", "c_nms.txt", E["nms"]),
                          ("thresh", "c_thr.txt", E["thr"]),
+                         ("ebridge", "c_brg.txt", E["brg"]),
                          ("despeck", "c_dsp.txt", E["dsp"])):
         d, dup = parse_stream(rd, fn, 2 if tag == "sobel3" else 1)
         r = real_of(d)
@@ -281,7 +296,7 @@ def check_run(rd, img, luma, mode, disp, eps=None, epf=None, gf_eps=None):
     din_r = {(k[0], k[1], k[2]): v[0] for k, v in din.items()}
     deltas = {}
     for (fr, lx, ly), (tk, val) in ddp.items():
-        sx, sy = lx + 11, ly + 11        # dsp 标签 = 源像素坐标, 出现时输入光栅已 +11
+        sx, sy = lx + 14, ly + 14        # dsp 标签 = 源像素坐标, 出现时输入光栅已 +14
         if sx >= W or sy >= H:
             continue
         t_in = din_r.get((fr, sx, sy))

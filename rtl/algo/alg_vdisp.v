@@ -36,11 +36,11 @@
 //    前逐像素完全一致, 零回归。
 //
 //  参数约束:
-//    ROWD 必须 = 算法各级 H2 之和(本设计 = 11: 中值1+导向滤波4+高斯2+Sobel1+
-//    NMS1+阈值1+去孤点1), ROWS = ROWD+1 = 12(不再要求 2 的幂, 行号用 mod-12
+//    ROWD 必须 = 算法各级 H2 之和(本设计 = 14: 中值1+导向滤波4+高斯2+Sobel1+
+//    NMS1+阈值1+断线桥接3+去孤点1), ROWS = ROWD+1 = 15(不再要求 2 的幂, 行号用 mod-15
 //    计数器, 见下面 1)/2) 段);
 //    TDLY = ROWS*HTOTAL 必须 < 2**TW(时延 RAM 深度, 本设计 TW=15 -> 32768,
-//    而 12*2047 = 24564 < 32768 ✓)。
+//    而 15*2047 = 30705 < 32768 ✓)。
 //    行缓存安全性(实测推导): 读一行比写晚 ROWS 行, 而同一 bank 要再过 ROWS 行
 //    才会被下一行覆盖 -> 读总是落在"本 bank 上一次写"上(余量 1~2 拍)。
 //    边缘写地址门控 ed_y < H 把帧尾复现行(alg_gray 的 REXT 行)排除在外。
@@ -94,6 +94,7 @@ localparam integer WS   = (W + 1) / 2;              // 边缘行缓存: 一个�
 localparam integer SIZEE = ROWS * WS;               // 边缘行缓存字数
 localparam integer AWE  = $clog2(SIZEE);            // 边缘行缓存地址位宽
 localparam integer TW   = 15;                       // 时延 RAM 地址位宽(32768 深)
+localparam integer AB   = AW + 1;                   // 行缓存地址运算位宽(留 1 位防溢出)
 localparam integer HTL0 = (HTOTAL > 2047) ? 2047 : HTOTAL;  // 保证 ROWS*HTL0 < 2**TW
 // 显示整体延迟 TDLY = ROWS * 行周期(运行时值, 见下面的实测)
 
@@ -195,7 +196,7 @@ always @(posedge clk) begin
     end
 end
 
-wire [13:0] c_waddr = (wy_m * W) + wx;
+wire [AB-1:0] c_waddr = (wy_m * W) + wx;
 
 //--------------------------------------------------------------------------
 // 2) 读相位列计数(提前 2 拍) -> 行缓存读地址 + 显示坐标
@@ -250,9 +251,9 @@ always @(posedge clk) begin
     else        begin mode_d1 <= mode; mode_d2 <= mode_d1; end
 end
 
-wire [13:0] c_base = ry_m * W;
-wire [14:0] c_ra   = c_base + col_c;                // 可能越过 SIZE -> 回卷
-wire [13:0] r_rd   = (c_ra >= SIZE) ? (c_ra - SIZE) : c_ra[13:0];
+wire [AB-1:0] c_base = ry_m * W;
+wire [AB-1:0] c_ra   = c_base + col_c;              // 可能越过 SIZE -> 回卷
+wire [AB-1:0] r_rd   = (c_ra >= SIZE) ? (c_ra - SIZE) : c_ra;
 
 //--------------------------------------------------------------------------
 // 3) 彩色行缓存(24bit x W) + 边缘行缓存(16bit x W/2, 一个字存相邻两列)
@@ -302,8 +303,10 @@ wire [15:0] e_wdata = ed_x[0] ? {ed_d, edg_even} : {8'h00, ed_d};
 // 24bit -> 16bit 是为了腾出 BRAM 给导向滤波(行数 8 -> 12 之后 24bit 放不下)。
 wire [15:0] col_565 = {in_rgb[23:19], in_rgb[15:10], in_rgb[7:3]};
 
-simple_dual_port_ram #(
-    .DATA_WIDTH(16), .ADDR_WIDTH(AW), .OUTPUT_REG("TRUE"), .RAM_INIT_FILE("")
+// 行缓存用精确深度的 alg_ring_ram: simple_dual_port_ram 会把 19200 撑成 32768
+// 深, BRAM 32->64 块, 256 块装不下(详见 alg_ring_ram.v 头注释)。
+alg_ring_ram #(
+    .DATA_WIDTH(16), .ADDR_WIDTH(AW), .DEPTH(SIZE), .OUTPUT_REG("TRUE")
 ) u_cring (
     .wdata(col_565), .waddr(c_waddr[AW-1:0]), .we(in_de), .wclk(clk),
     .raddr(r_rd[AW-1:0]), .re(1'b1), .rclk(clk), .rdata(col_dout)
@@ -313,8 +316,8 @@ wire [23:0] col_888 = {col_dout[15:11], col_dout[15:13],
                        col_dout[10:5],  col_dout[10:9],
                        col_dout[4:0],   col_dout[4:2]};
 
-simple_dual_port_ram #(
-    .DATA_WIDTH(16), .ADDR_WIDTH(AWE), .OUTPUT_REG("TRUE"), .RAM_INIT_FILE("")
+alg_ring_ram #(
+    .DATA_WIDTH(16), .ADDR_WIDTH(AWE), .DEPTH(SIZEE), .OUTPUT_REG("TRUE")
 ) u_ering (
     .wdata(e_wdata), .waddr(e_waddr[AWE-1:0]), .we(ed_in), .wclk(clk),
     .raddr(e_ra[AWE-1:0]), .re(1'b1), .rclk(clk), .rdata(edg_pair)

@@ -20,6 +20,8 @@
         <efx:design_file name="rtl/algo/alg_stream_delay.v" version="default" library="default" />
         <efx:design_file name="rtl/algo/alg_thresh.v" version="default" library="default" />
         <efx:design_file name="rtl/algo/alg_despeckle.v" version="default" library="default" />
+        <efx:design_file name="rtl/algo/alg_ebridge.v" version="default" library="default" />
+        <efx:design_file name="rtl/algo/alg_ring_ram.v" version="default" library="default" />
         <efx:design_file name="rtl/algo/alg_vdisp.v" version="default" library="default" />
         <efx:design_file name="rtl/algo/alg_blend.v" version="default" library="default" />
         <efx:design_file name="rtl/algo/alg_top.v" version="default" library="default" />

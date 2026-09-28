@@ -8,7 +8,7 @@
 
 板子每 500ms 回一行状态, 收到命令后还会立刻回一行:
 
-    M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 CAM0077=C0
+    M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0077=C0
 
 界面右边"板端"那一列显示的就是这行回读值, 也就是 FPGA 里真正生效的值。
 如果它和滑块不一致(比如串口没接好), 会变成红色并在状态栏提示。
@@ -32,6 +32,11 @@
     N<n>  3x3 中值滤波           0/1
     G<n>  5x5 高斯               0/1
     I<n>  去孤点                 0/1
+    B<n>  断线桥接 BRG           0..3     (只双阈值档(CANNY/双阈值)有效)
+          二值边缘图上的 4 轴方向闭运算: 沿水平/垂直/两条对角线方向, 把被
+          1~5 像素空洞截断的同一条边连起来(边缘图闭运算连线, 治"一条线被
+          截成几截"+逐帧一亮一暗的流动感)。0 = 关(与未加此模块时逐位一致),
+          1/2/3 = 分别填 1/3/5 像素的空洞。单阈值 SOBEL 档自动旁路。
     D<n>  显示模式               0..3
     C<n>  边缘彩色叠加           0/1
     R     全部恢复上电默认值
@@ -90,6 +95,8 @@ PARAMS = [
          note="CANNY 档强制开启, 其它档看这个开关"),
     dict(key="isol_en", cmd="I", name="去孤点", lo=0, hi=1, init=1,
          note="0=关 1=开"),
+    dict(key="brg", cmd="B", name="断线桥接 BRG", lo=0, hi=3, init=2,
+         note="只双阈值档有效; 0=关 1/2/3=填1/3/5px空洞(边缘闭运算连线)"),
     dict(key="disp_mode", cmd="D", name="显示模式", lo=0, hi=3, init=0,
          names={0: "0 = 左右分屏(灰度|边缘)", 1: "1 = 彩色+红边叠加",
                 2: "2 = 左右 1:1", 3: "3 = 纯边缘"}),
@@ -102,8 +109,9 @@ TELEM_RE = re.compile(
     r"\s+MED(?P<median_en>\d+)\s+GAU(?P<gauss_en>\d+)\s+ISO(?P<isol_en>\d+)"
     r"\s+DSP(?P<disp_mode>\d+)\s+OVC(?P<ov_color>\d+)"
     r"(?:\s+EPS(?P<nms_eps>\d+))?"      # 65 字节新行才有; 旧位流(60 字节)缺这一段
-    r"(?:\s+EPF(?P<epf>\d+))?"          # 77 字节新行才有
+    r"(?:\s+EPF(?P<epf>\d+))?"          # EPF 起(77 字节行)才有
     r"(?:\s+GF(?P<gf_eps>\d+))?"
+    r"(?:\s+BRG(?P<brg>\d+))?"          # 82 字节新行才有
     r"(?:\s+CAM(?P<cam_grp>\d+)=(?P<cam_val>[0-9A-Fa-f]{2}))?")
 
 # 状态行里 CAM 组的已知含义 (见 rtl/cam/piv2_config.v 的寄存器表)

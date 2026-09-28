@@ -94,3 +94,25 @@ SHA-256、最后给出两行结论（提交时间最新的代码、赛题4 交�
 - 回退四件套（内容同一份）：本目录源码、`_backups\20260928_174632_post-rollback-notemp`
   快照、`_archives\` 归档 zip、GitHub `no-temp` 分支。
 - 提醒：JTAG 烧录是易失的，板子断电后需要重新烧录，用上面的位流/脚本即可。
+
+## 2026-09-28 晚（三）：断线桥接 BRG（`imx219_smooth`，分支 `canny-smooth`）
+
+- 板主授权：**不要局限于 GitHub 参考 Python**，去外部检索更好的方案；"最佳版"
+  `imx219_notemp` 保持只读，改动放到新副本。外部检索结论：Canny 边缘"断成几截"
+  的标准解法就是**边缘图形态学闭运算连线**（cv2 里一行
+  `morphologyEx(edge, MORPH_CLOSE, kernel)`），没有可直接移植的 Verilog 开源实现，
+  所以按闭运算语义手写了 `rtl/algo/alg_ebridge.v`（7×7 二值窗口、只沿 4 条轴线，
+  补 1/3/5 像素空洞 = BRG 1/2/3，BRG=0 逐位透传）。
+- 新副本：`D:\FPGA_Project\imx219_smooth`（分支 `canny-smooth`，基线 `a390a99`），
+  改前快照 `_backups\20260928_180719_pre-canny-smooth`（已验证可恢复）。
+- **关键坑（已踩已解）**：`ROWD` 11→14 后 `alg_vdisp` 行缓存 12→15 行，
+  `simple_dual_port_ram` 会把深度向上取成 2 的幂（19200→32768），
+  BRAM 208→278，PnR 直接 `capacity=256 usage=278` 失败。新增精确深度的
+  `rtl/algo/alg_ring_ram.v`（按 1024 深逐块拼）后 278→242，编译四阶段全 PASS。
+  以后再加算法级只读看 `ROWD` 的改动，必须先算 `ROWS*W` 会不会跨 2 的幂。
+- 状态：`check_ebridge.py` + `check_chain.py` 全 PASS，位流已生成
+  （`outflow\ti60f225_oob.bit`），**待烧录、待上板肉眼确认**；
+  在上板确认之前，"最佳版"仍然是 `imx219_notemp`，回退用 `烧录最佳版.bat`。
+- 调参台新增 `B<n>`（断线桥接 0..3，默认 2，只 mode 1/2 有效），
+  板端状态行从 77 字节变成 **82 字节**（`... EPF2 GF0400 BRG2 CAM0077=C0`），
+  PC 侧正则对旧行仍兼容（缺字段显示 `--`）。

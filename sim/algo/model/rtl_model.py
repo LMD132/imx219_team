@@ -259,8 +259,55 @@ def hysteresis_rtl(mag, t_lo, t_hi):
     return ((weak & _dilate3_zero(strong)) * 255).astype(np.uint8)
 
 
+def bridge_rtl(edge, k=2, mode=2):
+    """边缘断线桥接(alg_ebridge.v): 二值边缘图上的"轴线方向闭运算"。
+
+    7x7 窗口(0 边界): 空洞像素只要在左/右(同一行)、上/下(同一列)、
+    左上-右下 或 右上-左下 两组对角里, 两侧 K 像素内都有边缘, 就补成边缘。
+    k = 0 或 mode = 0(单阈值档旁路) 时逐位透传(等价原算法)。
+    k: 1 -> 填 1px 空洞; 2 -> 填 1~3px; 3 -> 填 1~5px。
+    只在 4 条轴线方向判断, 因此不会把相距 2~3px 的平行线糊成一条粗线。
+    """
+    e = (edge > 0).astype(np.uint8)
+    k = int(k)
+    if k <= 0 or int(mode) == 0:
+        return (e * 255).astype(np.uint8)
+    h, w = e.shape
+    p = pad_zero(e, 3)
+
+    def taps(dy, dx):
+        """距离 1..3 的邻域(与 RTL 的 win 抽头一一对应), 返回宽度 3 的列表"""
+        out = []
+        for d in (1, 2, 3):
+            y0, x0 = 3 + dy * d, 3 + dx * d
+            out.append(p[y0:y0 + h, x0:x0 + w].astype(np.uint8))
+        return out
+
+    def within(arrs):
+        r = np.zeros((h, w), dtype=np.uint8)
+        for d in range(k):
+            r |= arrs[d]
+        return r
+
+    l, r = taps(0, -1), taps(0, 1)
+    u, dn = taps(-1, 0), taps(1, 0)
+    ul, dr = taps(-1, -1), taps(1, 1)
+    ur, dl = taps(-1, 1), taps(1, -1)
+    fill = ((within(l) & within(r)) | (within(u) & within(dn))
+            | (within(ul) & within(dr)) | (within(ur) & within(dl)))
+    return ((e | fill).astype(np.uint8)) * 255
+
+
 def isolated_rtl(edge):
     """孤立点消除(0 边界): 3x3 内白邻居数(不含自身) >= 1 才保留。"""
+    e = (edge > 0).astype(np.int32)
+    p = pad_zero(e, 1)
+    h, w = e.shape
+    cnt = np.zeros((h, w), dtype=np.int32)
+    for i in range(3):
+        for j in range(3):
+            cnt += p[i:i + h, j:j + w]
+    return ((((e > 0) & ((cnt - e) >= 1)).astype(np.uint8)) * 255)
     e = (edge > 0).astype(np.int32)
     p = pad_zero(e, 1)
     h, w = e.shape
@@ -281,7 +328,7 @@ def threshold_rtl(mag, t):
 # --------------------------------------------------------------------------
 def rtl_pipeline(gray_in, mode, thr=24, thr_lo=21, thr_hi=58,
                  median_en=True, gauss5_en=None, isol_en=True, nms_eps=0,
-                 epf=0, gf_eps=400):
+                 epf=0, gf_eps=400, brg=2):
     """gray_in: 8bit 灰度(已灰度化/时间域平均后)。
     mode: 0=SOBEL 单阈值, 1=SOBEL 双阈值, 2=CANNY
     gauss5_en: None -> CANNY 自动开, SOBEL 档关(与 live_tune 一致)
@@ -313,6 +360,7 @@ def rtl_pipeline(gray_in, mode, thr=24, thr_lo=21, thr_hi=58,
     else:
         edge = threshold_rtl(mag, thr)
         mag_out = np.clip(mag, 0, 255).astype(np.uint8)
+    edge = bridge_rtl(edge, brg, mode)
     if isol_en:
         edge = isolated_rtl(edge)
     return {"edge": edge, "gray": g, "mag_full": mag, "mag": mag_out}

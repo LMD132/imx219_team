@@ -34,6 +34,12 @@
 //                           The regularisation term of guided_filter(): the
 //                           larger it is the flatter the result becomes.  Only
 //                           the EPF=2 path reads it (see algo/alg_gf.v).
+//     B<n>   cfg_brg        edge gap bridging         0..3 (above 3 clamps to 3)
+//                           0 = off, 1/2/3 = fill 1 / 3 / 5 px holes of a broken
+//                           line along the 4 axes of a 7x7 window.  Only the
+//                           dual-threshold modes (mode 1/2) read it: it repairs
+//                           the "a straight edge comes out as dashes" look of
+//                           Canny.  Default 2.  See algo/alg_ebridge.v.
 //     N<n>   cfg_median_en  0/1
 //     G<n>   cfg_gauss_en   0/1
 //     I<n>   cfg_isol_en    0/1
@@ -67,6 +73,7 @@ module alg_cfg_uart #(
     parameter [3:0]  EPS_INIT    = 4'd0,
     parameter [1:0]  EPF_INIT    = 2'd2,
     parameter [10:0] GFEPS_INIT  = 11'd400,
+    parameter [1:0]  BRG_INIT    = 2'd2,
     parameter        MEDIAN_INIT = 1'b1,
     parameter        GAUSS_INIT  = 1'b0,
     parameter        ISOL_INIT   = 1'b1,
@@ -84,6 +91,7 @@ module alg_cfg_uart #(
     output reg  [3:0]  o_eps,
     output reg  [1:0]  o_epf,
     output reg  [10:0] o_gf_eps,
+    output reg  [1:0]  o_brg,
     output reg         o_median_en,
     output reg         o_gauss_en,
     output reg         o_isol_en,
@@ -108,7 +116,8 @@ module alg_cfg_uart #(
                      K_CAM  = 4'd11,
                      K_EPS  = 4'd12,
                      K_EPF  = 4'd13,
-                     K_GFE  = 4'd14;
+                     K_GFE  = 4'd14,
+                     K_BRG  = 4'd15;
 
     localparam S_KEY = 1'b0,
                S_VAL = 1'b1;
@@ -128,6 +137,7 @@ module alg_cfg_uart #(
                 8'h45, 8'h65: key_of = K_EPS;    // E e
                 8'h50, 8'h70: key_of = K_EPF;    // P p
                 8'h46, 8'h66: key_of = K_GFE;    // F f
+                8'h42, 8'h62: key_of = K_BRG;    // B b
                 8'h4E, 8'h6E: key_of = K_MED;    // N n
                 8'h47, 8'h67: key_of = K_GAU;    // G g
                 8'h49, 8'h69: key_of = K_ISO;    // I i
@@ -222,6 +232,7 @@ module alg_cfg_uart #(
             o_eps       <= EPS_INIT;
             o_epf       <= EPF_INIT;
             o_gf_eps    <= GFEPS_INIT;
+            o_brg       <= BRG_INIT;
             o_median_en <= MEDIAN_INIT;
             o_gauss_en  <= GAUSS_INIT;
             o_isol_en   <= ISOL_INIT;
@@ -245,6 +256,8 @@ module alg_cfg_uart #(
                     K_EPF:  o_epf       <= (apply_val > 12'd2)    ? 2'd2    : apply_val[1:0];
                     // 导向滤波 eps: 11bit 寄存器, 超过 2047 夹到 2047 (参考值 400)
                     K_GFE:  o_gf_eps    <= (apply_val > 12'd2047) ? 11'd2047 : apply_val[10:0];
+                    // 断线桥接档位: 2bit 寄存器, 超过 3 夹到 3
+                    K_BRG:  o_brg       <= (apply_val > 12'd3)    ? 2'd3    : apply_val[1:0];
                     K_MED:  o_median_en <= (apply_val != 12'd0);
                     K_GAU:  o_gauss_en  <= (apply_val != 12'd0);
                     K_ISO:  o_isol_en   <= (apply_val != 12'd0);
@@ -258,6 +271,7 @@ module alg_cfg_uart #(
                         o_eps       <= EPS_INIT;
                         o_epf       <= EPF_INIT;
                         o_gf_eps    <= GFEPS_INIT;
+                        o_brg       <= BRG_INIT;
                         o_median_en <= MEDIAN_INIT;
                         o_gauss_en  <= GAUSS_INIT;
                         o_isol_en   <= ISOL_INIT;

@@ -1,6 +1,6 @@
 //=============================================================================
 // alg_top.v -- 赛题4 实时边缘检测流水线顶层
-//   (灰度 -> 中值3x3 -> 高斯5x5 -> Sobel3x3 -> NMS -> 阈值/滞后 -> 去孤点 -> 显示)
+//   (灰度 -> 中值3x3 -> 高斯5x5 -> Sobel3x3 -> NMS -> 阈值/滞后 -> 桥接 -> 去孤点 -> 显示)
 //
 //  算法全部来自 GitHub 仓库 liuziyaoyao1210-sudo/FPGA-Python (edge_pipeline.py),
 //  按 rtl_model.py 的定点/截位逐位改写为 Verilog, 与 Python 金标准逐位对拍。
@@ -13,6 +13,7 @@
 //        |                                             +--> alg_sobel3  (延迟 4, mag 全量程 11bit)  基础③
 //        |                                             +--> alg_nms     (延迟 4, CANNY 档)  高阶④
 //        |                                             +--> alg_thresh  (延迟 4)  基础③ / 高阶④
+//        |                                             +--> alg_ebridge (延迟 4)  断线桥接(7x7, 高阶④)
 //        |                                             +--> alg_despeckle (延迟 4)  高阶④
 //        |                                                    |
 //        |     (彩色原图 + 显示屏时序, 不经算法链)               v
@@ -20,8 +21,9 @@
 //                                                    (行缓存对齐 + 4 种显示模式)
 //
 //  === 显示对齐(本文件最容易写错的地方, 已逐拍仿真验证) ===
-//  主链每级窗口模块把"窗口中心"的标签减去 H2, 且 de 从前端被切掉 H2 拍。7 级窗口
-//    H2 合计 = 1(中值)+4(导向滤波: 两级 6x6)+2(高斯)+1(Sobel)+1(NMS)+1(阈值膨胀)+1(去孤点) = 11
+//  主链每级窗口模块把"窗口中心"的标签减去 H2, 且 de 从前端被切掉 H2 拍。8 级窗口
+//    H2 合计 = 1(中值)+4(导向滤波: 两级 6x6)+2(高斯)+1(Sobel)+1(NMS)+1(阈值膨胀)
+//              +3(边缘桥接 7x7)+1(去孤点) = 14
 //  所以 dsp 级在时钟 t 输出的"边缘值"对应的源像素 = 顶层输入在 t-L 时刻的像素,
 //  而它的 (x,y) 标签 = 源坐标 - 11 (标签是"源像素坐标", 不是屏幕坐标)。
 //  因此 dsp 标签不能直接当屏幕坐标用: 边缘值出现时, 彩色光栅已经跑到 (x+11, y+11),
@@ -29,12 +31,13 @@
 //  正确做法是交给 alg_vdisp 用行缓存重建对齐: 彩色行缓存按"显示坐标"读写、边缘行
 //  缓存按"dsp 标签"写, 两者各自归位 -> 逐像素严格对齐(实测 0 mismatch)。
 //  L = 1(灰度) + 4(中值) + 25(导向滤波, 三档都跑同一套流水, 旁路也保持 25 拍)
-//    + 5(高斯, 旁路也保持 5 拍) + 4(Sobel) + 4(NMS) + 4(阈值) + 4(去孤点)
-//    = 51  (见 docs/ALGO_RTL.md 的延迟表, 由 check_chain.py 实测复核)
-//  图像最外 11 行/列是流式固有边界: 窗口需要未来行/列, 该处 de=0, 边缘显示为 0。
+//    + 5(高斯, 旁路也保持 5 拍) + 4(Sobel) + 4(NMS) + 4(阈值) + 4(桥接) + 4(去孤点)
+//    = 55  (见 docs/ALGO_RTL.md 的延迟表, 由 check_chain.py 实测复核)
+//  图像最外 14 行/列是流式固有边界: 窗口需要未来行/列, 该处 de=0, 边缘显示为 0。
 //
 //  运行期可配: MODE / 阈值 / NMS 容差 eps / 前置滤波 EPF(0 关 1 高斯 2 导向) /
-//              导向滤波 eps / 中值开关 / 去孤点开关 / 显示模式 / 叠加底色
+//              导向滤波 eps / 断线桥接 BRG(0 关 1~3 档) / 中值开关 / 去孤点开关 /
+//              显示模式 / 叠加底色
 //=============================================================================
 
 module alg_top #(
@@ -44,7 +47,7 @@ module alg_top #(
     parameter integer REXT     = 8,
     parameter integer HTOTAL   = 1650,          // 输入光栅行周期(clk 数, 含消隐)
     parameter integer HALF     = 640,           // W/2
-    parameter integer ROWD     = 11             // 算法各级 H2 累计(垂直/水平提前量)
+    parameter integer ROWD     = 14             // 算法各级 H2 累计(垂直/水平提前量)
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -65,6 +68,7 @@ module alg_top #(
     input  wire [3:0]  cfg_eps,         // NMS 容差 0..8 (只 CANNY 档有效, 0 = 参考代码)
     input  wire [1:0]  cfg_epf,         // 前置滤波 0=关 1=3x3高斯 2=导向滤波(参考代码默认档)
     input  wire [10:0] cfg_gf_eps,      // 导向滤波 eps 0..2000 (参考代码 400)
+    input  wire [1:0]  cfg_brg,         // 断线桥接档 0..3 (0=关; 只双阈值档生效)
     input  wire        cfg_median_en,
     input  wire        cfg_gauss_en,
     input  wire        cfg_isol_en,
@@ -228,6 +232,25 @@ alg_thresh #(.W(W), .VEXT(VEXT), .H(H)) u_thr (
 );
 
 //--------------------------------------------------------------------------
+// 8a) 边缘断线桥接(高阶④, 在二值边缘图上做 4 轴方向的闭运算)
+//     一根直线被打成短段(空洞 1~5px)时把它们补回连续; 只在双阈值档生效。
+//     参数 cfg_brg=0 时逐位透传(等价上一版, 便于回退对照)。
+//--------------------------------------------------------------------------
+wire        brg_vs, brg_hs, brg_de, brg_def;
+wire [11:0] brg_x;
+wire [12:0] brg_y;
+wire [7:0]  brg_d;
+
+alg_ebridge #(.W(W), .VEXT(VEXT), .H(H)) u_brg (
+    .clk(clk), .rst_n(rst_n),
+    .in_vs(thr_vso), .in_hs(thr_hso), .in_de(thr_def),
+    .in_x(thr_xo), .in_y(thr_yo), .in_data(thr_d),
+    .cfg_k(cfg_brg), .cfg_mode(cfg_mode_d),
+    .out_vs(brg_vs), .out_hs(brg_hs), .out_de_full(brg_def), .out_de(brg_de),
+    .out_x(brg_x), .out_y(brg_y), .out_data(brg_d)
+);
+
+//--------------------------------------------------------------------------
 // 8) 孤立点消除(高阶④)
 //--------------------------------------------------------------------------
 wire        dsp_vs, dsp_hs, dsp_de, dsp_def;
@@ -237,8 +260,8 @@ wire [7:0]  dsp_d;
 
 alg_despeckle #(.W(W), .VEXT(VEXT), .H(H)) u_dsp (
     .clk(clk), .rst_n(rst_n), .en(cfg_isol_en),
-    .in_vs(thr_vso), .in_hs(thr_hso), .in_de(thr_def),
-    .in_x(thr_xo), .in_y(thr_yo), .in_data(thr_d),
+    .in_vs(brg_vs), .in_hs(brg_hs), .in_de(brg_def),
+    .in_x(brg_x), .in_y(brg_y), .in_data(brg_d),
     .out_vs(dsp_vs), .out_hs(dsp_hs), .out_de_full(dsp_def), .out_de(dsp_de),
     .out_x(dsp_x), .out_y(dsp_y), .out_data(dsp_d)
 );

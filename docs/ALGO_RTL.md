@@ -15,11 +15,11 @@
 | 等级 | 本项目状态 |
 | --- | --- |
 | A. RTL 实现 | ✅ 全部算法级 + 显示级模块已实现并入库（`rtl/algo/`） |
-| B. 仿真逐位对拍 | ✅ 7 级 × 3 种模式全 0 mismatch；显示对齐 306 像素 0 mismatch |
+| B. 仿真逐位对拍 | ✅ 8 级 × 3 种模式全 0 mismatch；断线桥接 K=0/1/2/3 全 0 mismatch；显示对齐 306 像素 0 mismatch |
 | C. Python 溯源对拍 | ✅ 仓库原始 `edge_pipeline.py` ≡ RTL 金标准模型（2 图 × 8 级 0 mismatch） |
 | D. 编译 / 时序 / 资源 | ✅ Efinity 2026.1 map/interface/pnr/pgm 全 PASS，全设计无负 slack |
-| E. JTAG 下载 | ✅ 2026-09-26 完成（JTAG ID `0x10660A79`，日志见 `docs/上板记录_2026-09-26.md`） |
-| F. 上板肉眼画面确认 | ❌ **未做**（需板子持有人看屏幕） |
+| E. JTAG 下载 | ✅ 2026-09-26 完成（JTAG ID `0x10660A79`，日志见 `docs/上板记录_2026-09-26.md`）；断线桥接版位流已生成、**待烧录**（写本文时板子 USB 未连接） |
+| F. 上板肉眼画面确认 | ❌ **断线桥接版未做**（需板子持有人看屏幕；2026-09-28 之前各版本的画面结论见 `docs/上板记录_2026-09-26.md`） |
 
 > 任何"画面效果"的说法都只能等到 F 级证据出现。D 级通过不等于画面正确。
 
@@ -49,7 +49,7 @@
 | `median` | 1 | `cfg_median_en(1'b1)` | ✅ |
 | `gauss` | 0 | `cfg_gauss_en(1'b0)`（CANNY 档由 `alg_top` 自动置 1） | ✅ 语义一致 |
 | `isol` | 1 | `cfg_isol_en(1'b1)` | ✅ |
-| `temp` | 50 | — | ⚠️ **未 RTL 化**，见 §11 |
+| `temp` | 50 | — | ⚠️ **未 RTL 化**（时域降噪试过一版无效已废弃），见 §12 |
 | `color` | 0 | `cfg_ov_color(1'b1)` | ⚠️ 演示取舍：RGB 为 12bit 通道拼接，红边叠彩更直观；置 0 即是同语义的灰度底 |
 | `shape` | 0 | — | ❌ 未 RTL 化 |
 
@@ -64,6 +64,7 @@ RTL 模块与金标准模型逐位对拍。
 | --- | --- | --- | --- | --- |
 | `to_gray()` | `(77R+150G+29B)>>8` | `gray_shift_add()` | `alg_gray.v` | 1 |
 | `median3x3()` | 3×3 中值 | `median_3x3_network()` | `alg_median3.v` | 4 |
+| `guided_filter()`（EPF=2 档；EPF=0/1 为旁路/3×3 高斯） | 导向滤波 | `guided_filter_int()` | `alg_gf.v` | 25 |
 | `gaussian5x5()` | 5×5 整数高斯，核和 1010 | `gauss5x5_int()` | `alg_gauss5.v` | 5 |
 | `gradient()` / `sobel3x3()` | `G=|Gx|+|Gy|` 全量程 | `sobel_full()` | `alg_sobel3.v` | 4 |
 | `nms()` 里的方向量化 | `arctan2` 角度 → 0/45/90/135 | `dir_class()` | `alg_sobel3.v`（`out_dir`） | 并入上级 |
@@ -71,7 +72,8 @@ RTL 模块与金标准模型逐位对拍。
 | `threshold_hysteresis()` | 双阈值滞后 | `hysteresis_rtl()` | `alg_thresh.v`（mode 1/2） | 4 |
 | `threshold_single()` | 单阈值 | `threshold_rtl()` | `alg_thresh.v`（mode 0） | 4 |
 | `remove_isolated()` | 去孤立白点 | `isolated_rtl()` | `alg_despeckle.v` | 4 |
-| `run_pipeline()` 的整链路 | 组合以上各步 | `rtl_pipeline()` | `alg_top.v` | 26 |
+| （仓库没有，本项目扩展）边缘图闭运算连线 | 4 轴线 7×7 闭运算，补 1~5px 空洞 | `bridge_rtl()` | `alg_ebridge.v`（BRG=0 旁路） | 4 |
+| `run_pipeline()` 的整链路 | 组合以上各步 | `rtl_pipeline()` | `alg_top.v` | 55 |
 | `split_view()` | 左右分屏 | 硬件换成行缓存方案 | `alg_vdisp.v`（mode 0/2/3） | — |
 | `color_edge_overlay()` mode 1 | 红边叠加 | — | `alg_vdisp.v`（mode 1 + `ov_color`） | — |
 
@@ -88,9 +90,14 @@ RTL 模块与金标准模型逐位对拍。
 | `np.pad(constant=0)` | `remove_isolated()` | `alg_win` 的 `PAD_EDGE=0` | 0 mismatch |
 | `np.arctan2` | `gradient()` | 整数交叉相乘判角（`|Gy|*4096 vs |Gx|*1697`） | 见 §5 |
 | `cv2.cvtColor(GRAY2BGR)` | `split_view()` | 复制到 RGB 三通道 | 肉眼等价 |
+| `cv2.morphologyEx(MORPH_CLOSE)` 的连线语义 | 边缘断线桥接（§9，本项目扩展） | `alg_ebridge.v`：7×7 二值窗口沿 4 条轴线做闭运算 | `rtl_model.bridge_rtl()` K=0/1/2/3 全 0 mismatch |
 | 行缓存（无 cv2 对应） | 全部窗口算子 | `alg_win.v`（行缓存 + 列移位寄存器） | 见 §7 |
 
-除上表以外，没有再自行引入任何算法。
+除上表以外，没有再自行引入任何算法。其中最后一行（断线桥接）是**表里唯一一个仓库
+`edge_pipeline.py` 没有对应函数的模块**，用来补"参考 Python 的局部 3×3 hysteresis
+与 `cv2.Canny` 全局 flood-fill hysteresis 之间的差距"（cv2 里一行闭运算就能连线，
+Verilog 里没有 cv2，所以按闭运算语义手写）。它默认开启（BRG=2），把 BRG 拉到 0
+就是逐位透传 = 仓库原行为，详见 §9。
 
 ---
 
@@ -119,7 +126,7 @@ RESULT: PASS (仓库 Python == RTL 金标准模型, 逐级逐位)
 
 ### 4.2 全链路 RTL 仿真：iverilog 跑真 RTL vs 金标准模型
 
-运行：`python sim/algo/model/check_chain.py`（需 `ALG_OSS_BIN`，见 §12）
+运行：`python sim/algo/model/check_chain.py`（需 `ALG_OSS_BIN`，见 §13）
 
 每级都在"真实像素区"（`x<W, y<H`）逐像素比对：
 
@@ -136,6 +143,20 @@ RESULT: PASS
 2026-09-27 追加两档（`+EPS=` 覆盖 NMS 容差）：
 `=== MODE=2 DISP=1 EPS=2 ===` 与 `=== ... EPS=4 ===`，`nms` 级同样 **0 mismatch**
 （期望值来自 `rtl_model.nms_rtl(mag, dirs, eps)`），全部档位合起来仍是 `RESULT: PASS`。
+
+2026-09-28 加断线桥接后又追加一列与被测档位（每个档位都多出 `[ebridge]` 一级，
+`thresh → ebridge → despeck`）：
+
+```
+=== MODE=2 DISP=1 ===        [ebridge] mismatch 0（BRG 默认 2）
+=== MODE=2 DISP=1 BRG=0 ===  [ebridge] mismatch 0（逐位透传 = 旧行为）
+=== MODE=2 DISP=1 BRG=1 ===  [ebridge] mismatch 0
+=== MODE=2 DISP=1 BRG=3 ===  [ebridge] mismatch 0
+RESULT: PASS
+```
+
+`despeck` 级的期望值随之改成"桥接后的图"（`rtl_model.isolated_rtl(bridge_rtl(...))`），
+所以这一列同时验证了桥接与去孤点的串联关系。
 
 最后一段是**鲁棒性验证**：把 `HTOTAL` 参数初值故意写成错的 40，验证 `alg_vdisp`
 能靠运行期实测行周期自动修正（见 §8.4）。
@@ -207,25 +228,30 @@ Python 用 `np.pad` 在图像四周造虚拟像素；RTL 是流式的，没有"�
 | --- | --- | --- | --- |
 | 1 | `alg_gray` | — | 1 |
 | 2 | `alg_median3` | 1 | 4 |
-| 3 | `alg_gauss5` | 2 | 5 |
-| 4 | `alg_sobel3` | 1 | 4 |
-| 5 | `alg_nms` | 1 | 4 |
-| 6 | `alg_thresh` | 1 | 4 |
-| 7 | `alg_despeckle` | 1 | 4 |
-| — | **合计** | **7** | **26** |
+| 3 | `alg_gf`（EPF，三档共用同一套流水，旁路也保持 25 拍） | 4 | 25 |
+| 4 | `alg_gauss5` | 2 | 5 |
+| 5 | `alg_sobel3` | 1 | 4 |
+| 6 | `alg_nms` | 1 | 4 |
+| 7 | `alg_thresh` | 1 | 4 |
+| 8 | `alg_ebridge`（§9 断线桥接） | 3 | 4 |
+| 9 | `alg_despeckle` | 1 | 4 |
+| — | **合计** | **14** | **55** |
 
 两条关键结论：
 
-1. `L = 26` 拍：dsp 级在时钟 `t` 输出的边缘值，对应顶层输入在 `t-26` 时刻的像素。
-2. `ROWD = 7`：dsp 输出的 `(x,y)` 标签 = **源像素坐标**，比屏幕坐标小 7。
+1. `L = 55` 拍：dsp 级在时钟 `t` 输出的边缘值，对应顶层输入在 `t-55` 时刻的像素
+   （`check_chain.py` 实测复核；本节数字与 `alg_top.v` 头的 L 累加式一一对应）。
+2. `ROWD = 14`：dsp 输出的 `(x,y)` 标签 = **源像素坐标**，比屏幕坐标小 14。
    即**标签是元数据，不是屏幕位置**。
 
-> 曾经踩过的坑：以为"边缘整体延迟 26 拍，那就把彩色也延迟 26 拍再叠加"，
-> 结果边缘整体右下移 7 行 7 列（306 个显示像素里错 80 个）。原因是边缘值到达显示侧时，
-> 彩色光栅已经跑到了 `(x+7, y+7)`，而标签仍然标着源坐标。修法见 §8。
+> 曾经踩过的坑：以为"边缘整体延迟 55 拍，那就把彩色也延迟 55 拍再叠加"，
+> 结果边缘整体右下移 14 行 14 列（306 个显示像素里错 80 个）。原因是边缘值到达显示侧时，
+> 彩色光栅已经跑到了 `(x+14, y+14)`，而标签仍然标着源坐标。修法见 §8。
 
 SOBEL 档（mode 0/1）走 NMS 旁路，但 `alg_stream_delay` 依然补足 4 拍，所以两种档位
-末端延迟都收敛到 26 拍，换档不跳（§4.2 中 MODE=0/1 的 `[display]` 亦为 0 mismatch）。
+末端延迟都收敛到 55 拍，换档不跳（§4.2 中 MODE=0/1 的 `[display]` 亦为 0 mismatch）。
+断线桥接只在 mode 1/2 生效、单阈值档（mode 0）旁路，旁路/生效延迟都是 4 拍，
+所以换档同样不跳。
 
 ---
 
@@ -309,7 +335,50 @@ SOBEL 档（mode 0/1）走 NMS 旁路，但 `alg_stream_delay` 依然补足 4 �
 
 ---
 
-## 9. 顶层集成
+## 9. 断线桥接 `alg_ebridge`（2026-09-28 新增）
+
+**动机（用户上板现象）**：Canny 档下轮廓线"像木棍被截成几截"——同一条边上一段亮一段暗，
+而且逐帧一亮一暗、看着像在流动。根因是参考 Python 的 hysteresis 只做**局部**
+`weak & dilate3x3(strong)`（3×3 邻域），没有 `cv2.Canny` 的全局 flood-fill：
+光照渐变/抗锯齿造成的弱边一旦 3×3 内没有强边就被整段丢掉，同一条边于是被切出
+1~5 像素的空洞；空洞位置逐帧抖动，就成了"闪 + 流动 + 断线"。
+
+**做法（对标 `cv2.morphologyEx(edge, cv2.MORPH_CLOSE, kernel)`）**：
+Python 里连断线最省事的一行就是边缘图闭运算，Verilog 里没有 cv2，
+所以按闭运算语义手写了 `rtl/algo/alg_ebridge.v`：
+
+- 7×7 二值窗口（`alg_win`，`PAD_EDGE=0`），只沿 **4 条轴线**（水平/垂直/两条对角线），
+  每条轴上"两侧各 K 像素内都有边缘"就把中心补成边缘（= 沿轴线的形态学闭运算）；
+- `cfg_brg`(0..3)：0=关（逐位透传，等价没加这个模块）、1/2/3 = 填 1/3/5 像素空洞；
+- 只在 `cfg_mode != 0`（双阈值档：SOBEL 双阈值 + CANNY）生效，单阈值档自动旁路；
+- 延迟恒 4 拍、只花 6 条 1bit 行缓存（6 块 BRAM），换档不改变延迟（显示不跳）。
+
+**为什么只填"轴线"方向**：做全 7×7 闭运算的话，相距 2~3 像素的**平行线**会被糊成
+一条粗线（用户之前抱怨过"本来一根线变成三根"，那是另一个方向的错觉；真正的风险是
+三根细线被并成一根）。只沿 4 条轴线判空洞，就只连接"同一条边的上下游"，不会合并平行线。
+
+**证据级别**：RTL 已实现 + 单元对拍 PASS + 全链路对拍 PASS + 编译全流程 PASS。
+**上板肉眼效果待确认**（写本节时开发板 USB 未连接，位流已生成、未烧录）。
+
+| 对拍 | 覆盖 | 结果 |
+| --- | --- | --- |
+| `sim/algo/model/check_ebridge.py` | K=0/1/2/3 × MODE=2，K=2 × MODE=0/1 | 全部 `mismatch 0` → `RESULT: PASS` |
+| `sim/algo/model/check_chain.py` | 全链路逐级 + BRG=0/1/3 三档 + 显示逐像素 | `RESULT: PASS` |
+
+**运行期调参**：调参台新增一行"断线桥接 BRG"（命令 `B<b>`），板端回读行变成 82 字节：
+
+    M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0077=C0
+
+> 与仓库的关系：`alg_ebridge` **不在** `edge_pipeline.py` 里，是本项目为补
+> "局部 hysteresis ↔ cv2 全局 hysteresis"差距新增的 cv2 闭运算 RTL 化模块（§3.1 末行）。
+> 默认档位 2；想回到"与参考 Python 逐位一致"的旧行为，把 BRG 拉到 0 即可逐位透传。
+
+**资源代价**：6 块 BRAM + 约 130 LUT，`ROWD` 11→14 会让显示侧行缓存从 12 行加到 15 行
+（见 §11 的资源表与 `alg_ring_ram.v` 的说明）。
+
+---
+
+## 10. 顶层集成
 
 `rtl/ti60f225_oob_top.v` 中 `u_alg_top`：
 
@@ -331,9 +400,9 @@ SOBEL 档（mode 0/1）走 NMS 旁路，但 `alg_stream_delay` 依然补足 4 �
 
 ---
 
-## 10. 编译、时序、资源实测
+## 11. 编译、时序、资源实测
 
-命令见 §12。`map / interface / pnr / pgm` 全部 `PASS`。
+命令见 §13。`map / interface / pnr / pgm` 全部 `PASS`。
 
 2026-09-27 加了 NMS 容差 `cfg_eps`（§5 第 6 条）后重新全新编译，四阶段仍全 `PASS`，
 `No Synchronizer warnings`，全设计 0 条负 slack：
@@ -357,6 +426,28 @@ SOBEL 档（mode 0/1）走 NMS 旁路，但 `alg_stream_delay` 依然补足 4 �
 
 结论：**新增一个 12bit 加法器 + 比较器加宽，没有触碰存储器和时序余量。**
 
+2026-09-28 加断线桥接 `alg_ebridge`（§9）后重新全新编译，四阶段仍全 `PASS`，
+0 条负 slack：
+
+| 指标 | 2026-09-27 最佳版（`imx219_notemp`, ROWD=11） | 2026-09-28 断线桥接版（`imx219_smooth`, ROWD=14） |
+| --- | --- | --- |
+| XLRs | 22751 / 60800 | **28809 / 60800（47.4 %）** |
+| Memory Blocks | 208 / 256 | **242 / 256（94.5 %）** |
+| LUT4 / FF | 13199 / 9802 | **16157 / 12201** |
+| DSP Blocks | 4 / 160 | **36 / 160**（EPF 导向滤波的乘法器，非本次改动） |
+| `hdmi_tx_slow_clk` setup slack | +4.996 ns | **+4.774 ns** |
+| `core_clk` setup slack（算法/显示域） | +4.721 ns | **+4.582 ns**（约束 10 ns = 100 MHz） |
+| 全设计最小 setup slack | +0.381 ns（`tx_cal_clk`） | **+0.454 ns（`rx_cal_clk`，DDR 既有路径）** |
+
+> ⚠️ **Memory Blocks 已到 94.5%（242/256）**，只剩 14 块余量，和 §10 的结论一样：
+> 继续加功能（时域降噪、更大窗口）前必须先把行缓存再挤一挤。
+>
+> 本版差点装不下：`ROWD` 11→14 让 `alg_vdisp` 行缓存从 12 行加到 15 行，
+> `simple_dual_port_ram` 会把深度向上取到 2 的幂（19200 → 32768），
+> 彩色环 32→64 块、边缘环 16→32 块，PnR 直接报 `capacity=256 usage=278`。
+> 换用精确深度的 `rtl/algo/alg_ring_ram.v`（按 1024 深逐块拼）后：
+> 彩色环 40 块、边缘环 20 块，总内存 278→**242**，才装下来。
+
 | 指标 | 旧基线（`edge_display_720p`，灰度+Sobel） | 现在（全算法链） |
 | --- | --- | --- |
 | XLRs | 17256 / 60800 | **21593 / 60800 (35.51%)** |
@@ -378,13 +469,13 @@ SOBEL 档（mode 0/1）走 NMS 旁路，但 `alg_stream_delay` 依然补足 4 �
 
 ---
 
-## 11. 尚未 RTL 化的仓库算法（如实列出）
+## 12. 尚未 RTL 化的仓库算法（如实列出）
 
 | 仓库函数 | 状态 | 原因 |
 | --- | --- | --- |
-| `temporal_blend()` | ❌ 未做 | 时间域帧间平均，需整帧缓存；`config.json` 的 `temp=50` 未生效。**这是"人闪/白点闪"最直接的解法，优先级最高** |
+| `temporal_blend()` | ❌ 未做（试过一版已废弃） | 时间域帧间平均，需整帧缓存（一帧 1280×720×8bit = 921KB，BRAM 放不下，要么用 DDR 要么降分辨率）。2026-09-27 试过一版时域 α 融合（`imx219_temp` 分支），上板实测**无效甚至更差**，已废弃回退到 `imx219_notemp` |
 | `otsu_threshold()` | ❌ 未做 | 需直方图统计 + 除法/比较树，代价中等 |
-| `guided_filter()` | ❌ 未做 | 仓库自述已排除（EPF=2，实测丢细节） |
+| `guided_filter()` | ✅ 已做（EPF=2） | `alg_gf.v`（两级 6×6 窗口 + 4/16 位除法），对拍见 §4.2 的 EPF 档；用户实测默认档丢细节，所以顶层默认 EPF=2 但可切 0/1 |
 | `detect_shapes()` / `draw_shapes()` | ❌ 未做 | 轮廓+凸性判定+中文字库，工作量大 |
 | `color_edge_overlay()` mode 2 | ❌ 未做 | HSV 按梯度方向着色，需 HSV→RGB 变换 |
 | `gaussian3x3()` | ❌ 未做 | 仓库注明仅作 A/B 对比 |
@@ -393,11 +484,15 @@ SOBEL 档（mode 0/1）走 NMS 旁路，但 `alg_stream_delay` 依然补足 4 �
 
 > 上表是**功能缺口**，不是"没实现对"。已 RTL 化的部分与 Python 逐位一致，见 §4。
 
+> **反方向（仓库没有、本项目新增）只有一处**：`alg_ebridge`（§9）——cv2 闭运算连线
+> 的 RTL 化，用来补"局部 3×3 hysteresis ↔ cv2 全局 flood-fill hysteresis"的差距。
+> 默认 BRG=2 开启；BRG=0 逐位透传 = 仓库行为。
+
 ---
 
-## 12. 复现方法
+## 13. 复现方法
 
-### 12.1 逐位对拍（只需 Python + numpy + opencv）
+### 13.1 逐位对拍（只需 Python + numpy + opencv）
 
 ```bat
 cd /d D:\FPGA_Project\imx219_pyrtl
@@ -405,7 +500,7 @@ python sim\algo\model\check_py_repo.py
 python sim\algo\model\rtl_model.py --selftest
 ```
 
-### 12.2 全链路 RTL 仿真（需要 iverilog/vvp）
+### 13.2 全链路 RTL 仿真（需要 iverilog/vvp）
 
 iverilog 用 oss-cad-suite（约 2GB，不入库），用环境变量指过去：
 
@@ -418,7 +513,7 @@ python sim\algo\model\check_chain.py
 （若 `iverilog`/`vvp` 已在 `PATH` 里，可以不设 `ALG_OSS_BIN`。）
 仿真产物写在 `sim/algo/run/`（已被 `.gitignore` 忽略）。
 
-### 12.3 编译
+### 13.3 编译
 
 ```bat
 cd /d D:\FPGA_Project\imx219_pyrtl
@@ -429,14 +524,14 @@ C:\Efinity\2026.1\bin\efx_run.bat ti60f225_oob.xml --flow compile
 应看到 `map : PASS`、`interface : PASS`、`pnr : PASS`、`pgm : PASS`，
 并在 `outflow/ti60f225_oob.timing.rpt` 确认无负 slack。
 
-### 12.4 下载（**需要板子持有人确认后再做**）
+### 13.4 下载（**需要板子持有人确认后再做**）
 
 见 `README.md` 的 JTAG 命令。注意：`outflow/` 被 Git 忽略，切分支**不会**切换位流，
 下载前必须重新编译当前分支，或明确选用 `candidate_bitstreams/` 中已记录的位流。
 
 ---
 
-## 13. 工程坑（写 RTL 时反复遇到的）
+## 14. 工程坑（写 RTL 时反复遇到的）
 
 1. **不能用 reg 数组做 1280+ 深行缓存**：Efinity 不会推断成 BRAM，会炸成巨量 LUT。
    必须用 `simple_dual_port_ram` / `true_dual_port_ram` 且显式给 `.RAM_INIT_FILE("")`。
@@ -451,7 +546,7 @@ C:\Efinity\2026.1\bin\efx_run.bat ti60f225_oob.xml --flow compile
 
 ---
 
-## 14. 相关文件
+## 15. 相关文件
 
 | 路径 | 作用 |
 | --- | --- |
@@ -462,12 +557,15 @@ C:\Efinity\2026.1\bin\efx_run.bat ti60f225_oob.xml --flow compile
 | `rtl/algo/alg_sobel3.v` | Sobel 梯度 + 方向量化 |
 | `rtl/algo/alg_nms.v` | 非极大值抑制 |
 | `rtl/algo/alg_thresh.v` | 单阈值 / 双阈值滞后 |
+| `rtl/algo/alg_ebridge.v` | 断线桥接（4 轴线 7×7 闭运算，§9，本项目扩展） |
 | `rtl/algo/alg_despeckle.v` | 孤立点消除 |
+| `rtl/algo/alg_ring_ram.v` | 精确深度行缓存（省 BRAM，见 §11） |
 | `rtl/algo/alg_stream_delay.v` | 视频流对齐延迟 |
 | `rtl/algo/alg_vdisp.v` | 显示对齐（行缓存）+ 4 种显示合成 |
 | `rtl/algo/alg_top.v` | 算法链顶层 |
 | `rtl/algo/alg_align.v`、`alg_disp.v` | 早期版本，**未被例化**，保留备查 |
 | `sim/algo/tb_alg_chain.v` | 全链路测试台 |
+| `sim/algo/tb_alg_ebridge.v` + `sim/algo/model/check_ebridge.py` | 断线桥接单元对拍 |
 | `sim/algo/model/rtl_model.py` | RTL 金标准模型（`--selftest`） |
 | `sim/algo/model/check_chain.py` | RTL 全链路逐级对拍 |
 | `sim/algo/model/check_py_repo.py` | 仓库 Python ↔ 金标准模型对拍 |

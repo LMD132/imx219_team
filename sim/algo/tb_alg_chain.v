@@ -1,7 +1,7 @@
 //=============================================================================
 // tb_alg_chain.v -- 赛题4 全链路单元测试(直接测 alg_top 整机)
 //
-//  * 小尺寸参数 W=17, VEXT=9, H=9, REXT=8, 行间消隐 GAP=40
+//  * 小尺寸参数 W=17, VEXT=15, H=9, REXT=15, 行间消隐 GAP=40
 //    (GAP 必须 > L+LINE-W, 否则扩展光栅流的行尾会挤到下一行)
 //  * 每帧之间留 12 行垂直消隐, 让 alg_gray 的帧尾 REXT 行回放跑完
 //  * 逐级 dump(带全局 tick) + 显示输出 dump, 由 check_chain.py 与金标准对拍:
@@ -11,14 +11,15 @@
 //  * 全部输入用非阻塞赋值驱动(避免与 DUT 同拍竞争)
 //  * +EPS=<n> 覆盖 NMS 容差 cfg_eps (默认 0 = 与参考 Python 算法逐位一致)
 //  * +EPF=<n>/+GFEPS=<n> 覆盖前置滤波档位与导向滤波 eps (默认 2/400 = 参考算法)
+//  * +BRG=<n> 覆盖断线桥接档位 cfg_brg (默认 2; 0 = 关, 与上一版逐位一致)
 //=============================================================================
 `timescale 1ns/1ps
 
 module tb_alg_chain;
     parameter integer W     = 17;
-    parameter integer VEXT  = 12;      // >= ROWD(11): 窗口需要右侧 11 列未来像素
+    parameter integer VEXT  = 15;      // >= ROWD(14): 窗口需要右侧 14 列未来像素
     parameter integer H     = 9;
-    parameter integer REXT  = 12;      // >= ROWD(11): 帧尾复现行要够窗口取未来行
+    parameter integer REXT  = 15;      // >= ROWD(14): 帧尾复现行要够窗口取未来行
     parameter integer LINE  = W + VEXT;
     parameter integer NPIX  = W * H;
     parameter integer NFRM  = 2;
@@ -47,21 +48,24 @@ module tb_alg_chain;
     reg        cfg_median_en = 1'b1;
     reg        cfg_gauss_en  = 1'b0;
     reg        cfg_isol_en   = 1'b1;
+    reg [1:0]  cfg_brg       = 2'd2;
     reg [1:0]  cfg_disp_mode = 2'd1;
     reg        cfg_ov_color  = 1'b1;
 
-    integer m_arg, d_arg, e_arg, p_arg, f_arg;
+    integer m_arg, d_arg, e_arg, p_arg, f_arg, b_arg;
     initial begin
         if (!$value$plusargs("MODE=%d", m_arg)) m_arg = 2;
         if (!$value$plusargs("DISP=%d", d_arg)) d_arg = 1;
         if (!$value$plusargs("EPS=%d",  e_arg)) e_arg = 0;
         if (!$value$plusargs("EPF=%d",  p_arg)) p_arg = 2;
         if (!$value$plusargs("GFEPS=%d", f_arg)) f_arg = 400;
+        if (!$value$plusargs("BRG=%d",  b_arg)) b_arg = 2;
         cfg_mode      = m_arg[1:0];
         cfg_disp_mode = d_arg[1:0];
         cfg_eps       = e_arg[3:0];
         cfg_epf       = p_arg[1:0];
         cfg_gf_eps    = f_arg[10:0];
+        cfg_brg       = b_arg[1:0];
     end
 
     wire        o_vs, o_hs, o_de;
@@ -72,7 +76,7 @@ module tb_alg_chain;
     // DLY_RGB/DLY_GRAY 用模块默认值, 即被测的最终配置
     alg_top #(
         .W(W), .VEXT(VEXT), .H(H), .REXT(REXT), .HTOTAL(HTOTAL),
-        .HALF(HALF), .ROWD(11)
+        .HALF(HALF), .ROWD(14)
     ) u_top (
         .clk(clk), .rst_n(rst_n),
         .in_vs(vs), .in_hs(hs), .in_de(de),
@@ -83,6 +87,7 @@ module tb_alg_chain;
         .cfg_median_en(cfg_median_en), .cfg_gauss_en(cfg_gauss_en),
         .cfg_isol_en(cfg_isol_en), .cfg_disp_mode(cfg_disp_mode),
         .cfg_ov_color(cfg_ov_color),
+        .cfg_brg(cfg_brg),
         .out_vs(o_vs), .out_hs(o_hs), .out_de(o_de),
         .out_x(o_x), .out_y(o_y),
         .out_r(o_r), .out_g(o_g), .out_b(o_b)
@@ -90,7 +95,7 @@ module tb_alg_chain;
 
     always #5 clk = ~clk;
 
-    integer fgray, fmed, fgau, fsob, fnms, fthr, fdsp, fdisp, fin, fvs;
+    integer fgray, fmed, fgau, fsob, fnms, fthr, fbrg, fdsp, fdisp, fin, fvs;
     integer frame = 0;
     reg vs_d = 0, o_vs_d = 0;
     reg [31:0] tick = 0;
@@ -102,6 +107,7 @@ module tb_alg_chain;
         fsob  = $fopen("c_sob.txt",  "w");
         fnms  = $fopen("c_nms.txt",  "w");
         fthr  = $fopen("c_thr.txt",  "w");
+        fbrg  = $fopen("c_brg.txt",  "w");
         fdsp  = $fopen("c_dsp.txt",  "w");
         fdisp = $fopen("c_disp.txt", "w");
         fin   = $fopen("c_in.txt",   "w");
@@ -133,6 +139,8 @@ module tb_alg_chain;
             $fwrite(fnms, "%0d %0d %0d %0d %02x\n", frame, tick, u_top.nms_x, u_top.nms_y, u_top.nms_d);
         if (u_top.thr_def)
             $fwrite(fthr, "%0d %0d %0d %0d %02x\n", frame, tick, u_top.thr_xo, u_top.thr_yo, u_top.thr_d);
+        if (u_top.brg_def)
+            $fwrite(fbrg, "%0d %0d %0d %0d %02x\n", frame, tick, u_top.brg_x, u_top.brg_y, u_top.brg_d);
         if (u_top.dsp_def)
             $fwrite(fdsp, "%0d %0d %0d %0d %02x\n", frame, tick, u_top.dsp_x, u_top.dsp_y, u_top.dsp_d);
 
@@ -198,9 +206,10 @@ module tb_alg_chain;
                     if (cc == (TDLY + 4 * (W + GAP))) begin
                         $fclose(fgray); $fclose(fmed); $fclose(fgau);
                         $fclose(fsob); $fclose(fnms); $fclose(fthr);
+                        $fclose(fbrg);
                         $fclose(fdsp); $fclose(fdisp); $fclose(fin); $fclose(fvs);
-                        $display("TB CHAIN DONE mode=%0d disp=%0d eps=%0d epf=%0d gfeps=%0d",
-                                 cfg_mode, cfg_disp_mode, cfg_eps, cfg_epf, cfg_gf_eps);
+                        $display("TB CHAIN DONE mode=%0d disp=%0d eps=%0d epf=%0d gfeps=%0d brg=%0d",
+                                 cfg_mode, cfg_disp_mode, cfg_eps, cfg_epf, cfg_gf_eps, cfg_brg);
                         $finish;
                     end else cc <= cc + 1'b1;
                 end

@@ -5,25 +5,29 @@
 // Status line for the runtime edge parameters, the transmit half of the
 // PC tuning channel (alg_cfg_uart.v is the receive half).
 //
-// One 77 byte ASCII line every PERIOD_MS, plus an immediate line after every
+// One 82 byte ASCII line every PERIOD_MS, plus an immediate line after every
 // accepted command, so a slider on the host can be confirmed against what the
 // board actually latched instead of being trusted:
 //
-//     M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 CAM0077=C0\r\n
+//     M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0077=C0\n
 //
 // The line is fixed layout: every field is either a literal or exactly the
 // same width in every message, so the host can find the values by byte
 // position and a human reading a serial terminal sees decimal.
+// (The old 6'dNN case labels above index 63 silently truncated to 6 bits, so
+//  the CR that used to sit in front of the LF never matched; the line has
+//  always been LF terminated and the labels below are 7'dNN.)
 //
 // The last field is the answer to the host's X<grp> read-back command:
 // CAM<4 decimal digits of the requested group>=<2 hex digits of the byte the
 // camera returned> (FF until the first read).
 //
 // EPS<n> between OVC and CAM is the NMS tolerance (0..8, see alg_nms.v).
-// EPF<n> (0..2, pre-filter: off / gaussian3x3 / guided) and GF<nnnn>
-// (guided-filter eps, 0..2047) were appended after it for the same reason:
-// every field before them keeps its byte position, and the host regex accepts
-// the 77 byte line as well as the older 65 and 60 byte ones.
+// EPF<n> (0..2, pre-filter: off / gaussian3x3 / guided), GF<nnnn>
+// (guided-filter eps, 0..2047) and BRG<n> (0..3, edge gap bridging, see
+// algo/alg_ebridge.v) were appended after it for the same reason: every field
+// before them keeps its byte position, and the host regex accepts the 82 byte
+// line as well as the older 77, 65 and 60 byte ones.
 //
 // The three 11-bit thresholds and the 10-bit read-back group index are
 // converted with the double-dabble shift-and-add-3 algorithm, one value at a
@@ -53,6 +57,7 @@ module alg_cfg_telemetry #(
     input  wire [3:0]  i_eps,
     input  wire [1:0]  i_epf,
     input  wire [10:0] i_gf_eps,
+    input  wire [1:0]  i_brg,
     input  wire        i_median,
     input  wire        i_gauss,
     input  wire        i_isol,
@@ -64,7 +69,7 @@ module alg_cfg_telemetry #(
     output wire        o_txd
 );
 
-    localparam [6:0] MSG_LEN = 7'd77;
+    localparam [6:0] MSG_LEN = 7'd82;
     localparam integer GAP_CLKS = (CLK_HZ / 1000) * PERIOD_MS;
 
     // ------------------------------------------------------------------ text
@@ -99,6 +104,7 @@ module alg_cfg_telemetry #(
         input        ovc;
         input [3:0]  eps;
         input [1:0]  epf;
+        input [1:0]  brg;
         begin
             case (idx)
                 6'd0:  msg_byte = "M";
@@ -165,19 +171,23 @@ module alg_cfg_telemetry #(
                 6'd61: msg_byte = digit_of(gf_bcd[11:8]);
                 6'd62: msg_byte = digit_of(gf_bcd[7:4]);
                 6'd63: msg_byte = digit_of(gf_bcd[3:0]);
-                6'd64: msg_byte = " ";
-                6'd65: msg_byte = "C";
-                6'd66: msg_byte = "A";
-                6'd67: msg_byte = "M";
-                6'd68: msg_byte = digit_of(cam_bcd[15:12]);
-                6'd69: msg_byte = digit_of(cam_bcd[11:8]);
-                6'd70: msg_byte = digit_of(cam_bcd[7:4]);
-                6'd71: msg_byte = digit_of(cam_bcd[3:0]);
-                6'd72: msg_byte = "=";
-                6'd73: msg_byte = hex_of(cam_val[7:4]);
-                6'd74: msg_byte = hex_of(cam_val[3:0]);
-                6'd75: msg_byte = 8'h0D;   // CR
-                default: msg_byte = 8'h0A; // LF
+                7'd64: msg_byte = " ";
+                7'd65: msg_byte = "B";
+                7'd66: msg_byte = "R";
+                7'd67: msg_byte = "G";
+                7'd68: msg_byte = digit_of({2'b0, brg});
+                7'd69: msg_byte = " ";
+                7'd70: msg_byte = "C";
+                7'd71: msg_byte = "A";
+                7'd72: msg_byte = "M";
+                7'd73: msg_byte = digit_of(cam_bcd[15:12]);
+                7'd74: msg_byte = digit_of(cam_bcd[11:8]);
+                7'd75: msg_byte = digit_of(cam_bcd[7:4]);
+                7'd76: msg_byte = digit_of(cam_bcd[3:0]);
+                7'd77: msg_byte = "=";
+                7'd78: msg_byte = hex_of(cam_val[7:4]);
+                7'd79: msg_byte = hex_of(cam_val[3:0]);
+                default: msg_byte = 8'h0A; // LF (81 = LF, 见文件头)
             endcase
         end
     endfunction
@@ -205,6 +215,7 @@ module alg_cfg_telemetry #(
     reg        d_med, d_gau, d_iso, d_ovc;
     reg [3:0]  d_eps;
     reg [1:0]  d_epf;
+    reg [1:0]  d_brg;
     reg [10:0] d_gf_eps;
     reg [15:0] t_bcd, lo_bcd, hi_bcd, gf_bcd, cam_bcd;
     reg [9:0]  d_cam_grp;
@@ -257,6 +268,7 @@ module alg_cfg_telemetry #(
             d_ovc     <= 1'b0;
             d_eps     <= 4'd0;
             d_epf     <= 2'd0;
+            d_brg     <= 2'd0;
             d_gf_eps  <= 11'd0;
             t_bcd     <= 16'd0;
             lo_bcd    <= 16'd0;
@@ -293,6 +305,7 @@ module alg_cfg_telemetry #(
                             d_ovc   <= i_ovc;
                             d_eps   <= i_eps;
                             d_epf   <= i_epf;
+                            d_brg   <= i_brg;
                             d_gf_eps<= i_gf_eps;
                             d_cam_grp<= i_cam_grp;
                             d_cam_val<= i_cam_val;
@@ -350,7 +363,7 @@ module alg_cfg_telemetry #(
                     tx_byte  <= msg_byte(char_idx, t_bcd, lo_bcd, hi_bcd,
                                          gf_bcd, cam_bcd, d_cam_val,
                                          d_mode, d_disp, d_med, d_gau, d_iso, d_ovc,
-                                         d_eps, d_epf);
+                                         d_eps, d_epf, d_brg);
                     state    <= ST_START;
                 end
 

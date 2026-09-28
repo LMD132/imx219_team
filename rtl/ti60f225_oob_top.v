@@ -855,11 +855,11 @@ wire [7:0]  edge_b;
 // 运行期调参通道 (UART, 115200 8N1)
 //   PC( tools/alg_tuner.py 的滑块 ) --USB串口--> FPGA UART RX
 //   --> alg_cfg_uart 寄存器组 --> alg_cfg_sync 跨时钟域 --> alg_top 的 cfg_* 端口
-//   命令: M/T/L/H/E/P/F/N/G/I/D/C/R/X  (取值范围见 rtl/alg_cfg_uart.v 的文件头)
+//   命令: M/T/L/H/E/P/F/B/N/G/I/D/C/R/X (取值范围见 rtl/alg_cfg_uart.v 的文件头)
 //   状态: 每 500ms 回一行, 收到命令后立即回一行, 例如
 //         M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 CAM0077=C0
 //   X<n> 读回摄像头寄存器(见下面“摄像头寄存器读回”那一段), CAM 字段就是读回来的值。
-//   alg_top 及其下游算法 RTL 一行未改, 只是参数来源从常量变成了寄存器。
+//   B<n> 是 2026-09-28 新加的"断线桥接"档位(见 rtl/algo/alg_ebridge.v)。
 //==============================================================================
 wire [7:0]  w_uart_byte;
 wire        w_uart_byte_valid;
@@ -870,6 +870,7 @@ wire [10:0] w_cfg_hi;
 wire [3:0]  w_cfg_eps;
 wire [1:0]  w_cfg_epf;
 wire [10:0] w_cfg_gf_eps;
+wire [1:0]  w_cfg_brg;
 wire        w_cfg_median_en;
 wire        w_cfg_gauss_en;
 wire        w_cfg_isol_en;
@@ -884,6 +885,7 @@ wire [10:0] w_px_hi;
 wire [3:0]  w_px_eps;
 wire [1:0]  w_px_epf;
 wire [10:0] w_px_gf_eps;
+wire [1:0]  w_px_brg;
 wire        w_px_median_en;
 wire        w_px_gauss_en;
 wire        w_px_isol_en;
@@ -907,6 +909,7 @@ alg_cfg_uart #(
     .EPS_INIT    (4'd0),
     .EPF_INIT    (2'd2),
     .GFEPS_INIT  (11'd400),
+    .BRG_INIT    (2'd2),
     .MEDIAN_INIT (1'b1),
     .GAUSS_INIT  (1'b0),
     .ISOL_INIT   (1'b1),
@@ -924,6 +927,7 @@ alg_cfg_uart #(
     .o_eps       (w_cfg_eps),
     .o_epf       (w_cfg_epf),
     .o_gf_eps    (w_cfg_gf_eps),
+    .o_brg       (w_cfg_brg),
     .o_median_en (w_cfg_median_en),
     .o_gauss_en  (w_cfg_gauss_en),
     .o_isol_en   (w_cfg_isol_en),
@@ -1006,6 +1010,7 @@ alg_cfg_telemetry #(
     .i_eps    (w_cfg_eps),
     .i_epf    (w_cfg_epf),
     .i_gf_eps (w_cfg_gf_eps),
+    .i_brg    (w_cfg_brg),
     .i_median (w_cfg_median_en),
     .i_gauss  (w_cfg_gauss_en),
     .i_isol   (w_cfg_isol_en),
@@ -1024,6 +1029,7 @@ alg_cfg_sync #(
     .EPS_INIT    (4'd0),
     .EPF_INIT    (2'd2),
     .GFEPS_INIT  (11'd400),
+    .BRG_INIT    (2'd2),
     .MEDIAN_INIT (1'b1),
     .GAUSS_INIT  (1'b0),
     .ISOL_INIT   (1'b1),
@@ -1040,6 +1046,7 @@ alg_cfg_sync #(
     .i_eps     (w_cfg_eps),
     .i_epf     (w_cfg_epf),
     .i_gf_eps  (w_cfg_gf_eps),
+    .i_brg     (w_cfg_brg),
     .i_median  (w_cfg_median_en),
     .i_gauss   (w_cfg_gauss_en),
     .i_isol    (w_cfg_isol_en),
@@ -1054,6 +1061,7 @@ alg_cfg_sync #(
     .o_eps     (w_px_eps),
     .o_epf     (w_px_epf),
     .o_gf_eps  (w_px_gf_eps),
+    .o_brg     (w_px_brg),
     .o_median  (w_px_median_en),
     .o_gauss   (w_px_gauss_en),
     .o_isol    (w_px_isol_en),
@@ -1062,9 +1070,9 @@ alg_cfg_sync #(
 );
 
 alg_top #(
-    .W(1280), .VEXT(16), .H(720), .REXT(12),   // REXT >= ROWD(11): 帧尾复现行要够窗口取未来行
+    .W(1280), .VEXT(16), .H(720), .REXT(15),   // REXT >= ROWD(14): 帧尾复现行要够窗口取未来行
     .HTOTAL(1650),              // 行周期初值; 运行期按输入光栅实测修正
-    .HALF(640), .ROWD(11)
+    .HALF(640), .ROWD(14)
 ) u_alg_top (
     .clk(hdmi_tx_slow_clk),
     .rst_n(vid_rst_n),
@@ -1075,6 +1083,7 @@ alg_top #(
     .cfg_eps(w_px_eps),                   // NMS 容差 (只 CANNY 档有效; 0 = 参考算法)
     .cfg_epf(w_px_epf),                   // 前置滤波 0=关 1=高斯3x3 2=导向滤波(参考)
     .cfg_gf_eps(w_px_gf_eps),             // 导向滤波 eps (参考值 400)
+    .cfg_brg(w_px_brg),                   // 断线桥接 0=关 1~3 档 (只双阈值档生效)
     .cfg_median_en(w_px_median_en),
     .cfg_gauss_en(w_px_gauss_en),             // CANNY 档自动开 5x5 高斯
     .cfg_isol_en(w_px_isol_en),
