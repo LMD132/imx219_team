@@ -139,3 +139,30 @@ SHA-256、最后给出两行结论（提交时间最新的代码、赛题4 交�
 - 验证：`tools\smoke_alg_tuner.py` → **SMOKE OK**（新增键入/±1/夹取/非法输入/
   下发内容断言）；另有一份真窗口绑定测试（回车、▲▼、滚轮、±按钮、真实鼠标拖动）
   全过：拖到 75% 位置 → 输入框同步 + 下发 `H57`。
+
+## 2026-09-28 晚（五）：**冻结"最新版" = 本目录 @ 本次提交**（重要）
+
+- 板主指令：把这一版（断线桥接 BRG + 调参台手动输入框）**固定为最新版本**；
+  以后任何改动都必须 **先备份、再复制成新目录/新分支，在副本上改**，
+  **不许直接改这一版**。
+- 冻结对象：
+  * 源码 = `D:\FPGA_Project\imx219_smooth`，分支 `canny-smooth`，提交见本次冻结提交；
+  * 位流 = `candidate_bitstreams\brg_canny_smooth_78779c7_20260928.bit`
+    （SHA-256 `09A44591609D17C25A70A32DCAD7BC04136531DA5FF9719E4611A6719ABB642F`，
+    已烧进板子跑着，状态行含 `BRG2`）；
+  * GitHub = `canny-smooth` 分支 + tag `latest-20260928`。
+- 回退三件套（同一份内容，随便用哪个）：
+  * 源码副本：本目录（从此按只读对待）；
+  * 快照：`D:\FPGA_Project\_backups\*_frozen-latest-*`（含 .git、bundle、MANIFEST）；
+  * 归档 zip：`D:\FPGA_Project\_archives\imx219_smooth_canny-smooth_*_latest_*.zip`
+    （桌面同时放一份）。
+- 一键烧录（JTAG 易失，断电后要重烧）：`D:\FPGA_Project\烧录最新版.bat`。
+- **改代码硬流程**（每次都要走，不许跳步）：
+  1. `& .\tools\backup\make_backup.ps1 -Label <标签> -Worktree <当前副本>`；
+  2. `& .\tools\backup\verify_backup.ps1 -Snapshot latest -Worktree <当前副本>`
+     → 必须看到 `RESULT: BACKUP VERIFIED RESTORABLE`；
+  3. 复制出新目录（或 `git worktree`）在新分支上改，冻结版一个字都不动。
+- 与"最佳版"的关系：`imx219_notemp`（分支 `no-temp`，`a390a99`）仍然是**上板肉眼
+  确认过**的那一版；本版（BRG + 手动输入调参台）在冻结时"上板肉眼效果"还没得到
+  板主确认，所以它只是"**最新**"，不自动等于"最佳"。等板主确认 BRG 确实有用，
+  再把"最佳版"迁移到这一版（届时更新 `known_good\` 与 `烧录最佳版.bat`）。

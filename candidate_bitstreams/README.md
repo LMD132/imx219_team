@@ -15,7 +15,7 @@ tools\flash_candidate.bat candidate_bitstreams\<位流文件>
 
 ---
 
-## -1. `brg_canny_smooth_78779c7_20260928.bit` —— 断线桥接版（2026-09-28 晚，**待上板**）
+## -1. `brg_canny_smooth_78779c7_20260928.bit` —— 断线桥接版 = **冻结"最新版"的位流**（2026-09-28 晚）
 
 | 项 | 值 |
 | --- | --- |
@@ -23,7 +23,8 @@ tools\flash_candidate.bat candidate_bitstreams\<位流文件>
 | 编译时间 | 2026-09-28 18:29:55（在 `imx219_smooth` 内编译，`outflow/compile.log`：map/interface/pnr/pgm 全 PASS） |
 | 字节数 | 2548746 |
 | SHA-256 | `09A44591609D17C25A70A32DCAD7BC04136531DA5FF9719E4611A6719ABB642F` |
-| **上板状态** | ❌ **未烧录**（写记录时板子 USB 未连接，设备管理器里 FT4232H 整体不在） |
+| **上板状态** | ⚠️ **已烧录，肉眼效果待板主确认**。2026-09-28 19:14 用 `tools\flash_candidate.bat` 烧进板子（JTAG ID `0x10660A79`，日志 `finished with JTAG programming`），串口回读状态行为 `M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 **BRG2** CAM0000=FF`，确认板上跑的就是这一版。**但 BRG 在屏幕上的实际观感还没得到板主回答**，所以只算"最新"，不算"最佳"。 |
+| 冻结 | 2026-09-28 晚板主指令：这一版固定为**最新版本**，后续改动一律先备份 + 复制新目录再改；位流**暂不进 `known_good/`**（本目录规矩：只有肉眼验证通过的才进）。一键重烧：`D:\FPGA_Project\烧录最新版.bat` |
 | 内容 | 与回退版同链，新增 **断线桥接 `alg_ebridge`**（命令 `B0..B3`，默认 B2）与精确深度行缓存 `alg_ring_ram`；`ROWD` 11→14、`L` 51→55；遥测行 77→82 字节 |
 | 时序 | `hdmi_tx_slow_clk` setup **+4.774 ns**；`core_clk`（100 MHz）setup **+4.582 ns**；全设计最小 setup **+0.454 ns**、0 条负 slack |
 | 资源 | XLRs 28809/60800 (47.4%)、**Memory Blocks 242/256 (94.5%)**、LUT 16157 / FF 12201、DSP 36/160 |
