@@ -15,6 +15,29 @@ tools\flash_candidate.bat candidate_bitstreams\<位流文件>
 
 ---
 
+## -2. `inms_interp_3dedba2_20260928.bit` —— 亚像素插值 NMS 版（2026-09-28 深夜，肉眼效果待确认）
+
+| 项 | 值 |
+| --- | --- |
+| 来源提交 | `3dedba2`（分支 `inms-interp`，基于 `c1add67`） |
+| 编译时间 | 2026-09-28 20:40（`outflow/compile.log`：map / interface / pnr / pgm 全 PASS） |
+| 字节数 | 2557635 |
+| SHA-256 | `B26D4BA295FFABC0503234C0ADBD16053692E9959ECCC87EFCC2FAA8671316FB` |
+| **上板状态** | ✅ 2026-09-28 20:41 JTAG 烧录成功（JTAG ID `0x10660A79`，日志 `finished with JTAG programming`）；串口回读状态行为 `M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0000=FF`；⚠️ **肉眼效果待板主确认** |
+| 内容 | 与 `brg_canny_smooth` **同一条算法链**，只把 NMS 换成**亚像素方向插值**：运行期 `J1`=插值（默认）/ `J0`=原 4 方向量化，可现场 A/B 对照；流水线延迟与 `ROWD` 不变 |
+| 资源 | Memory Blocks **244/256 (95.3%)**（NMS 行缓存字宽 13→20bit，+2 块）、LUT4 16625 / FF 12272、DSP 55/160（19 DSP48 + 36 DSP24） |
+| 时序 | 全设计最小 setup **+0.357 ns**（`tx_cal_clk`，0 条负 slack）；`core_clk`（100 MHz 约束 10 ns）**+4.227 ns**；`hdmi_tx_slow_clk` **+3.511 ns** |
+| 对拍 | `sim/algo/model/check_inms.py` 退化性质 6/6 逐位一致 + 合成斜边指标改善；`check_inms_rtl.py` 真 RTL 4 路（ref/ref3/new/new3）**0 失配、0 缺失**；`check_chain.py` `CHAIN_INMS=0` 与 `=1` 均 `RESULT: PASS` |
+| 修掉的三个真 bug | ① 插值所需梯度改成 7bit code **随窗口数据一起走**（旧版用 `alg_stream_delay` 固定拍数延迟，实测与窗口差 **1 行 + 1 列**）；② `cent=(me<<4)-me` 的 Verilog **移位自决定宽度截位**（`me>255` 后 `15*me` 全错）；③ 测试台喂给 RTL 的 **dir 2bit 编码写反**（45↔90）导致参考路径假失败 |
+| 回退 | 运行期按 `J` 键切回原参考实现（逐位一致）；或直接烧 `known_good/best_epf_guided_99540aa_20260928.bit` |
+
+> 为什么要做：`rtl/algo/alg_nms.v` 旧版只有 4 个离散方向（0/45/90/135），
+> 真实梯度落在两根轴之间时"跟哪一对邻居比"会随 1 个 LSB 抖动来回跳 →
+> 保留像素在相邻行间换位（"沿轮廓流动的抖动"），斜边还会留 2~3 列（"一根线变几根"）。
+> Sobel 档不做 NMS、线宽 2~3px，把同一个抖动摊开，所以看不出来 —— 与板主观察一致。
+> 插值版把比较点放到真实梯度方向上的亚像素位置（`w = floor(15a/b)`，16 档权重，免除法），
+> 合成斜边实测：线宽 1.57→1.16px（30°）、1.83→1.67px（40°），位置误差 0.259→0.154（20°）。
+
 ## -1. `brg_canny_smooth_78779c7_20260928.bit` —— 断线桥接版 = **冻结"最新版"的位流**（2026-09-28 晚）
 
 | 项 | 值 |
