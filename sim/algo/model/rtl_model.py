@@ -237,6 +237,72 @@ def nms_rtl(mag, dirs, eps=0):
     return np.clip(np.where(keep, m, 0), 0, 255).astype(np.uint8)
 
 
+def nms_interp_rtl(mag, gx, gy, eps=0):
+    """亚像素方向插值 NMS, 与 alg_nms.v 的 cfg_inms=1 路径逐位等价。
+
+    免除法 + 16 档量化权重(见 alg_nms.v 文件头): a=min(|gx|,|gy|) b=max(|gx|,|gy|)
+        w = floor(15*a/b)                             (b==0 -> 0)
+        keep = (15*m >  15*((15-w)*M_f + w*D_f)/15)
+             & (15*m >= 15*((15-w)*M_b + w*D_b)/15)
+    即"中心 15*(m4+eps) 与 (15-w)*主轴 + w*对角 直接比大小"(两边同乘 15, 无除法)。
+    M = 主轴邻居, D = 对角邻居; 选哪一对由 hor 与 gx/gy 的符号决定。
+    a=0 -> w=0 退化成 4 方向量化版, a=b -> w=15 退化成对角版, 中间连续过渡。
+
+    eps 与 nms_rtl 的语义相同(中心加 eps), 便于两条路径用同一组参数对照。
+
+    严格侧口径与 RTL 一致: str = (gy<0) | ((gy==0) & (gx<0)), 它同时充当
+    "对角邻居取上面那一个"的选择位(sgy_eff) —— 差异只在 gy==0, 而那时 w==0
+    (对角项权重为 0), 所以比较结果不受影响。
+    """
+    m = mag.astype(np.int64)
+    h, w = m.shape
+    p = pad_edge(m, 1)
+    # 与 alg_nms.v 的 m0..m8 一一对应
+    UL = p[0:h, 0:w]
+    U  = p[0:h, 1:w + 1]
+    UR = p[0:h, 2:w + 2]
+    L  = p[1:h + 1, 0:w]
+    R  = p[1:h + 1, 2:w + 2]
+    DL = p[2:h + 2, 0:w]
+    D  = p[2:h + 2, 1:w + 1]
+    DR = p[2:h + 2, 2:w + 2]
+
+    gxi = gx.astype(np.int64)
+    gyi = gy.astype(np.int64)
+    egx = np.abs(gxi)
+    egy = np.abs(gyi)
+    hor = egx >= egy
+    ub = np.where(hor, egx, egy)
+    ua = np.where(hor, egy, egx)
+    sgx = gxi < 0
+    str_ = (gyi < 0) | ((gyi == 0) & sgx)      # RTL 的 cc_str / sgy_eff
+
+    # P = 沿梯度正方向那一侧, Q = 反方向那一侧
+    p_m = np.where(hor, np.where(sgx, L, R), np.where(str_, U, D))
+    p_d = np.where(sgx, np.where(str_, UL, DL), np.where(str_, UR, DR))
+    q_m = np.where(hor, np.where(sgx, R, L), np.where(str_, D, U))
+    q_d = np.where(sgx, np.where(str_, DR, UR), np.where(str_, DL, UL))
+
+    # w = #{k=1..15 : 15*a >= k*b}: 与 RTL 的 15 个常量比较器逐位同构
+    ua15 = ua * 15
+    wq = np.zeros_like(ub)
+    for k in range(1, 16):
+        wq = wq + (ua15 >= ub * k).astype(np.int64)
+    wq = np.where(ub == 0, 0, wq)
+    wm = 15 - wq
+
+    me = m + int(eps)
+    lp = wm * p_m + wq * p_d
+    lq = wm * q_m + wq * q_d
+    cent = 15 * me
+    # 非对称比较的"严格侧"必须与 nms_rtl 一致: 参考实现固定让 y 偏移 <= 0
+    # 的那一侧用严格大于 (dir=0 -> L, dir=90 -> U, dir=45 -> UL, dir=135 -> UR)。
+    l_strict = np.where(str_, lp, lq)
+    l_loose = np.where(str_, lq, lp)
+    keep = (cent > l_strict) & (cent >= l_loose)
+    return np.clip(np.where(keep, m, 0), 0, 255).astype(np.uint8)
+
+
 def _dilate3_zero(mask):
     p = pad_zero(mask, 1)
     h, w = mask.shape

@@ -48,6 +48,9 @@ EPF = int(os.environ.get("CHAIN_EPF", "2"))
 GFEPS = int(os.environ.get("CHAIN_GFEPS", "400"))
 # 断线桥接档位(只双阈值档生效): 0=关, 1/2/3=填 1/3/5 像素空洞。默认 2。
 BRG = int(os.environ.get("CHAIN_BRG", "2"))
+# 亚像素插值 NMS(alg_nms 的 cfg_inms): 1 = 板端默认(J 键默认 1), 0 = 参考 4 方向量化。
+# CHAIN_INMS=0 可以只跑"旧口径"那一档(用于回归: 参考路径不许退化)。
+INMS = int(os.environ.get("CHAIN_INMS", "1"))
 
 _ENV = None
 
@@ -95,7 +98,8 @@ def build(extra=None, name="tb.vvp"):
     return vvp
 
 
-def run(vvp, img, mode, disp, tag="", eps=None, epf=None, gf_eps=None, brg=None):
+def run(vvp, img, mode, disp, tag="", eps=None, epf=None, gf_eps=None, brg=None,
+        inms=None):
     if eps is None:
         eps = EPS
     if epf is None:
@@ -104,6 +108,8 @@ def run(vvp, img, mode, disp, tag="", eps=None, epf=None, gf_eps=None, brg=None)
         gf_eps = GFEPS
     if brg is None:
         brg = BRG
+    if inms is None:
+        inms = INMS
     rd = os.path.join(RUN, tag + "m%d_d%d" % (mode, disp))
     if os.path.isdir(rd):
         shutil.rmtree(rd)
@@ -115,7 +121,8 @@ def run(vvp, img, mode, disp, tag="", eps=None, epf=None, gf_eps=None, brg=None)
                 f.write("%02x%02x%02x\n" % (r, g, b))
     p = subprocess.run([exe("vvp"), os.path.abspath(vvp),
                         "+MODE=%d" % mode, "+DISP=%d" % disp, "+EPS=%d" % eps,
-                        "+EPF=%d" % epf, "+GFEPS=%d" % gf_eps, "+BRG=%d" % brg],
+                        "+EPF=%d" % epf, "+GFEPS=%d" % gf_eps, "+BRG=%d" % brg,
+                        "+INMS=%d" % inms],
                        cwd=rd, capture_output=True, text=True,
                        encoding="utf-8", errors="replace", env=oss_env())
     if p.returncode != 0 or "DONE" not in p.stdout:
@@ -206,7 +213,7 @@ def main():
     return 0 if allok else 1
 
 
-def chain_expected(luma, mode, eps=None, epf=None, gf_eps=None, brg=None):
+def chain_expected(luma, mode, eps=None, epf=None, gf_eps=None, brg=None, inms=None):
     """返回逐级期望值(真实图像区域)"""
     if eps is None:
         eps = EPS
@@ -216,6 +223,8 @@ def chain_expected(luma, mode, eps=None, epf=None, gf_eps=None, brg=None):
         gf_eps = GFEPS
     if brg is None:
         brg = BRG
+    if inms is None:
+        inms = INMS
     med = M.median_3x3_network(luma)
     # 4a) 前置滤波: 0=直通 1=3x3高斯 2=导向滤波(参考默认)
     if epf == 2:
@@ -228,7 +237,7 @@ def chain_expected(luma, mode, eps=None, epf=None, gf_eps=None, brg=None):
     gau = M.gauss5x5_int(ep) if gauss_on else ep
     gx, gy, mag = M.sobel_full(gau)
     dirc = M.dir_class(gx, gy)
-    nms = M.nms_rtl(mag, dirc, eps)
+    nms = M.nms_interp_rtl(mag, gx, gy, eps) if inms else M.nms_rtl(mag, dirc, eps)
     if mode == 2:
         thr = M.hysteresis_rtl(nms, 21, 58)
     elif mode == 1:

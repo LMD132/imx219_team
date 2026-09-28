@@ -51,8 +51,9 @@ module tb_alg_chain;
     reg [1:0]  cfg_brg       = 2'd2;
     reg [1:0]  cfg_disp_mode = 2'd1;
     reg        cfg_ov_color  = 1'b1;
+    reg        cfg_inms      = 1'b0;      // +INMS=<0|1>; 0 = 参考 4 方向量化(旧模型口径)
 
-    integer m_arg, d_arg, e_arg, p_arg, f_arg, b_arg;
+    integer m_arg, d_arg, e_arg, p_arg, f_arg, b_arg, i_arg;
     initial begin
         if (!$value$plusargs("MODE=%d", m_arg)) m_arg = 2;
         if (!$value$plusargs("DISP=%d", d_arg)) d_arg = 1;
@@ -60,12 +61,14 @@ module tb_alg_chain;
         if (!$value$plusargs("EPF=%d",  p_arg)) p_arg = 2;
         if (!$value$plusargs("GFEPS=%d", f_arg)) f_arg = 400;
         if (!$value$plusargs("BRG=%d",  b_arg)) b_arg = 2;
+        if (!$value$plusargs("INMS=%d", i_arg)) i_arg = 0;
         cfg_mode      = m_arg[1:0];
         cfg_disp_mode = d_arg[1:0];
         cfg_eps       = e_arg[3:0];
         cfg_epf       = p_arg[1:0];
         cfg_gf_eps    = f_arg[10:0];
         cfg_brg       = b_arg[1:0];
+        cfg_inms      = i_arg[0];
     end
 
     wire        o_vs, o_hs, o_de;
@@ -88,6 +91,7 @@ module tb_alg_chain;
         .cfg_isol_en(cfg_isol_en), .cfg_disp_mode(cfg_disp_mode),
         .cfg_ov_color(cfg_ov_color),
         .cfg_brg(cfg_brg),
+        .cfg_inms(cfg_inms),
         .out_vs(o_vs), .out_hs(o_hs), .out_de(o_de),
         .out_x(o_x), .out_y(o_y),
         .out_r(o_r), .out_g(o_g), .out_b(o_b)

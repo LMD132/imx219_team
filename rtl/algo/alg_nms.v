@@ -28,22 +28,45 @@
 //    Sobel 档不做 NMS(线宽 2~3px), 同样的抖动被线宽摊开所以看不出来 ——
 //    这正是"Canny 比 Sobel 毛躁"的算法级来源。
 //
-//  做法(与 cv2 的插值 NMS 同构, 但改成免除法形式, 零延时增加):
-//    设中心梯度 (gx,gy), 令 a = min(|gx|,|gy|), b = max(|gx|,|gy|)  (b>0)
-//    沿梯度方向的两个候选点 = "主轴邻居" 与 "对角邻居" 的线性插值:
-//        前向 n_f = ((b-a)*M_f + a*D_f) / b
-//        后向 n_b = ((b-a)*M_b + a*D_b) / b
-//    保留条件  m > n_f 且 m >= n_b, 两边同乘 b(纯正数) 得
-//        keep = (b*m > (b-a)*M_f + a*D_f) && (b*m >= (b-a)*M_b + a*D_b)
-//    -> 不需要除法器, 把"比值权重"变成 3 个乘法/侧; a=0 时逐位退化成 4 方向
-//       量化版, a=b 时退化成对角比较版, 中间连续过渡 -> 归轴跳变消失。
-//    方向选择: |gx|>=|gy| 走水平(左右 + 上/下斜); 否则走垂直(上下 + 左/右斜);
-//       斜向哪一侧由 gy(gx) 的符号决定。邻居编号见下面 m0..m8。
+//  做法(与经典 Canny/cv2 的插值 NMS 同构, 免除法 + 16 档量化权重):
+//    沿梯度方向的候选点 = "主轴邻居 M" 与 "对角邻居 D" 的线性插值:
+//        n = ((15-w)*M + w*D) / 15,   w = floor(15*a/b)
+//        a = min(|gx|,|gy|), b = max(|gx|,|gy|)   (b==0 -> w=0)
+//    keep = (15*m > 15*n_strict) && (15*m >= 15*n_loose)
+//         = 15*(m4+eps) 与 (15-w)*M + w*D 比 —— 无除法器/无 b, 只需 4 个 11x4 乘法。
+//    w 的 16 档端点精确: a=0 -> w=0(退化成 4 方向量化版), a=b -> w=15(退化成
+//    对角比较版), 中间连续过渡 -> 归轴跳变消失。
+//    邻居选择: 主轴取 |.| 大的那根轴(hor), 对角取同象限的角邻居(见下面的
+//    p_m/p_d/q_m/q_d); 严格侧口径与参考实现一致(见 code 的 strict 位)。
 //
-//  cfg_inms = 0 -> 逐位等于原参考实现(默认, 便于 A/B 对照与回退);
-//  cfg_inms = 1 -> 插值版。
+//  ★ 2026-09-28 修正(硬件对齐, 这是本模块能用的关键):
+//    alg_win 的 3x3 窗口"内容坐标"比输入流晚 1 行 + 1 列 + 2 拍(窗口中心 =
+//    输入的 (x-1,y-1)); 旧版用 alg_stream_delay(D=3) 延迟中心梯度, 实测
+//    "延迟线标签 - 窗口标签"恒为 (+1,+1) —— 也就是插值用的是"下一行右边一列"
+//    的梯度, 整条链对拍在帧顶/帧尾成片失配。
+//    行周期还有 1 拍级抖动, 固定拍数延迟不可靠; 因此改为把插值需要的全部梯度
+//    信息压成 7bit code, 跟 mag/dir 一起进窗口数据(行缓存/列移位同路) —— 对齐
+//    由结构保证, 与行周期无关。窗口数据 13bit -> 20bit, 行缓存 +1 块/银行。
+//
+//  code[6:0] = {sgx, strict, hor, w[3:0]}:
+//    sgx    = gx < 0
+//    hor    = |gx| >= |gy|
+//    strict = (gy < 0) | ((gy == 0) & (gx < 0))
+//             —— 参考实现"严格侧"口径(y 偏移 <=0 的那侧用 '>', gy==0 取 x 小侧)
+//    w      = floor(15*min/max), 由 15 个常量比较器(15a >= k*b, k=1..15)求和得到
+//    对角邻居的上下选择用 sgy_eff = strict: 二者只在 gy==0 时不同, 而那时 w=0
+//    (对角项权重为 0), 比较结果不受影响 —— check_inms.py 逐位自检覆盖。
+//
+//  自检(sim/algo/model/check_inms.py + check_inms_rtl.py 真 RTL 对拍):
+//    · 四条轴(min(|gx|,|gy|)=0 或 |gx|=|gy|)上与参考实现逐位一致
+//    · 合成斜边(阶跃 215 灰阶 + 高斯噪声)线宽变细、位置误差变小
+//
+//  cfg_inms = 1 -> 插值版(板端默认, 调参台 J 键可切, 见 alg_cfg_uart.v);
+//  cfg_inms = 0 -> 逐位等于原参考实现(便于 A/B 对照与一键回退)。
 //  延迟: 两条路径都是 4 拍(插值是纯组合, 不插流水线) -> ROWD/TDLY 不变。
-//  资源: 5 个 12x11 无符号乘法(Efinity 会用 DSP 或 LUT)+ 若干比较器。
+//  资源: 4 个 11x4 无符号乘法 + 15 个 14bit 比较器; 行缓存 13->20bit(+1 块/银行)。
+//  离线对比过 floor(15a/b) 与 round((30a+b)/(2b)) 两种量化: 合成斜边上指标差 <2%,
+//  取 floor 更省(15 个比较器, 无额外加法), 见 sim/algo/model/check_inms.py 的 [2] 表。
 //=============================================================================
 
 module alg_nms #(
@@ -73,49 +96,70 @@ module alg_nms #(
     output reg  [7:0]  out_data
 );
 
+localparam integer NW = 20;        // 窗口字宽 = {code[6:0], dir[1:0], mag[10:0]}
+
+//--------------------------------------------------------------------------
+// 输入级: 由当前像素梯度 (in_gx,in_gy) 生成 7bit 插值 code (组合)
+//   a = min(|gx|,|gy|)  b = max(|gx|,|gy|)   w = floor(15*a/b) (b==0 -> 0)
+//   w 用 15 个常量比较器求和实现(免除法): w = #{k=1..15 : 15*a >= k*b}
+//--------------------------------------------------------------------------
+wire [11:0] igx_abs = in_gx[11] ? (~in_gx + 12'd1) : in_gx;
+wire [11:0] igy_abs = in_gy[11] ? (~in_gy + 12'd1) : in_gy;
+wire        i_hor   = (igx_abs >= igy_abs);
+wire [11:0] i_a     = i_hor ? igy_abs : igx_abs;    // min
+wire [11:0] i_b     = i_hor ? igx_abs : igy_abs;    // max (<= 2040 实际 <=1020)
+wire [13:0] i_a15   = {2'b00, i_a} * 14'd15;        // 15*a  (<= 15300)
+
+// 位宽: |gx|,|gy| <= 1020 (alg_sobel3 全量程输出) -> 15*b <= 15300 < 2^14, 不溢出
+wire [13:0] i_bk [1:15];
+wire        i_ge [1:15];
+genvar gk;
+generate
+for (gk = 1; gk <= 15; gk = gk + 1) begin : g_w
+    assign i_bk[gk] = i_b * gk;                     // 常量乘法, 综合成移位加法
+    assign i_ge[gk] = (i_a15 >= i_bk[gk]);
+end
+endgenerate
+wire [3:0] i_w_raw = i_ge[1] + i_ge[2] + i_ge[3] + i_ge[4] + i_ge[5]
+                   + i_ge[6] + i_ge[7] + i_ge[8] + i_ge[9] + i_ge[10]
+                   + i_ge[11] + i_ge[12] + i_ge[13] + i_ge[14] + i_ge[15];
+wire [3:0] i_w = (i_b == 12'd0) ? 4'd0 : i_w_raw;   // 零梯度 -> 权重 0
+
+wire [6:0] i_code = {in_gx[11],
+                     (in_gy[11] | ((in_gy == 12'sd0) & in_gx[11])),
+                     i_hor, i_w};
+
 wire        w_vs, w_hs, w_de;
 wire [11:0] w_x;
 wire [12:0] w_y;
-wire [116:0] win;
+wire [179:0] win;
 
 alg_win #(
-    .DW(13), .W(W), .VEXT(VEXT), .H(H), .N(3), .PAD_EDGE(1)
+    .DW(NW), .W(W), .VEXT(VEXT), .H(H), .N(3), .PAD_EDGE(1)
 ) u_win (
     .clk(clk), .rst_n(rst_n),
     .in_vs(in_vs), .in_hs(in_hs), .in_de(in_de),
-    .in_x(in_x), .in_y(in_y), .in_data({in_dir, in_mag}),
+    .in_x(in_x), .in_y(in_y), .in_data({i_code, in_dir, in_mag}),
     .out_vs(w_vs), .out_hs(w_hs), .out_de(w_de),
     .out_x(w_x), .out_y(w_y), .win(win)
 );
 
-// win[k*13 +: 13] = {dir, mag}
-wire [10:0] m0 = win[10:0];
-wire [10:0] m1 = win[23:13];
-wire [10:0] m2 = win[36:26];
-wire [10:0] m3 = win[49:39];
-wire [10:0] m4 = win[62:52];
-wire [10:0] m5 = win[75:65];
-wire [10:0] m6 = win[88:78];
-wire [10:0] m7 = win[101:91];
-wire [10:0] m8 = win[114:104];
-wire [1:0]  dc = win[64:63];       // 中心方向
-
-//--------------------------------------------------------------------------
-// 中心梯度 (gx,gy) 延迟 3 拍 -> 与 3x3 窗口中心 m4 同拍
-//   (alg_win N=3 的窗口延迟是 3 拍; sobel 的 out_gx/out_gy 与 out_de_full 同拍)
-//   24bit 打包成 {gx, gy} 走一个移位寄存器, 不占 BRAM。
-//--------------------------------------------------------------------------
-wire signed [23:0] cgxy;
-wire               cg_de;
-alg_stream_delay #(.DW(24), .D(3)) u_gdly (
-    .clk(clk), .rst_n(rst_n),
-    .in_vs(in_vs), .in_hs(in_hs), .in_de(in_de),
-    .in_x(in_x), .in_y(in_y), .in_data({in_gx, in_gy}),
-    .out_vs(), .out_hs(), .out_de(cg_de),
-    .out_x(), .out_y(), .out_data(cgxy)
-);
-wire signed [11:0] cgx = cgxy[23:12];
-wire signed [11:0] cgy = cgxy[11:0];
+// win[k*NW +: NW] = {code[6:0], dir[1:0], mag[10:0]}
+wire [10:0] m0 = win[0*NW + 0 +: 11];
+wire [10:0] m1 = win[1*NW + 0 +: 11];
+wire [10:0] m2 = win[2*NW + 0 +: 11];
+wire [10:0] m3 = win[3*NW + 0 +: 11];
+wire [10:0] m4 = win[4*NW + 0 +: 11];
+wire [10:0] m5 = win[5*NW + 0 +: 11];
+wire [10:0] m6 = win[6*NW + 0 +: 11];
+wire [10:0] m7 = win[7*NW + 0 +: 11];
+wire [10:0] m8 = win[8*NW + 0 +: 11];
+wire [1:0]  dc = win[4*NW + 11 +: 2];          // 中心方向(参考路径用)
+// 中心像素的插值 code (与 m4 同一块行缓存 -> 天然同像素)
+wire        cc_sgx = win[4*NW + 19];
+wire        cc_str = win[4*NW + 18];
+wire        cc_hor = win[4*NW + 17];
+wire [3:0]  cc_w   = win[4*NW + 16 -: 4];
 
 // 容差 eps (运行期可调, 只 CANNY 档用):
 //   eps=0 时 me == m4, 四个 keep 与 edge_pipeline.nms() / rtl_model.nms_rtl() 逐位一致;
@@ -134,32 +178,31 @@ wire keep_ref = (dc == 2'd0) ? keep0 :
                 (dc == 2'd2) ? keep2 : keep3;
 
 //--------------------------------------------------------------------------
-// 亚像素方向插值 NMS (cfg_inms=1): 免除法形式, 见文件头注释
-//   a = min(|gx|,|gy|)   b = max(|gx|,|gy|)   (b-a) 与 a 就是两个插值权重分子
-//   hor = 1: |gx|>=|gy| -> 主轴是左右(m3/m5), 斜轴是上/下对角
-//   hor = 0: 主轴是上下(m1/m7), 斜轴是左/右对角
-//   斜轴取哪一边由另一轴的符号决定(gy 定水平档的上下, gx 定垂直档的左右)
+// 亚像素方向插值 NMS (cfg_inms=1): 免除法 + 16 档权重, 见文件头注释
+//   中心像素的 code 由窗口中心词给出(cc_*), 邻居取窗口里的 m0..m8
+//   P 侧 = 梯度正方向那一对邻居, Q 侧 = 反方向那一对
+//   (hor=1 主轴是左右, hor=0 主轴是上下; 对角取同象限的角邻居)
 //--------------------------------------------------------------------------
-wire [11:0] egx = cgx[11] ? (~cgx + 12'd1) : cgx;   // |gx|  (cgx 范围 ±1020)
-wire [11:0] egy = cgy[11] ? (~cgy + 12'd1) : cgy;   // |gy|
-wire        hor = (egx >= egy);
-wire [11:0] ub  = hor ? egx : egy;                  // b
-wire [11:0] ua  = hor ? egy : egx;                  // a
-wire [11:0] uba = ub - ua;                          // b - a  (>=0)
-wire        sgy = cgy[11];                          // gy < 0
-wire        sgx = cgx[11];                          // gx < 0
+wire        sgy_eff = cc_str;   // = (gy<0) | (gy==0 & gx<0); 差异仅在 w==0 时出现
+wire [10:0] p_m = cc_hor ? (cc_sgx ? m3 : m5) : (sgy_eff ? m1 : m7);
+wire [10:0] p_d = cc_sgx ? (sgy_eff ? m0 : m6) : (sgy_eff ? m2 : m8);
+wire [10:0] q_m = cc_hor ? (cc_sgx ? m5 : m3) : (sgy_eff ? m7 : m1);
+wire [10:0] q_d = cc_sgx ? (sgy_eff ? m8 : m2) : (sgy_eff ? m6 : m0);
 
-// 前向(右/下)与后向(左/上)的 主轴邻居 M / 对角邻居 D
-wire [10:0] nfm = hor ? m5 : m7;
-wire [10:0] nfd = hor ? (sgy ? m2 : m8) : (sgx ? m6 : m8);
-wire [10:0] nbm = hor ? m3 : m1;
-wire [10:0] nbd = hor ? (sgy ? m6 : m0) : (sgx ? m2 : m0);
+wire [3:0]  wgt_d = cc_w;
+wire [3:0]  wgt_m = 4'd15 - cc_w;
+// 权重和恒为 15 -> 和 <= 15*2047, 15bit 不溢出
+wire [14:0] lp = wgt_m * p_m + wgt_d * p_d;
+wire [14:0] lq = wgt_m * q_m + wgt_d * q_d;
+// ★ cent = 15*(m4+eps) 必须先把 me 扩到 15bit 再移位: Verilog 移位结果宽度 = 左操作数
+//   宽度, 12bit 的 (me<<4) 会把高位丢掉(me>255 后 cent 完全错), 仿真/综合一致地错。
+wire [14:0] me15 = {3'b0, me};
+wire [14:0] cent = (me15 << 4) - me15;           // 15*me (<= 15*2055 = 30825 < 2^15)
 
-wire [25:0] lhs_f = {3'b000, (uba * nfm)} + {3'b000, (ua * nfd)};
-wire [25:0] lhs_b = {3'b000, (uba * nbm)} + {3'b000, (ua * nbd)};
-wire [25:0] cent  = {2'b00, (ub * me)};
+wire [14:0] l_strict = cc_str ? lp : lq;
+wire [14:0] l_loose  = cc_str ? lq : lp;
 
-wire keep_ip = (cent > lhs_f) && (cent >= lhs_b);
+wire keep_ip = (cent > l_strict) && (cent >= l_loose);
 
 wire keep = cfg_inms ? keep_ip : keep_ref;
 

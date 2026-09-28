@@ -36,6 +36,7 @@ __pycache__/
 /sim/algo/run/
 /sim/algo/run_gf/
 /sim/algo/run_brg/
+/sim/algo/nms_sim/
 /sim/algo/dbg_gauss.txt
 /sim/algo/in_rgb.hex
 
