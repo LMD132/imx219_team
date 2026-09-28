@@ -15,6 +15,22 @@ tools\flash_candidate.bat candidate_bitstreams\<位流文件>
 
 ---
 
+## 0. `rollback_epf_guided_99540aa_20260928.bit` —— 回退版（2026-09-28 晚起为板上运行版本）
+
+> 取代下面第 1 节：TEMP 时域降噪版上板实测不合格后，按板主指示回退到加 TEMP 之前的版本。
+
+| 项 | 值 |
+| --- | --- |
+| 来源提交 | `99540aa1413c9eadb28f3b74e2f6e1f9fb78cd61`（分支 `epf-guided`，即 `temp-blend` 的父提交） |
+| 编译时间 | 2026-09-28 02:15:29（在 `imx219_gf` 内编译，`outflow/compile_gf.log`：map/interface/pnr/pgm 全 PASS） |
+| 字节数 | 2540034 |
+| SHA-256 | `DB3DD3727AC6BDCEED2E4B12461AC84EF4357502D0A9189B939A7ADD63502BCD` |
+| 显示模式 | 固定 mode 0 = 同视野左右分屏（运行期 `D0..D3` 可切换） |
+| **上板状态** | ✅ 2026-09-28 晚 JTAG 重新烧录成功（回退 TEMP 后），JTAG ID `0x10660A79` |
+| 内容 | 灰度 → 3×3 中值 → 5×5 高斯 → Sobel → NMS → 双阈值 → 去孤点 → 显示；含导向滤波(EPF)参数 P，**不含 TEMP 时域降噪** |
+| 背景 | TEMP 版（`temp-blend`，`405701f`/`b4e4dcf`）被判不合格：无效果且更差（拖影）。原因见 imx219_temp 根目录 不合格_已废弃_TEMP时域降噪_20260928.md |
+
+
 ## 1. `algo_uart_tuner_splitonly_20260926_2037.bit` —— **当前版**（算法全链 + 固定左右分屏 + 运行期串口调参）
 
 | 项 | 值 |
@@ -118,6 +134,7 @@ Get-ChildItem candidate_bitstreams,known_good -Filter *.bit -Recurse |
 | `candidate_bitstreams/algo_canny_full_20260926_1954.bit` | `0B1354A8C08C544B40801815378BCD93DB604210A1BC1CC805BE2592CC0AED89` |
 | `candidate_bitstreams/pre_algo_edge_display_720p_20260926_1728.bit` | `140E575936B2222E8AAC808A7E7827CED124638A19106A38B3E0260C1A1B2F6A` |
 | `known_good/edge_detect_720p_verified.bit` | `146D627FF082B7DF383068A9511EAE1B5758CDEABE6B7562E0DA2A6755D0A355` |
+| `candidate_bitstreams/rollback_epf_guided_99540aa_20260928.bit` | `DB3DD3727AC6BDCEED2E4B12461AC84EF4357502D0A9189B939A7ADD63502BCD` |
 
 ## 归档说明
 

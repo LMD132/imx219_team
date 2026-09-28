@@ -66,3 +66,19 @@ SHA-256、最后给出两行结论（提交时间最新的代码、赛题4 交�
 - 板上正在跑的位流来自 `py-algo-rtl`，该文件只存在于 `imx219_pyrtl\candidate_bitstreams\`。
 - "在不在 GitHub"要用 `git branch -r --contains <sha>` 判断，**不能**看
   `%(upstream:short)` 是否为空：本地分支没配跟踪关系并不代表没推送过。
+
+## 2026-09-28 晚：TEMP 版不合格，已回退
+
+- 分支 `temp-blend`（提交 `405701f`、`b4e4dcf`）的 **TEMP 时域降噪**经上板实测
+  **不合格**：边缘闪烁没有改善，反而出现拖影/重影，比加 TEMP 之前更差。
+  根因：参考实现 `temporal_blend` 是递归(IIR)（融合结果写回 prev），本版 RTL 是
+  FIR（只和"上一帧原始画面"混合）；TEMP 越大差别越大，TEMP=90 时 FIR 噪声比 0.906
+  （几乎不降噪）而 IIR 为 0.229。详见 `docs/时序降噪_移植说明.md` §3.2。
+- 失败版本整目录保留在 `D:\FPGA_Project\imx219_temp`：根目录已加
+  `不合格_已废弃_TEMP时域降噪_20260928.md`，并打标签 `rejected-temp-20260928`；
+  该目录不再修改。
+- **当前最新工作副本 = `D:\FPGA_Project\imx219_notemp`（分支 `no-temp`，基线
+  `99540aa`，即加 TEMP 之前的 epf-guided 版本）。** 回退位流已归档到
+  `candidate_bitstreams/rollback_epf_guided_99540aa_20260928.bit`
+  （SHA-256 `DB3DD3727AC6…502BCD`），并于 2026-09-28 晚重新烧到板上。
+- 后续改动仍按"先备份、再复制新目录"执行。
