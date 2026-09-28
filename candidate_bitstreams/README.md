@@ -116,6 +116,18 @@ tools\flash_candidate.bat candidate_bitstreams\<位流文件>
 
 ---
 
+## 6. `known_good/best_epf_guided_99540aa_20260928.bit` —— 当前最佳版（回退基线）
+
+| 项 | 值 |
+| --- | --- |
+| 位流 | 与第 0 节 `rollback_epf_guided_99540aa_20260928.bit` 同一份文件（SHA-256 相同），复制进 `known_good/` 便于需要回退时直接取用 |
+| 来源提交 | `99540aa`（分支 `epf-guided`，即 `no-temp` 的基线提交） |
+| 字节数 | 2540034 |
+| SHA-256 | `DB3DD3727AC6BDCEED2E4B12461AC84EF4357502D0A9189B939A7ADD63502BCD` |
+| **状态** | ✅ 板主 2026-09-28 认定：**当前最佳版本**，作为后续改动的回退基线；板上正在运行的就是这一份 |
+| 回退用法 | `tools\flash_best.bat`（等价于 `tools\flash_candidate.bat known_good\best_epf_guided_99540aa_20260928.bit`），烧录前先关掉调参界面 |
+
+
 ## 哈希校验
 
 在仓库根目录执行：
@@ -135,6 +147,7 @@ Get-ChildItem candidate_bitstreams,known_good -Filter *.bit -Recurse |
 | `candidate_bitstreams/pre_algo_edge_display_720p_20260926_1728.bit` | `140E575936B2222E8AAC808A7E7827CED124638A19106A38B3E0260C1A1B2F6A` |
 | `known_good/edge_detect_720p_verified.bit` | `146D627FF082B7DF383068A9511EAE1B5758CDEABE6B7562E0DA2A6755D0A355` |
 | `candidate_bitstreams/rollback_epf_guided_99540aa_20260928.bit` | `DB3DD3727AC6BDCEED2E4B12461AC84EF4357502D0A9189B939A7ADD63502BCD` |
+| `known_good/best_epf_guided_99540aa_20260928.bit` | `DB3DD3727AC6BDCEED2E4B12461AC84EF4357502D0A9189B939A7ADD63502BCD` |
 
 ## 归档说明
 

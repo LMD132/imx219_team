@@ -82,3 +82,15 @@ SHA-256、最后给出两行结论（提交时间最新的代码、赛题4 交�
   `candidate_bitstreams/rollback_epf_guided_99540aa_20260928.bit`
   （SHA-256 `DB3DD3727AC6…502BCD`），并于 2026-09-28 晚重新烧到板上。
 - 后续改动仍按"先备份、再复制新目录"执行。
+
+## 2026-09-28 晚（二）：本版定为"最佳版"（回退基线）
+
+- 板主 2026-09-28 确认：**`D:\FPGA_Project\imx219_notemp`（分支 `no-temp`，提交 `f253127`）
+  = 当前最佳版本**；后续所有修改都从它复制新目录/新分支进行，本目录保持不动。
+- 对应位流已复制进 `known_good/best_epf_guided_99540aa_20260928.bit`
+  （与 `candidate_bitstreams/rollback_epf_guided_99540aa_20260928.bit` 同一份，
+  SHA-256 `DB3DD3727AC6…502BCD`）。回退烧录用 `tools\flash_best.bat`，
+  或双击 `D:\FPGA_Project\烧录最佳版.bat`。
+- 回退四件套（内容同一份）：本目录源码、`_backups\20260928_174632_post-rollback-notemp`
+  快照、`_archives\` 归档 zip、GitHub `no-temp` 分支。
+- 提醒：JTAG 烧录是易失的，板子断电后需要重新烧录，用上面的位流/脚本即可。
