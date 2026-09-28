@@ -2,9 +2,16 @@
 # -*- coding: utf-8 -*-
 """赛题4 边缘检测流水线 - 运行期调参台 (PC 端).
 
-每一行参数配一个滑块, 拖动即通过 USB 串口把命令下发给 FPGA; FPGA 里这些参数
-本来就是寄存器端口(rtl/algo/alg_top.v 的 cfg_*), 所以改完立刻生效, 不需要
-重新编译、也不需要重新烧录位流。
+每一行参数都同时给两种调法(两个控件都在界面上, 随你挑):
+  * 拖滑块     -- 粗调、快, 适合先找一个大概合适的区间;
+  * 手动输入框 -- 直接键入数字后回车生效, 或按 ▲/▼ 或「-1」「+1」按钮每次精确
+                  改变 1 (参数量程多大都只动 1); 改完滑块也跟着跳到同一个值。
+两者双向同步, 每行两个控件都在。大范围参数(比如 T 0..2047、F 0..2047)用滑块
+很难停在一个确切的数值上, 手动输入框可以一步到位。
+
+不管用哪种方式, 改动都通过 USB 串口立刻下发给 FPGA; FPGA 里这些参数本来就是
+寄存器端口(rtl/algo/alg_top.v 的 cfg_*), 所以改完立刻生效, 不需要重新编译、
+也不需要重新烧录位流。
 
 板子每 500ms 回一行状态, 收到命令后还会立刻回一行:
 
@@ -118,11 +125,71 @@ TELEM_RE = re.compile(
 CAM_HINT = "77=AGAIN 0x0157   75/76=曝光 0x015A/B   71=帧长 0x0160"
 
 
+class NumEntry:
+    """一行参数的「手动输入框」: [-1] 输入框 [+1]。
+
+    和拖动滑块并存, 两者双向同步:
+      * 直接键入数字 + 回车   -> 采用键入的值(超量程自动夹回范围里);
+      * ▲ / ▼ 或 -1 / +1 按钮 -> 每次只改变 1 (与参数量程多大无关);
+      * 鼠标滚轮停在输入框上   -> 每次 ±1。
+    对外提供 set()/get()/configure(text=...), 和原来的数值标签接口一致。
+    """
+
+    def __init__(self, parent, p, on_edit, on_step):
+        self.var = tk.StringVar(value=str(p["init"]))
+        self.frame = ttk.Frame(parent)
+
+        ttk.Button(self.frame, text="-1", width=3,
+                   command=lambda: on_step(-1)).pack(side="left")
+
+        self.box = ttk.Spinbox(self.frame, from_=p["lo"], to=p["hi"],
+                               increment=1, textvariable=self.var,
+                               width=7, justify="right")
+        self.box.pack(side="left", padx=2)
+
+        def _step_handler(delta):
+            def _handler(_ev):
+                on_step(delta)
+                return "break"
+            return _handler
+
+        def _wheel(ev):
+            on_step(1 if ev.delta > 0 else -1)
+            return "break"
+
+        self.box.bind("<Return>", lambda _e: on_edit())
+        self.box.bind("<KP_Enter>", lambda _e: on_edit())
+        self.box.bind("<FocusOut>", lambda _e: on_edit())
+        self.box.bind("<Up>", _step_handler(+1))
+        self.box.bind("<Down>", _step_handler(-1))
+        self.box.bind("<MouseWheel>", _wheel)
+
+        ttk.Button(self.frame, text="+1", width=3,
+                   command=lambda: on_step(+1)).pack(side="left")
+
+    def grid(self, **kw):
+        self.frame.grid(**kw)
+
+    # ---- 兼容原来 tk.Label 的用法(configure/set/get) ----
+    def configure(self, text=None, **_kw):
+        if text is not None:
+            self.var.set(str(text))
+
+    def set(self, value):
+        self.var.set(str(value))
+
+    def get(self):
+        try:
+            return int(float(self.var.get()))
+        except Exception:
+            return None
+
+
 class Tuner:
     def __init__(self, root):
         self.root = root
         root.title("赛题4 边缘检测 - 运行期调参台")
-        root.minsize(880, 620)
+        root.minsize(1080, 640)
 
         self.ser = None
         self.reader = None
@@ -132,12 +199,14 @@ class Tuner:
         self.last_line = ""
         self.port_map = {}
 
-        self.vars = {}
-        self.value_labels = {}
+        self.vars = {}            # key -> IntVar: 本机当前值(唯一权威副本)
+        self.scales = {}          # key -> tk.Scale: 拖动滑块
+        self.value_labels = {}    # key -> NumEntry: 手动输入框(兼数值显示)
         self.board_labels = {}
         self.dirty = {}
         self.send_job = None
         self.last_send = 0.0
+        self._syncing = False     # 防止 滑块<->输入框 互相回写时递归
 
         self._build_top()
         self._build_rows()
@@ -166,8 +235,9 @@ class Tuner:
         self.status_lbl = ttk.Label(bar, textvariable=self.status)
         self.status_lbl.pack(side="right")
 
-        tip = ("拖动滑块立即生效: 参数在 FPGA 内部是寄存器, 不需要重新编译/烧录。"
-               "右边「板端」= 板子回读的真实值。")
+        tip = ("两种调法都保留: 拖滑块做粗调; 右边输入框可直接键入数字(回车生效), "
+               "或按 ▲/▼ /「-1」「+1」每次精确改 1。改动立即生效(参数在 FPGA 内部是"
+               "寄存器, 不需要重新编译/烧录)。「板端」列 = 板子回读的真实值。")
         ttk.Label(self.root, text=tip, foreground="#0a5", padding=(12, 0, 12, 6),
                   wraplength=860, justify="left").pack(fill="x")
 
@@ -175,39 +245,54 @@ class Tuner:
         frame = ttk.Frame(self.root, padding=(10, 0, 10, 0))
         frame.pack(fill="both", expand=True)
         for col, (text, width) in enumerate(
-                (("参数", 20), ("滑块", 46), ("本机", 8), ("板端", 8), ("说明", 30))):
+                (("参数", 18), ("拖动滑块", 40), ("手动输入(每次±1)", 16),
+                 ("板端", 8), ("说明", 30))):
             ttk.Label(frame, text=text, width=width,
                       font=("", 9, "bold")).grid(row=0, column=col,
                                                  sticky="w", padx=2, pady=(0, 4))
 
-        for i, p in enumerate(PARAMS, start=1):
-            ttk.Label(frame, text="%s  (%s)" % (p["name"], p["cmd"])).grid(
-                row=i, column=0, sticky="w", padx=2, pady=3)
+        # 建界面时控件之间会互相 set(), 先挡住回调, 免得半成品状态被当成用户操作
+        self._syncing = True
+        try:
+            for i, p in enumerate(PARAMS, start=1):
+                key = p["key"]
+                ttk.Label(frame, text="%s  (%s)" % (p["name"], p["cmd"])).grid(
+                    row=i, column=0, sticky="w", padx=2, pady=3)
 
-            var = tk.IntVar(value=p["init"])
-            self.vars[p["key"]] = var
-            scale = tk.Scale(frame, from_=p["lo"], to=p["hi"], orient="horizontal",
-                             resolution=1, showvalue=0, length=330,
-                             command=lambda v, k=p["key"]: self._on_drag(k, v))
-            scale.set(p["init"])
-            scale.grid(row=i, column=1, sticky="we", padx=4)
+                var = tk.IntVar(value=p["init"])
+                self.vars[key] = var
 
-            vlab = ttk.Label(frame, text=str(p["init"]), width=6, anchor="e")
-            vlab.grid(row=i, column=2, sticky="w", padx=2)
-            self.value_labels[p["key"]] = vlab
+                # ---- 控件 1: 拖动滑块(粗调) ----
+                scale = tk.Scale(frame, from_=p["lo"], to=p["hi"],
+                                 orient="horizontal", resolution=1, showvalue=0,
+                                 length=300,
+                                 command=lambda v, k=key: self._on_drag(k, v))
+                scale.set(p["init"])
+                scale.grid(row=i, column=1, sticky="we", padx=4)
+                scale.bind("<MouseWheel>", lambda ev, k=key: self._on_wheel(ev, k))
+                self.scales[key] = scale
 
-            blab = ttk.Label(frame, text="--", width=6, anchor="e")
-            blab.grid(row=i, column=3, sticky="w", padx=2)
-            self.board_labels[p["key"]] = blab
+                # ---- 控件 2: 手动输入框(可键入, 每次 ±1) ----
+                entry = NumEntry(frame, p,
+                                 on_edit=lambda k=key: self._on_entry(k),
+                                 on_step=lambda d, k=key: self._step(k, d))
+                entry.grid(row=i, column=2, sticky="w", padx=3)
+                self.value_labels[key] = entry
 
-            if "names" in p:
-                desc = "  ".join(p["names"][v] for v in sorted(p["names"]))
-            else:
-                desc = p.get("note", "")
-            if p["key"] in ("mode", "disp_mode"):
-                var.trace_add("write", lambda *a, k=p["key"]: self._desc(k))
-            ttk.Label(frame, text=desc, foreground="#555").grid(
-                row=i, column=4, sticky="w", padx=2)
+                blab = ttk.Label(frame, text="--", width=6, anchor="e")
+                blab.grid(row=i, column=3, sticky="w", padx=2)
+                self.board_labels[key] = blab
+
+                if "names" in p:
+                    desc = "  ".join(p["names"][v] for v in sorted(p["names"]))
+                else:
+                    desc = p.get("note", "")
+                if key in ("mode", "disp_mode"):
+                    var.trace_add("write", lambda *a, k=key: self._desc(k))
+                ttk.Label(frame, text=desc, foreground="#555").grid(
+                    row=i, column=4, sticky="w", padx=2)
+        finally:
+            self._syncing = False
 
         frame.columnconfigure(1, weight=1)
 
@@ -414,13 +499,72 @@ class Tuner:
             "%s%s" % (p["cmd"], vals.get(p["key"], "-")) for p in PARAMS))
 
     # -------------------------------------------------------------- 下发命令
-    def _on_drag(self, key, value):
-        value = int(float(value))
-        self.value_labels[key].configure(text=str(value))
+    @staticmethod
+    def _param(key):
+        for p in PARAMS:
+            if p["key"] == key:
+                return p
+        raise KeyError(key)
+
+    def _apply_value(self, key, value, src=None, push=True):
+        """滑块 / 输入框 的唯一入口: 夹量程 -> 同步另一个控件 -> 排程下发。
+
+        src 是改动来源("scale"/"num"/"step"), 用来避免把值写回源控件造成抖动;
+        push=False 只更新界面、不发命令(给 R 复位用)。
+        """
+        p = self._param(key)
+        try:
+            value = int(float(value))
+        except (TypeError, ValueError):
+            return
+        value = max(p["lo"], min(p["hi"], value))
+
+        self._syncing = True
+        try:
+            if src != "scale" and key in self.scales:
+                self.scales[key].set(value)
+            if src != "num" and key in self.value_labels:
+                self.value_labels[key].set(value)
+        finally:
+            self._syncing = False
+
+        self.vars[key].set(value)
+        if not push:
+            self.dirty.pop(key, None)
+            return
         self.dirty[key] = value
         if self.send_job is None:
             wait = max(0, SEND_INTERVAL_MS - int((time.time() - self.last_send) * 1000))
             self.send_job = self.root.after(wait, self._flush)
+
+    def _on_drag(self, key, value):
+        """滑块回调(名字保留, 兼容 gui_hw_test.py 等旧脚本)。"""
+        if self._syncing:
+            return
+        self._apply_value(key, value, src="scale")
+
+    def _on_wheel(self, ev, key):
+        """鼠标滚轮停在滑块上 = 每次 ±1 (量程多大都只动 1)。"""
+        self._step(key, 1 if ev.delta > 0 else -1)
+        return "break"
+
+    def _step(self, key, delta):
+        """输入框的 ▲/▼/「-1」「+1」: 在当前值上精确 ±delta。"""
+        if self._syncing:
+            return
+        self._apply_value(key, self.vars[key].get() + delta, src="step")
+
+    def _on_entry(self, key):
+        """回车/失焦: 采用输入框里键入的数字(非法输入则还原)。"""
+        if self._syncing:
+            return
+        v = self.value_labels[key].get()
+        if v is None:
+            cur = self.vars[key].get()
+            self.value_labels[key].set(cur)
+            self._log("输入的不是数字, 已还原为 %d" % cur)
+            return
+        self._apply_value(key, v, src="num")
 
     def _flush(self):
         self.send_job = None
@@ -458,8 +602,8 @@ class Tuner:
             return
         self._send("R")
         for p in PARAMS:
-            self.vars[p["key"]].set(p["init"])
-            self.value_labels[p["key"]].configure(text=str(p["init"]))
+            # 板子已经复位了, 界面跟着回到默认值就行(不再重复下发命令)
+            self._apply_value(p["key"], p["init"], src="reset", push=False)
 
     def send_cam_read(self):
         """X<组号>: 让板子重发那组寄存器的两个地址字节, 再读回一个数据字节。"""

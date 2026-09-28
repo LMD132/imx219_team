@@ -99,5 +99,70 @@ t._flush()
 print("cmds          ->", t.ser.written)
 assert "P1" in t.ser.written and "F650" in t.ser.written, t.ser.written
 t.ser = None
+
+# --- 手动输入框: 键入数字 / 每次 ±1 / 与滑块双向同步 / 超量程夹取 / 非法输入还原 ---
+from tkinter import ttk as _ttk
+assert isinstance(t.value_labels["lo"], m.NumEntry), "value_labels 应为 NumEntry"
+assert isinstance(t.value_labels["lo"].box, _ttk.Spinbox), "输入框应是 Spinbox"
+assert isinstance(t.scales["lo"], tk.Scale), "拖动滑块必须保留"
+assert t.dirty == {}, "构建完成后不应残留待下发命令: %r" % (t.dirty,)
+
+t.ser = _FakeSer()
+
+# 1) 键入数字 -> 回车生效, 滑块跟着跳到同一个值
+t.value_labels["hi"].set("230")
+t._on_entry("hi")
+assert t.vars["hi"].get() == 230, t.vars["hi"].get()
+assert t.scales["hi"].get() == 230, t.scales["hi"].get()
+print("typed 230     -> var/scale/box =", t.vars["hi"].get(),
+      t.scales["hi"].get(), t.value_labels["hi"].get())
+
+# 2) 每次 ±1: 大范围参数(T 0..2047)也只动 1
+t.value_labels["t"].set("1000")
+t._on_entry("t")
+t._step("t", +1)
+t._step("t", +1)
+t._step("t", -1)
+assert t.vars["t"].get() == 1001, t.vars["t"].get()
+assert t.scales["t"].get() == 1001
+assert t.value_labels["t"].get() == 1001
+print("1000 +1+1-1   -> T =", t.vars["t"].get(), "(滑块量程 0..2047 也只动 1)")
+
+# 3) 超量程 -> 夹到上限; 非法输入 -> 还原
+t.value_labels["lo"].set("9999")
+t._on_entry("lo")
+assert t.vars["lo"].get() == 255, t.vars["lo"].get()
+t.value_labels["lo"].set("abc")
+t._on_entry("lo")
+assert t.vars["lo"].get() == 255 and t.value_labels["lo"].get() == 255
+print("clamp/invalid -> LO =", t.vars["lo"].get(), "(非法输入已还原)")
+
+# 4) 拖滑块 -> 输入框跟着变
+t._on_drag("mode", 1)
+assert t.value_labels["mode"].get() == 1, t.value_labels["mode"].get()
+print("slider->box   -> M box =", t.value_labels["mode"].get())
+
+# 4b) 「-1」「+1」按钮 = 每次恰好 1
+_btns = {w.cget("text"): w for w in t.value_labels["hi"].frame.winfo_children()
+         if isinstance(w, _ttk.Button)}
+assert set(_btns) == {"-1", "+1"}, sorted(_btns)
+t.value_labels["hi"].set("100")
+t._on_entry("hi")
+_btns["+1"].invoke()
+_after_plus = t.vars["hi"].get()
+_btns["-1"].invoke()
+_btns["-1"].invoke()
+_after_minus = t.vars["hi"].get()
+assert (_after_plus, _after_minus) == (101, 99), (_after_plus, _after_minus)
+print("buttons ±1    -> 100 ->", _after_plus, "->", _after_minus)
+t.value_labels["hi"].set("230")          # 复原, 免得影响下面第 5 步
+t._on_entry("hi")
+
+# 5) 下发内容: 键入的值原样发出去
+t._flush()
+print("cmds after edit ->", t.ser.written)
+assert "T1001" in t.ser.written and "H230" in t.ser.written, t.ser.written
+assert "L255" in t.ser.written and "M1" in t.ser.written, t.ser.written
+t.ser = None
 root.destroy()
 print("SMOKE OK")
