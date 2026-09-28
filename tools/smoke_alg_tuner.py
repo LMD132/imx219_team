@@ -91,13 +91,23 @@ class _FakeSer(object):
     def write(self, b):
         self.written.append(b.decode("ascii").strip())
 
+# --- TEMP 字段: 83 字节行; 缺字段的旧行显示 "--" (兼容旧位流) ---
+t._on_line("M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 TMP35 CAM0077=C0")
+assert t.board_labels["temp"].cget("text") == "35", t.board_labels["temp"].cget("text")
+print("tmp field     ->", t.board_labels["temp"].cget("text"))
+print("old 77B line  -> tmp shows", end=" ")
+t._on_line("M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 CAM0077=C0")
+assert t.board_labels["temp"].cget("text") == "--", t.board_labels["temp"].cget("text")
+print(t.board_labels["temp"].cget("text"), "(旧位流没有该字段, 只提示不报错)")
+
 t.ser = _FakeSer()
 t.vars["epf"].set(1)
 t.vars["gf_eps"].set(650)
-t.dirty = {"epf": 1, "gf_eps": 650}
+t.vars["temp"].set(45)
+t.dirty = {"epf": 1, "gf_eps": 650, "temp": 45}
 t._flush()
 print("cmds          ->", t.ser.written)
-assert "P1" in t.ser.written and "F650" in t.ser.written, t.ser.written
+assert "P1" in t.ser.written and "F650" in t.ser.written and "A45" in t.ser.written, t.ser.written
 t.ser = None
 root.destroy()
 print("SMOKE OK")

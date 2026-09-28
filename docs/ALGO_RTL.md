@@ -15,7 +15,7 @@
 | 等级 | 本项目状态 |
 | --- | --- |
 | A. RTL 实现 | ✅ 全部算法级 + 显示级模块已实现并入库（`rtl/algo/`） |
-| B. 仿真逐位对拍 | ✅ 7 级 × 3 种模式全 0 mismatch；显示对齐 306 像素 0 mismatch |
+| B. 仿真逐位对拍 | ✅ 7 级 × 3 种模式全 0 mismatch；显示对齐 306 像素 0 mismatch；TEMP 融合单独对拍 `check_blend_bytes.py` PASS（≤1 LSB，TEMP 0/25/50/75 逐位一致）；UART/状态行 `tb_alg_cfg_uart` ALL PASS（87 checks，83 字节行） |
 | C. Python 溯源对拍 | ✅ 仓库原始 `edge_pipeline.py` ≡ RTL 金标准模型（2 图 × 8 级 0 mismatch） |
 | D. 编译 / 时序 / 资源 | ✅ Efinity 2026.1 map/interface/pnr/pgm 全 PASS，全设计无负 slack |
 | E. JTAG 下载 | ✅ 2026-09-26 完成（JTAG ID `0x10660A79`，日志见 `docs/上板记录_2026-09-26.md`） |
@@ -49,7 +49,7 @@
 | `median` | 1 | `cfg_median_en(1'b1)` | ✅ |
 | `gauss` | 0 | `cfg_gauss_en(1'b0)`（CANNY 档由 `alg_top` 自动置 1） | ✅ 语义一致 |
 | `isol` | 1 | `cfg_isol_en(1'b1)` | ✅ |
-| `temp` | 50 | — | ⚠️ **未 RTL 化**，见 §11 |
+| `temp` | 50 | `cfg_temp` → 运行期滑条 `TEMP` | ✅ 已 RTL 化（`alg_blend_bytes.v`，Bayer 域，见 §11 与 `docs/时序降噪_移植说明.md`）；⚠️ 上电默认 0=直通（保上板首屏与旧版一致），拉到 50 才等于 `config.json` 定稿值 |
 | `color` | 0 | `cfg_ov_color(1'b1)` | ⚠️ 演示取舍：RGB 为 12bit 通道拼接，红边叠彩更直观；置 0 即是同语义的灰度底 |
 | `shape` | 0 | — | ❌ 未 RTL 化 |
 
@@ -338,16 +338,30 @@ SOBEL 档（mode 0/1）走 NMS 旁路，但 `alg_stream_delay` 依然补足 4 �
 2026-09-27 加了 NMS 容差 `cfg_eps`（§5 第 6 条）后重新全新编译，四阶段仍全 `PASS`，
 `No Synchronizer warnings`，全设计 0 条负 slack：
 
-| 指标 | 2026-09-26（无 eps） | 2026-09-27（加 cfg_eps） | 2026-09-27（§8.6 显示两列取或） |
-| --- | --- | --- | --- |
-| XLRs | 21593 / 60800 | 22708 / 60800（37.35 %） | **22751 / 60800（37.42 %）** |
-| Memory Blocks | 208 / 256 | 208 / 256（81.25 %，未变） | **208 / 256（81.25 %，未变）** |
-| DSP Blocks | 4 / 160 | 4 / 160 | 4 / 160 |
-| LUT4 / FF | — | 13164 / 9803 | **13199 / 9802** |
-| `hdmi_tx_slow_clk` setup slack | +5.316 ns | +5.155 ns | **+4.524 ns** |
-| `hdmi_tx_slow_clk` hold slack | +0.031 ns | +0.043 ns | **+0.031 ns** |
-| 全设计最小 setup slack | — | +0.493 ns | **+0.454 ns（`sdram_clk`，DDR 既有路径，与显示改动无关）** |
-| `hdmi_tx_slow_clk` 最大可分析频率 | 122.669 MHz | 120.294 MHz | **111.807 MHz**（约束 74.25 MHz） |
+| 指标 | 2026-09-26（无 eps） | 2026-09-27（加 cfg_eps） | 2026-09-27（§8.6 显示两列取或） | 2026-09-28（EPF/GF 那一版，冻结基线 `imx219_gf`） | 2026-09-28（TEMP 时域降噪，本版） |
+| --- | --- | --- | --- | --- | --- |
+| XLRs | 21593 / 60800 | 22708 / 60800（37.35 %） | 22751 / 60800（37.42 %） | 28436 / 60800（46.77 %） | **29425 / 60800（48.40 %）** |
+| Memory Blocks | 208 / 256 | 208 / 256（81.25 %，未变） | 208 / 256（81.25 %，未变） | 224 / 256（87.50 %） | **231 / 256（90.23 %）** |
+| DSP Blocks | 4 / 160 | 4 / 160 | 4 / 160 | 45 / 160 | **71 / 160（44.38 %）** |
+| LUT4 / FF | — | 13164 / 9803 | 13199 / 9802 | 15922 / 11969 | **16537 / 12234** |
+| `hdmi_tx_slow_clk` setup slack | +5.316 ns | +5.155 ns | +4.524 ns | +4.996 ns | **+4.853 ns** |
+| `hdmi_tx_slow_clk` hold slack | +0.031 ns | +0.043 ns | +0.031 ns | +0.027 ns | **+0.033 ns** |
+| 全设计最小 setup slack | — | +0.493 ns | +0.454 ns | +0.381 ns（`tx_cal_clk`） | **+0.304 ns（`tx_cal_clk`，DDR PHY 既有路径）** |
+| 全设计负 slack 条数 | — | 0 | 0 | 0 | **0** |
+| `hdmi_tx_slow_clk` 最大可分析频率 | 122.669 MHz | 120.294 MHz | 111.807 MHz | 111.807 MHz | **116.077 MHz**（约束 74.25 MHz） |
+
+> 2026-09-28 TEMP 那一列（本版）的细节是 `docs/时序降噪_移植说明.md` §5 的实测表：
+> Memory **+7**（`u_rd_fifo_prev` 512 深）、DSP **+26**（`u_alg_blend_bytes` 的
+> 32 个 8×8 乘法）、XLR **+989**；`vid_clk_dvi2`（融合所在域，周期 26.936 ns）
+> setup slack **+17.676 ns**，余量充足。
+>
+> 同一份日志里 `[FlowMsg::SyncHeadDrivenByNonSeq]` 由 39 条变成 **43 条**，
+> 多出的 4 条全部指向 `u_rd_fifo_prev` 内部的 `WrClkRstGen/RdClkRstGen`
+> —— 与既有的 `u_rd_fifo` 完全同型（DC_FIFO 自带的复位结构），不是本次新增的
+> 跨时钟域逻辑引入的；接口/时序检查没有因此报错。
+
+> ⚠️ **Memory Blocks 已到 90.23 %**，`u_rd_fifo_prev` 之后基本没有空间再放
+> 第二帧缓存；继续加帧级功能前必须先按下面的出口清单腾地方。
 
 > §8.6 那一版（边缘行缓存两列合一字）：**资源基本不变**（LUT +35 / FF −1 /
 > Memory Blocks 与 DSP 完全不变，因为边缘行缓存总位数没变）；
@@ -382,7 +396,7 @@ SOBEL 档（mode 0/1）走 NMS 旁路，但 `alg_stream_delay` 依然补足 4 �
 
 | 仓库函数 | 状态 | 原因 |
 | --- | --- | --- |
-| `temporal_blend()` | ❌ 未做 | 时间域帧间平均，需整帧缓存；`config.json` 的 `temp=50` 未生效。**这是"人闪/白点闪"最直接的解法，优先级最高** |
+| `temporal_blend()` | ✅ 已 RTL 化 | `rtl/algo/alg_blend_bytes.v`（16 字节并行版）+ `rtl/frame_buffer_V4/ddr_rd_buffer.v` 双基址交替读（当前帧 / 上一帧两条读流水）。**Bayer 域融合**（偏离登记见 `docs/时序降噪_移植说明.md` §3）：同一张 TEMP→alpha Q8 表、同一算式 `out=(alpha*cur+(256-alpha)*prev)>>8`。滑块 `TEMP` 命令 `A`，量程 0..90（=0 逐位直通当前帧），上电默认 0。仿真 `sim/algo/model/check_blend_bytes.py` PASS（≤1 LSB，TEMP 0/25/50/75 逐位一致） |
 | `otsu_threshold()` | ❌ 未做 | 需直方图统计 + 除法/比较树，代价中等 |
 | `guided_filter()` | ❌ 未做 | 仓库自述已排除（EPF=2，实测丢细节） |
 | `detect_shapes()` / `draw_shapes()` | ❌ 未做 | 轮廓+凸性判定+中文字库，工作量大 |
@@ -473,3 +487,9 @@ C:\Efinity\2026.1\bin\efx_run.bat ti60f225_oob.xml --flow compile
 | `sim/algo/model/check_py_repo.py` | 仓库 Python ↔ 金标准模型对拍 |
 | `sim/algo/model/ref/FPGA-Python-main/` | 算法参考源快照（未改一行） |
 | `candidate_bitstreams/` | 候选位流 + SHA-256 + 上板状态 |
+| `rtl/algo/alg_blend_bytes.v` | TEMP 帧间融合（128bit/拍整字版，Bayer 域） |
+| `rtl/algo/alg_blend.v` | 同一算子的逐字节版（仿真金标准挂点） |
+| `rtl/alg_temp_sync.v` | TEMP 7bit 跨时钟域（`CLK_25M` → `vid_clk_dvi2`） |
+| `sim/algo/model/check_blend_bytes.py` | 整字版 vs Python 金标准对拍 |
+| `docs/时序降噪_移植说明.md` | TEMP 的算法来源、定点、时序坑与实测资源 |
+| `docs/运行期调参.md` | 串口命令 `M T L H E P F A N G I D C R X` 与 PC 调参界面 |

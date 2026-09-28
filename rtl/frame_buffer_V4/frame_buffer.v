@@ -8,6 +8,7 @@ parameter AXI_DATA_WIDTH	= 512,
 parameter AXI_ADDR_WIDTH 	= 33,
 parameter	WR_FIFO_DEPTH	= 1024,    
 parameter	RD_FIFO_DEPTH 	= 1024,
+parameter	RD_FIFO_PREV_DEPTH = 512,  //!上一帧那条 FIFO(时域降噪用), 比当前帧浅一档省 Memory
 parameter START_ADDR		= 33'h000201900,
 parameter BURST_LEN         = 8'd15,
 parameter FB_NUM			= 3,//2 buffer ,3 buffer 
@@ -28,6 +29,7 @@ input	wire	[I_VID_WIDTH-1:0] 			vin ,
 
 input	wire							o_clk	,
 input   wire                   fifo_rd_period,//!!
+input   wire   [6:0]           i_temp,        //!TEMP 0..90 (0=关), 已在 o_clk 域
 output wire                    m_axis_tuser,
 output wire                    m_axis_tvalid ,
 input  wire                    m_axis_tready,
@@ -96,6 +98,31 @@ wire                      rd_fifo_rdvalid	;
 wire [AXI_DATA_WIDTH-1:0] rd_fifo_rddata	 ; 
 wire                      rd_fifo_rdempty	;
 wire                      rd_fifo_rden     ;
+
+//--------------------------------------------------------------------------
+// 时域降噪(TEMP): DDR 侧同时读出"当前帧 bank"和"上一帧 bank"两条字流
+//   rd_fifo_rddata*      : 两条流各一个 FIFO, 下标一一对应同一个像素位置
+//   rd_fifo_rdempty_both : 喂给 vid_par2ser 的"空"信号 —— 两条都非空才排空。
+//      只排一条会错位: 两个 FIFO 的下标必须同步推进, 读指针一旦不齐,
+//      配对的就不是同一像素位置了。DC_FIFO 是 Normal 模式, RdEn 后一拍
+//      RdData 才有效, 两路同拍 RdEn/RdData, 所以融合可以纯组合做。
+//   alg_blend_bytes 的 TEMP=0 是逐位直通当前帧, 和改动前的画面完全一致。
+//--------------------------------------------------------------------------
+wire [AXI_DATA_WIDTH-1:0] rd_fifo_rddata_prev ;
+wire                      rd_fifo_rdempty_prev;
+wire                      rd_fifo_rdempty_both = rd_fifo_rdempty | rd_fifo_rdempty_prev;
+wire [AXI_DATA_WIDTH-1:0] blend_rddata        ;
+wire [7:0]                blend_alpha_q8      ;
+
+alg_blend_bytes #(
+    .NBYTE  ( AXI_DATA_WIDTH/8 )
+) u_alg_blend_bytes (
+    .i_temp     ( i_temp             ),
+    .in_cur     ( rd_fifo_rddata     ),
+    .in_prev    ( rd_fifo_rddata_prev),
+    .out_data   ( blend_rddata       ),
+    .o_alpha_q8 ( blend_alpha_q8     )
+);
 
 wire		wr_sw_ack ;
 wire		wr_sw 		;
@@ -172,6 +199,7 @@ ddr_buffer #(
 .AXI_ADDR_WIDTH ( AXI_ADDR_WIDTH	),
 .WR_FIFO_DEPTH	( WR_FIFO_DEPTH		),    
 .RD_FIFO_DEPTH 	( RD_FIFO_DEPTH 	),
+.RD_FIFO_PREV_DEPTH ( RD_FIFO_PREV_DEPTH ),
 .START_ADDR		( START_ADDR        ),
 .I_VID_WIDTH    ( I_VID_WIDTH       ),
 .BURST_LEN      (BURST_LEN          ),
@@ -202,6 +230,8 @@ ddr_buffer #(
 /*o*/.rd_fifo_rdvalid	(rd_fifo_rdvalid  ),
 /*o*/.rd_fifo_rddata	(rd_fifo_rddata	  ),
 /*o*/.rd_fifo_rdempty	(rd_fifo_rdempty  ),
+/*o*/.rd_fifo_rddata_prev (rd_fifo_rddata_prev ),
+/*o*/.rd_fifo_rdempty_prev(rd_fifo_rdempty_prev),
 /*i*/.rd_fifo_rden		(rd_fifo_rden     ),
 
 /*o*/.test_wdata    (test_wdata     ),
@@ -269,8 +299,8 @@ reg tx_almost_full = 'd0;
     /*i*/.frame_period      (fifo_rd_period   ),
 
     /*i*/.rd_fifo_rdvalid   (rd_fifo_rdvalid  ),
-    /*i*/.rd_fifo_rddata    (rd_fifo_rddata   ),
-    /*i*/.rd_fifo_rdempty   (rd_fifo_rdempty  ),
+    /*i*/.rd_fifo_rddata    (blend_rddata     ),  // 当前帧/上一帧融合后的字
+    /*i*/.rd_fifo_rdempty   (rd_fifo_rdempty_both),
     /*o*/.rd_fifo_rden      ( rd_fifo_rden    ),
     /*o*/.tx_fifo_valid     ( tx_valid        ),
     /*i*/.wr_fifo_full      (tx_almost_full   ),

@@ -34,6 +34,12 @@
 //                           The regularisation term of guided_filter(): the
 //                           larger it is the flatter the result becomes.  Only
 //                           the EPF=2 path reads it (see algo/alg_gf.v).
+//     A<n>   cfg_temp       temporal blend (TEMP)     0..90 (above 90 clamps)
+//                           0 = off.  Same slider as live_tune.py's TEMP:
+//                           alpha = 1 - TEMP/100 is the weight of the current
+//                           frame, and the previous frame is blended in on the
+//                           DDR read side (rtl/algo/alg_blend_bytes.v).  Bigger =
+//                           steadier contour but visible ghosting on motion.
 //     N<n>   cfg_median_en  0/1
 //     G<n>   cfg_gauss_en   0/1
 //     I<n>   cfg_isol_en    0/1
@@ -71,7 +77,8 @@ module alg_cfg_uart #(
     parameter        GAUSS_INIT  = 1'b0,
     parameter        ISOL_INIT   = 1'b1,
     parameter [1:0]  DISP_INIT   = 2'd0,
-    parameter        OVC_INIT    = 1'b1
+    parameter        OVC_INIT    = 1'b1,
+    parameter [6:0]  TEMP_INIT   = 7'd0
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -84,6 +91,7 @@ module alg_cfg_uart #(
     output reg  [3:0]  o_eps,
     output reg  [1:0]  o_epf,
     output reg  [10:0] o_gf_eps,
+    output reg  [6:0]  o_temp,
     output reg         o_median_en,
     output reg         o_gauss_en,
     output reg         o_isol_en,
@@ -108,7 +116,8 @@ module alg_cfg_uart #(
                      K_CAM  = 4'd11,
                      K_EPS  = 4'd12,
                      K_EPF  = 4'd13,
-                     K_GFE  = 4'd14;
+                     K_GFE  = 4'd14,
+                     K_TMP  = 4'd15;
 
     localparam S_KEY = 1'b0,
                S_VAL = 1'b1;
@@ -128,6 +137,7 @@ module alg_cfg_uart #(
                 8'h45, 8'h65: key_of = K_EPS;    // E e
                 8'h50, 8'h70: key_of = K_EPF;    // P p
                 8'h46, 8'h66: key_of = K_GFE;    // F f
+                8'h41, 8'h61: key_of = K_TMP;    // A a
                 8'h4E, 8'h6E: key_of = K_MED;    // N n
                 8'h47, 8'h67: key_of = K_GAU;    // G g
                 8'h49, 8'h69: key_of = K_ISO;    // I i
@@ -222,6 +232,7 @@ module alg_cfg_uart #(
             o_eps       <= EPS_INIT;
             o_epf       <= EPF_INIT;
             o_gf_eps    <= GFEPS_INIT;
+            o_temp      <= TEMP_INIT;
             o_median_en <= MEDIAN_INIT;
             o_gauss_en  <= GAUSS_INIT;
             o_isol_en   <= ISOL_INIT;
@@ -245,6 +256,8 @@ module alg_cfg_uart #(
                     K_EPF:  o_epf       <= (apply_val > 12'd2)    ? 2'd2    : apply_val[1:0];
                     // 导向滤波 eps: 11bit 寄存器, 超过 2047 夹到 2047 (参考值 400)
                     K_GFE:  o_gf_eps    <= (apply_val > 12'd2047) ? 11'd2047 : apply_val[10:0];
+                    // 时域降噪强度: 7bit 寄存器 0..90, 超过 90 夹到 90 (滑条量程)
+                    K_TMP:  o_temp      <= (apply_val > 12'd90)   ? 7'd90   : apply_val[6:0];
                     K_MED:  o_median_en <= (apply_val != 12'd0);
                     K_GAU:  o_gauss_en  <= (apply_val != 12'd0);
                     K_ISO:  o_isol_en   <= (apply_val != 12'd0);
@@ -258,6 +271,7 @@ module alg_cfg_uart #(
                         o_eps       <= EPS_INIT;
                         o_epf       <= EPF_INIT;
                         o_gf_eps    <= GFEPS_INIT;
+                        o_temp      <= TEMP_INIT;
                         o_median_en <= MEDIAN_INIT;
                         o_gauss_en  <= GAUSS_INIT;
                         o_isol_en   <= ISOL_INIT;

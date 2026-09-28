@@ -5,11 +5,11 @@
 // Status line for the runtime edge parameters, the transmit half of the
 // PC tuning channel (alg_cfg_uart.v is the receive half).
 //
-// One 77 byte ASCII line every PERIOD_MS, plus an immediate line after every
+// One 83 byte ASCII line every PERIOD_MS, plus an immediate line after every
 // accepted command, so a slider on the host can be confirmed against what the
 // board actually latched instead of being trusted:
 //
-//     M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 CAM0077=C0\r\n
+//     M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 TMP00 CAM0077=C0\r\n
 //
 // The line is fixed layout: every field is either a literal or exactly the
 // same width in every message, so the host can find the values by byte
@@ -24,6 +24,10 @@
 // (guided-filter eps, 0..2047) were appended after it for the same reason:
 // every field before them keeps its byte position, and the host regex accepts
 // the 77 byte line as well as the older 65 and 60 byte ones.
+//
+// TMP<nn> (0..90, temporal blend strength, see rtl/algo/alg_blend_bytes.v) is
+// inserted between GF and CAM, so CAM stays the last field and the read-back
+// answer keeps its place at the end of the line.  83 bytes now.
 //
 // The three 11-bit thresholds and the 10-bit read-back group index are
 // converted with the double-dabble shift-and-add-3 algorithm, one value at a
@@ -53,6 +57,7 @@ module alg_cfg_telemetry #(
     input  wire [3:0]  i_eps,
     input  wire [1:0]  i_epf,
     input  wire [10:0] i_gf_eps,
+    input  wire [6:0]  i_temp,      // TEMP 0..90 (0 = 时域降噪关)
     input  wire        i_median,
     input  wire        i_gauss,
     input  wire        i_isol,
@@ -64,7 +69,7 @@ module alg_cfg_telemetry #(
     output wire        o_txd
 );
 
-    localparam [6:0] MSG_LEN = 7'd77;
+    localparam [6:0] MSG_LEN = 7'd83;
     localparam integer GAP_CLKS = (CLK_HZ / 1000) * PERIOD_MS;
 
     // ------------------------------------------------------------------ text
@@ -89,6 +94,7 @@ module alg_cfg_telemetry #(
         input [15:0] lo_bcd;
         input [15:0] hi_bcd;
         input [15:0] gf_bcd;
+        input [15:0] tmp_bcd;
         input [15:0] cam_bcd;
         input [7:0]  cam_val;
         input [1:0]  mode;
@@ -111,72 +117,78 @@ module alg_cfg_telemetry #(
                 6'd7:  msg_byte = digit_of(t_bcd[3:0]);
                 6'd8:  msg_byte = " ";
                 6'd9:  msg_byte = "L";
-                6'd10: msg_byte = "O";
-                6'd11: msg_byte = digit_of(lo_bcd[15:12]);
-                6'd12: msg_byte = digit_of(lo_bcd[11:8]);
-                6'd13: msg_byte = digit_of(lo_bcd[7:4]);
-                6'd14: msg_byte = digit_of(lo_bcd[3:0]);
-                6'd15: msg_byte = " ";
-                6'd16: msg_byte = "H";
-                6'd17: msg_byte = "I";
-                6'd18: msg_byte = digit_of(hi_bcd[15:12]);
-                6'd19: msg_byte = digit_of(hi_bcd[11:8]);
-                6'd20: msg_byte = digit_of(hi_bcd[7:4]);
-                6'd21: msg_byte = digit_of(hi_bcd[3:0]);
-                6'd22: msg_byte = " ";
-                6'd23: msg_byte = "M";
-                6'd24: msg_byte = "E";
-                6'd25: msg_byte = "D";
-                6'd26: msg_byte = digit_of({3'b0, med});
-                6'd27: msg_byte = " ";
-                6'd28: msg_byte = "G";
-                6'd29: msg_byte = "A";
-                6'd30: msg_byte = "U";
-                6'd31: msg_byte = digit_of({3'b0, gau});
-                6'd32: msg_byte = " ";
-                6'd33: msg_byte = "I";
-                6'd34: msg_byte = "S";
-                6'd35: msg_byte = "O";
-                6'd36: msg_byte = digit_of({3'b0, iso});
-                6'd37: msg_byte = " ";
-                6'd38: msg_byte = "D";
-                6'd39: msg_byte = "S";
-                6'd40: msg_byte = "P";
-                6'd41: msg_byte = digit_of({2'b0, disp});
-                6'd42: msg_byte = " ";
-                6'd43: msg_byte = "O";
-                6'd44: msg_byte = "V";
-                6'd45: msg_byte = "C";
-                6'd46: msg_byte = digit_of({3'b0, ovc});
-                6'd47: msg_byte = " ";
-                6'd48: msg_byte = "E";
-                6'd49: msg_byte = "P";
-                6'd50: msg_byte = "S";
-                6'd51: msg_byte = digit_of(eps);
-                6'd52: msg_byte = " ";
-                6'd53: msg_byte = "E";
-                6'd54: msg_byte = "P";
-                6'd55: msg_byte = "F";
-                6'd56: msg_byte = digit_of({4'b0, epf});
-                6'd57: msg_byte = " ";
-                6'd58: msg_byte = "G";
-                6'd59: msg_byte = "F";
-                6'd60: msg_byte = digit_of(gf_bcd[15:12]);
-                6'd61: msg_byte = digit_of(gf_bcd[11:8]);
-                6'd62: msg_byte = digit_of(gf_bcd[7:4]);
-                6'd63: msg_byte = digit_of(gf_bcd[3:0]);
-                6'd64: msg_byte = " ";
-                6'd65: msg_byte = "C";
-                6'd66: msg_byte = "A";
-                6'd67: msg_byte = "M";
-                6'd68: msg_byte = digit_of(cam_bcd[15:12]);
-                6'd69: msg_byte = digit_of(cam_bcd[11:8]);
-                6'd70: msg_byte = digit_of(cam_bcd[7:4]);
-                6'd71: msg_byte = digit_of(cam_bcd[3:0]);
-                6'd72: msg_byte = "=";
-                6'd73: msg_byte = hex_of(cam_val[7:4]);
-                6'd74: msg_byte = hex_of(cam_val[3:0]);
-                6'd75: msg_byte = 8'h0D;   // CR
+                7'd10: msg_byte = "O";
+                7'd11: msg_byte = digit_of(lo_bcd[15:12]);
+                7'd12: msg_byte = digit_of(lo_bcd[11:8]);
+                7'd13: msg_byte = digit_of(lo_bcd[7:4]);
+                7'd14: msg_byte = digit_of(lo_bcd[3:0]);
+                7'd15: msg_byte = " ";
+                7'd16: msg_byte = "H";
+                7'd17: msg_byte = "I";
+                7'd18: msg_byte = digit_of(hi_bcd[15:12]);
+                7'd19: msg_byte = digit_of(hi_bcd[11:8]);
+                7'd20: msg_byte = digit_of(hi_bcd[7:4]);
+                7'd21: msg_byte = digit_of(hi_bcd[3:0]);
+                7'd22: msg_byte = " ";
+                7'd23: msg_byte = "M";
+                7'd24: msg_byte = "E";
+                7'd25: msg_byte = "D";
+                7'd26: msg_byte = digit_of({3'b0, med});
+                7'd27: msg_byte = " ";
+                7'd28: msg_byte = "G";
+                7'd29: msg_byte = "A";
+                7'd30: msg_byte = "U";
+                7'd31: msg_byte = digit_of({3'b0, gau});
+                7'd32: msg_byte = " ";
+                7'd33: msg_byte = "I";
+                7'd34: msg_byte = "S";
+                7'd35: msg_byte = "O";
+                7'd36: msg_byte = digit_of({3'b0, iso});
+                7'd37: msg_byte = " ";
+                7'd38: msg_byte = "D";
+                7'd39: msg_byte = "S";
+                7'd40: msg_byte = "P";
+                7'd41: msg_byte = digit_of({2'b0, disp});
+                7'd42: msg_byte = " ";
+                7'd43: msg_byte = "O";
+                7'd44: msg_byte = "V";
+                7'd45: msg_byte = "C";
+                7'd46: msg_byte = digit_of({3'b0, ovc});
+                7'd47: msg_byte = " ";
+                7'd48: msg_byte = "E";
+                7'd49: msg_byte = "P";
+                7'd50: msg_byte = "S";
+                7'd51: msg_byte = digit_of(eps);
+                7'd52: msg_byte = " ";
+                7'd53: msg_byte = "E";
+                7'd54: msg_byte = "P";
+                7'd55: msg_byte = "F";
+                7'd56: msg_byte = digit_of({4'b0, epf});
+                7'd57: msg_byte = " ";
+                7'd58: msg_byte = "G";
+                7'd59: msg_byte = "F";
+                7'd60: msg_byte = digit_of(gf_bcd[15:12]);
+                7'd61: msg_byte = digit_of(gf_bcd[11:8]);
+                7'd62: msg_byte = digit_of(gf_bcd[7:4]);
+                7'd63: msg_byte = digit_of(gf_bcd[3:0]);
+                7'd64: msg_byte = " ";
+                7'd65: msg_byte = "T";
+                7'd66: msg_byte = "M";
+                7'd67: msg_byte = "P";
+                7'd68: msg_byte = digit_of(tmp_bcd[7:4]);
+                7'd69: msg_byte = digit_of(tmp_bcd[3:0]);
+                7'd70: msg_byte = " ";
+                7'd71: msg_byte = "C";
+                7'd72: msg_byte = "A";
+                7'd73: msg_byte = "M";
+                7'd74: msg_byte = digit_of(cam_bcd[15:12]);
+                7'd75: msg_byte = digit_of(cam_bcd[11:8]);
+                7'd76: msg_byte = digit_of(cam_bcd[7:4]);
+                7'd77: msg_byte = digit_of(cam_bcd[3:0]);
+                7'd78: msg_byte = "=";
+                7'd79: msg_byte = hex_of(cam_val[7:4]);
+                7'd80: msg_byte = hex_of(cam_val[3:0]);
+                7'd81: msg_byte = 8'h0D;   // CR
                 default: msg_byte = 8'h0A; // LF
             endcase
         end
@@ -206,13 +218,15 @@ module alg_cfg_telemetry #(
     reg [3:0]  d_eps;
     reg [1:0]  d_epf;
     reg [10:0] d_gf_eps;
-    reg [15:0] t_bcd, lo_bcd, hi_bcd, gf_bcd, cam_bcd;
+    reg [6:0]  d_temp;
+    reg [15:0] t_bcd, lo_bcd, hi_bcd, gf_bcd, tmp_bcd, cam_bcd;
     reg [9:0]  d_cam_grp;
     reg [7:0]  d_cam_val;
 
-    // One double-dabble engine, used five times per line (t, lo, hi, the
-    // guided-filter eps, and the read-back group index).  conv_sel therefore
-    // counts to 4; it was 0..3 when the line was 65 bytes.
+    // One double-dabble engine, used six times per line (t, lo, hi, the
+    // guided-filter eps, the read-back group index and TEMP).  conv_sel
+    // therefore counts to 5; it was 0..3 when the line was 65 bytes and 0..4
+    // when it was 77.
     reg [15:0] bcd_reg;
     reg [10:0] bin_reg;
     reg [2:0]  conv_sel;
@@ -258,10 +272,12 @@ module alg_cfg_telemetry #(
             d_eps     <= 4'd0;
             d_epf     <= 2'd0;
             d_gf_eps  <= 11'd0;
+            d_temp    <= 7'd0;
             t_bcd     <= 16'd0;
             lo_bcd    <= 16'd0;
             hi_bcd    <= 16'd0;
             gf_bcd    <= 16'd0;
+            tmp_bcd   <= 16'd0;
             cam_bcd   <= 16'd0;
             d_cam_grp <= 10'd0;
             d_cam_val <= 8'hFF;   // piv2_config's read register resets to FF
@@ -294,6 +310,7 @@ module alg_cfg_telemetry #(
                             d_eps   <= i_eps;
                             d_epf   <= i_epf;
                             d_gf_eps<= i_gf_eps;
+                            d_temp  <= i_temp;
                             d_cam_grp<= i_cam_grp;
                             d_cam_val<= i_cam_val;
                             state   <= ST_SNAP;
@@ -327,9 +344,10 @@ module alg_cfg_telemetry #(
                         3'd1:    lo_bcd  <= bcd_reg;
                         3'd2:    hi_bcd  <= bcd_reg;
                         3'd3:    gf_bcd  <= bcd_reg;
-                        default: cam_bcd <= bcd_reg;
+                        3'd4:    cam_bcd <= bcd_reg;
+                        default: tmp_bcd <= bcd_reg;
                     endcase
-                    if (conv_sel == 3'd4) begin
+                    if (conv_sel == 3'd5) begin
                         char_idx <= 7'd0;
                         state    <= ST_LOAD;
                     end else begin
@@ -338,7 +356,8 @@ module alg_cfg_telemetry #(
                         bin_reg  <= (conv_sel == 3'd0) ? d_lo :
                                     (conv_sel == 3'd1) ? d_hi :
                                     (conv_sel == 3'd2) ? d_gf_eps :
-                                                         {1'b0, d_cam_grp};
+                                    (conv_sel == 3'd3) ? {1'b0, d_cam_grp} :
+                                                         {4'b0, d_temp};
                         conv_cnt <= 4'd0;
                         state    <= ST_CONV;
                     end
@@ -348,7 +367,7 @@ module alg_cfg_telemetry #(
                 ST_LOAD: begin
                     tx_valid <= 1'b1;
                     tx_byte  <= msg_byte(char_idx, t_bcd, lo_bcd, hi_bcd,
-                                         gf_bcd, cam_bcd, d_cam_val,
+                                         gf_bcd, tmp_bcd, cam_bcd, d_cam_val,
                                          d_mode, d_disp, d_med, d_gau, d_iso, d_ovc,
                                          d_eps, d_epf);
                     state    <= ST_START;

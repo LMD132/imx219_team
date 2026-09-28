@@ -10,7 +10,8 @@
 //   1. 解码 o_txd 用本文件独立写的采样任务 uart_get_byte, 不复用 DUT 的
 //      uart_rx, 否则收发同源错误会互相抵消, 测试就成了自言自语。
 //      uart_rx 本身另有一段直接喂线的用例(第 2 节起都是走真实串口时序的)。
-//   2. 状态行用 65 字节滑窗匹配(EPS 字段 + 末尾 CAM 字段), 不需要刻意对齐到行首。
+//   2. 状态行用 83 字节滑窗匹配(EPS/EPF/GF/TMP 字段 + 末尾 CAM 字段),
+//      不需要刻意对齐到行首。字段是逐次追加的, 每次只插在 CAM 之前。
 // 期望值里的 CR/LF 写成 8'h0D/8'h0A 拼在字符串后面, 免去转义。
 //=============================================================================
 `timescale 1ns/1ps
@@ -18,7 +19,7 @@
 module tb_alg_cfg_uart;
 
     localparam integer BIT_NS = 8680;   // 115200 baud = 217 x 40 ns
-    localparam integer NB = 65;         // 状态行字节数(含 EPS/CAM 字段, 见 alg_cfg_telemetry.v)
+    localparam integer NB = 83;         // 状态行字节数(含 EPS/EPF/GF/TMP/CAM, 见 alg_cfg_telemetry.v)
 
     integer errors = 0;
     integer checks = 0;
@@ -50,6 +51,9 @@ module tb_alg_cfg_uart;
     wire [10:0] p_t, p_lo, p_hi;
     wire       p_med, p_gau, p_iso, p_ovc;
     wire [3:0] p_eps;
+    wire [1:0]  c_epf, p_epf;           // EPF 档位: 0 关 / 1 高斯3x3 / 2 导向滤波
+    wire [10:0] c_gf_eps, p_gf_eps;     // 导向滤波 eps
+    wire [6:0]  c_temp, p_temp;         // TEMP 时域降噪强度 0..90
 
     uart_rx #(
         .CLK_HZ (25000000),
@@ -68,6 +72,9 @@ module tb_alg_cfg_uart;
         .LO_INIT     (11'd21),
         .HI_INIT     (11'd58),
         .EPS_INIT    (4'd0),
+        .EPF_INIT    (2'd2),
+        .GFEPS_INIT  (11'd400),
+        .TEMP_INIT   (7'd0),
         .MEDIAN_INIT (1'b1),
         .GAUSS_INIT  (1'b0),
         .ISOL_INIT   (1'b1),
@@ -83,6 +90,9 @@ module tb_alg_cfg_uart;
         .o_lo        (c_lo),
         .o_hi        (c_hi),
         .o_eps       (c_eps),
+        .o_epf       (c_epf),
+        .o_gf_eps    (c_gf_eps),
+        .o_temp      (c_temp),
         .o_median_en (c_med),
         .o_gauss_en  (c_gau),
         .o_isol_en   (c_iso),
@@ -107,6 +117,9 @@ module tb_alg_cfg_uart;
         .i_lo     (c_lo),
         .i_hi     (c_hi),
         .i_eps    (c_eps),
+        .i_epf    (c_epf),
+        .i_gf_eps (c_gf_eps),
+        .i_temp   (c_temp),
         .i_median (c_med),
         .i_gauss  (c_gau),
         .i_isol   (c_iso),
@@ -124,6 +137,8 @@ module tb_alg_cfg_uart;
         .LO_INIT     (11'd21),
         .HI_INIT     (11'd58),
         .EPS_INIT    (4'd0),
+        .EPF_INIT    (2'd2),
+        .GFEPS_INIT  (11'd400),
         .MEDIAN_INIT (1'b1),
         .GAUSS_INIT  (1'b0),
         .ISOL_INIT   (1'b1),
@@ -138,6 +153,8 @@ module tb_alg_cfg_uart;
         .i_lo     (c_lo),
         .i_hi     (c_hi),
         .i_eps    (c_eps),
+        .i_epf    (c_epf),
+        .i_gf_eps (c_gf_eps),
         .i_median (c_med),
         .i_gauss  (c_gau),
         .i_isol   (c_iso),
@@ -150,11 +167,27 @@ module tb_alg_cfg_uart;
         .o_lo     (p_lo),
         .o_hi     (p_hi),
         .o_eps    (p_eps),
+        .o_epf    (p_epf),
+        .o_gf_eps (p_gf_eps),
         .o_median (p_med),
         .o_gauss  (p_gau),
         .o_isol   (p_iso),
         .o_disp   (p_disp),
         .o_ovc    (p_ovc)
+    );
+
+    // TEMP 不走 alg_cfg_sync: 融合发生在 DDR 读出侧(o_clk = vid_clk_dvi2),
+    // 是第三个时钟域, 由 alg_temp_sync 单独搬 7bit (与顶层同构)。
+    alg_temp_sync #(
+        .TEMP_INIT (7'd0)
+    ) u_temp_sync (
+        .clk_a    (clk25),
+        .rst_a_n  (rst_n),
+        .i_commit (c_commit),
+        .i_temp   (c_temp),
+        .clk_b    (clkpx),
+        .rst_b_n  (rst_n),
+        .o_temp   (p_temp)
     );
 
     //----------------------------------------------------------------- 检查器
@@ -281,8 +314,8 @@ module tb_alg_cfg_uart;
     reg [8*NB-1:0] exp_cam;
 
     initial begin
-        exp_default = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1", " EPS0 CAM0000=FF", 8'h0D, 8'h0A};
-        exp_after   = {"M2 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0", " EPS2 CAM0000=FF", 8'h0D, 8'h0A};
+        exp_default = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1", " EPS0 EPF2 GF0400 TMP00 CAM0000=FF", 8'h0D, 8'h0A};
+        exp_after   = {"M2 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0", " EPS2 EPF1 GF0500 TMP40 CAM0000=FF", 8'h0D, 8'h0A};
 
         rst_n = 1'b0;
         repeat (20) @(posedge clk25);
@@ -300,10 +333,16 @@ module tb_alg_cfg_uart;
         chk2 ("disp",   c_disp, 2'd0);
         chk1 ("ovc",    c_ovc, 1'b1);
         chk11("eps",    {8'b0, c_eps}, 11'd0);
+        chk2 ("epf",     c_epf, 2'd2);          // 参考 live_tune.py 的默认档: 2 = 导向滤波
+        chk11("gf_eps",  c_gf_eps, 11'd400);    // 参考 guided_filter 的 eps
+        chk11("temp",    {4'b0, c_temp}, 11'd0); // TEMP 上电默认 0 = 直通
         chk2 ("px_mode_reset", p_mode, 2'd2);
         chk11("px_t_reset",    p_t,    11'd24);
         chk11("px_lo_reset",   p_lo,   11'd21);
         chk11("px_hi_reset",   p_hi,   11'd58);
+        chk2 ("px_epf_reset",  p_epf,  2'd2);
+        chk11("px_gf_reset",   p_gf_eps, 11'd400);
+        chk11("px_temp_reset", {4'b0, p_temp}, 11'd0);
         expect_line(exp_default);
 
         $display("--- 2. single commands");
@@ -333,6 +372,20 @@ module tb_alg_cfg_uart;
         chk11("eps_clamp8", {8'b0, c_eps}, 11'd8);
         send_str("e2");                   // 小写 e 同样识别
         chk11("eps_lower_e2", {8'b0, c_eps}, 11'd2);
+        send_str("P1");                   // EPF 档位: 1 = 3x3 高斯
+        chk2 ("epf_P1", c_epf, 2'd1);
+        send_str("P9");                   // 上限 2
+        chk2 ("epf_clamp2", c_epf, 2'd2);
+        send_str("F512");                 // 导向滤波 eps
+        chk11("gf_F512", c_gf_eps, 11'd512);
+        send_str("F9999");                // 上限 2047
+        chk11("gf_saturate", c_gf_eps, 11'd2047);
+        send_str("A50");                  // TEMP 时域降噪强度
+        chk11("temp_A50", {4'b0, c_temp}, 11'd50);
+        send_str("A999");                 // 上限 90 (滑条量程)
+        chk11("temp_clamp90", {4'b0, c_temp}, 11'd90);
+        send_str("a7");                   // 小写 a 同样识别
+        chk11("temp_lower_a7", {4'b0, c_temp}, 11'd7);
 
         $display("--- 3. separators, lower case, clamps, saturation");
         send_str("t=42");
@@ -370,6 +423,9 @@ module tb_alg_cfg_uart;
         chk2 ("disp_R",   c_disp, 2'd0);
         chk1 ("ovc_R",    c_ovc, 1'b1);
         chk11("eps_R",    {8'b0, c_eps}, 11'd0);
+        chk2 ("epf_R",    c_epf, 2'd2);
+        chk11("gf_R",     c_gf_eps, 11'd400);
+        chk11("temp_R",   {4'b0, c_temp}, 11'd0);
 
         $display("--- 6. the pixel-clock domain copy follows");
         send_str("T100");
@@ -380,6 +436,9 @@ module tb_alg_cfg_uart;
         send_str("D2");
         send_str("C0");
         send_str("E2");
+        send_str("P1");
+        send_str("F500");
+        send_str("A40");
         repeat (40) @(posedge clkpx);
         chk2 ("px_mode", p_mode, 2'd2);
         chk11("px_t",    p_t,    11'd100);
@@ -391,6 +450,9 @@ module tb_alg_cfg_uart;
         chk2 ("px_disp",   p_disp, 2'd2);
         chk1 ("px_ovc",    p_ovc, 1'b0);
         chk11("px_eps",    {8'b0, p_eps}, 11'd2);
+        chk2 ("px_epf",    p_epf, 2'd1);
+        chk11("px_gf",     p_gf_eps, 11'd500);
+        chk11("px_temp",   {4'b0, p_temp}, 11'd40);
 
         $display("--- 7. status line reflects the new values");
         expect_line(exp_after);
@@ -407,7 +469,7 @@ module tb_alg_cfg_uart;
         chk11("cam_rd_pulses", cam_rd_cnt[10:0], 11'd1);
         cam_val = 8'hC0;                  // 相当于 piv2_config 把那一个字节读回来了
         @(posedge clk25); cam_upd = 1'b1; @(posedge clk25); cam_upd = 1'b0;
-        exp_cam = {"M0 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0", " EPS2 CAM0077=C0", 8'h0D, 8'h0A};
+        exp_cam = {"M0 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0", " EPS2 EPF1 GF0500 TMP40 CAM0077=C0", 8'h0D, 8'h0A};
         expect_line(exp_cam);
 
         send_str("X999");                 // 越界要夹到最后一个真实组合 (78)
@@ -417,7 +479,7 @@ module tb_alg_cfg_uart;
         chk11("cam_rd_pulses3", cam_rd_cnt[10:0], 11'd3);
         cam_val = 8'h04;                  // 曝光高字节 0x04
         @(posedge clk25); cam_upd = 1'b1; @(posedge clk25); cam_upd = 1'b0;
-        exp_cam = {"M0 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0", " EPS2 CAM0005=04", 8'h0D, 8'h0A};
+        exp_cam = {"M0 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0", " EPS2 EPF1 GF0500 TMP40 CAM0005=04", 8'h0D, 8'h0A};
         expect_line(exp_cam);
 
         if (errors == 0) $display("ALL PASS  (%0d checks)", checks);

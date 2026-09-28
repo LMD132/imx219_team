@@ -6,6 +6,7 @@ parameter AXI_DATA_WIDTH = 512, //!AXI接口位宽
 parameter AXI_ADDR_WIDTH = 33,  //!AXI地址位宽
 parameter WR_FIFO_DEPTH	= 1024, //!Write fifo depth   
 parameter RD_FIFO_DEPTH = 1024, //!read fifo depth
+parameter RD_FIFO_PREV_DEPTH = 512, //!上一帧那条 read fifo(时域降噪), 浅一档省 Memory
 parameter FB_NUM			= 	3,//2 buffer ,3 buffer   
 parameter MAX_VID_WIDTH		=	1920 ,//video width 
 parameter MAX_VID_HIGHT		=	1080 ,//wideo height
@@ -39,6 +40,8 @@ input                       rd_fifo_rst_p,
 output											rd_fifo_rdvalid,
 output	 [AXI_DATA_WIDTH-1:0] 					rd_fifo_rddata,
 output wire										rd_fifo_rdempty,
+output	 [AXI_DATA_WIDTH-1:0] 					rd_fifo_rddata_prev,
+output wire										rd_fifo_rdempty_prev,
 input	 wire									rd_fifo_rden,
 
 output 	[5:0] 									awid,
@@ -172,6 +175,7 @@ ddr_rd_buffer # (
     .AXI_DATA_WIDTH(AXI_DATA_WIDTH),
     .AXI_ADDR_WIDTH(AXI_ADDR_WIDTH),
     .RD_FIFO_DEPTH(RD_FIFO_DEPTH),
+    .RD_FIFO_PREV_DEPTH(RD_FIFO_PREV_DEPTH),
     .BURST_LEN (BURST_LEN        )
   )
   ddr_rd_buffer_inst (
@@ -179,12 +183,15 @@ ddr_rd_buffer # (
     .axi_clk_rst_n(axi_clk_rst_n),
     .start(rd_start),
     .start_addr(rd_start_addr),//(0),//
+    .start_addr_prev(rd_start_addr_prev),  // 上一帧 bank 基址(bank_switch 四缓冲)
     .burst_len(rd_burst_len),
     .rd_fifo_rdclk(rd_fifo_rdclk),
     .rd_fifo_rst_p (rd_fifo_rst_p),
     .rd_fifo_rdvalid(rd_fifo_rdvalid),
     .rd_fifo_rddata(rd_fifo_rddata),
     .rd_fifo_rdempty(rd_fifo_rdempty),
+    .rd_fifo_rddata_prev(rd_fifo_rddata_prev),
+    .rd_fifo_rdempty_prev(rd_fifo_rdempty_prev),
     .rd_fifo_rden(rd_fifo_rden),
 /*i*/.bank_sw_ack	(rd_sw_ack   	),
 /*o*/.bank_sw 		  (rd_sw  		 	),

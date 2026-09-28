@@ -548,6 +548,7 @@ wire           m_axis_tready;
 wire           m_axis_tlast;
 wire           m_axis_tuser;
 wire  fifo_rd_period;
+wire  [6:0]    w_temp_px;     // TEMP 跨到 vid_clk_dvi2 域(DDR 读出侧融合用)
 // IMX219
   frame_buffer #(
 .I_VID_WIDTH         (32),
@@ -557,6 +558,7 @@ wire  fifo_rd_period;
 .AXI_ADDR_WIDTH      ( AXI_ADDR_WIDTH	),
 .WR_FIFO_DEPTH	      ( 1024		),    
 .RD_FIFO_DEPTH 	      ( 1024 	),
+.RD_FIFO_PREV_DEPTH ( 512   ),
 .BURST_LEN  	        (127),
 .FB_NUM	              (4),
 .MAX_VID_WIDTH	      (640) ,
@@ -575,6 +577,7 @@ wire  fifo_rd_period;
                      
 /*i*/.o_clk			(vid_clk_dvi2),//(i_mipi_rx_pclk	),                  
 /*i*/.fifo_rd_period(fifo_rd_period),//(fifo_rd_period  ),
+/*i*/.i_temp        (w_temp_px),   // TEMP: 与上一帧融合的强度(0=关)
 
     .m_axis_tdata  (m_axis_tdata),
     .m_axis_tvalid (m_axis_tvalid),
@@ -855,9 +858,11 @@ wire [7:0]  edge_b;
 // 运行期调参通道 (UART, 115200 8N1)
 //   PC( tools/alg_tuner.py 的滑块 ) --USB串口--> FPGA UART RX
 //   --> alg_cfg_uart 寄存器组 --> alg_cfg_sync 跨时钟域 --> alg_top 的 cfg_* 端口
-//   命令: M/T/L/H/E/P/F/N/G/I/D/C/R/X  (取值范围见 rtl/alg_cfg_uart.v 的文件头)
+//   命令: M/T/L/H/E/P/F/A/N/G/I/D/C/R/X  (取值范围见 rtl/alg_cfg_uart.v 的文件头)
 //   状态: 每 500ms 回一行, 收到命令后立即回一行, 例如
-//         M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 CAM0077=C0
+//         M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 TMP00 CAM0077=C0
+//   A<n> = TEMP 时域降噪强度 0..90(0=关)。它不走 alg_cfg_sync: 融合发生在 DDR
+//   读出侧(o_clk = vid_clk_dvi2), 是第三个时钟域, 由 alg_temp_sync 单独搬 7bit。
 //   X<n> 读回摄像头寄存器(见下面“摄像头寄存器读回”那一段), CAM 字段就是读回来的值。
 //   alg_top 及其下游算法 RTL 一行未改, 只是参数来源从常量变成了寄存器。
 //==============================================================================
@@ -870,6 +875,7 @@ wire [10:0] w_cfg_hi;
 wire [3:0]  w_cfg_eps;
 wire [1:0]  w_cfg_epf;
 wire [10:0] w_cfg_gf_eps;
+wire [6:0]  w_cfg_temp;
 wire        w_cfg_median_en;
 wire        w_cfg_gauss_en;
 wire        w_cfg_isol_en;
@@ -907,6 +913,7 @@ alg_cfg_uart #(
     .EPS_INIT    (4'd0),
     .EPF_INIT    (2'd2),
     .GFEPS_INIT  (11'd400),
+    .TEMP_INIT   (7'd0),
     .MEDIAN_INIT (1'b1),
     .GAUSS_INIT  (1'b0),
     .ISOL_INIT   (1'b1),
@@ -924,6 +931,7 @@ alg_cfg_uart #(
     .o_eps       (w_cfg_eps),
     .o_epf       (w_cfg_epf),
     .o_gf_eps    (w_cfg_gf_eps),
+    .o_temp      (w_cfg_temp),
     .o_median_en (w_cfg_median_en),
     .o_gauss_en  (w_cfg_gauss_en),
     .o_isol_en   (w_cfg_isol_en),
@@ -1006,6 +1014,7 @@ alg_cfg_telemetry #(
     .i_eps    (w_cfg_eps),
     .i_epf    (w_cfg_epf),
     .i_gf_eps (w_cfg_gf_eps),
+    .i_temp   (w_cfg_temp),
     .i_median (w_cfg_median_en),
     .i_gauss  (w_cfg_gauss_en),
     .i_isol   (w_cfg_isol_en),
@@ -1016,6 +1025,21 @@ alg_cfg_telemetry #(
     .i_update (w_cfg_commit | w_cam_done),
     .o_txd    (o_uart_txd)
 );
+
+// TEMP 单独一路跨时钟域: CLK_25M(寄存器组) -> vid_clk_dvi2(DDR 读出/融合)。
+// 只用 7bit, 没必要把整条 53bit 参数总线再搬一遍(见 rtl/alg_temp_sync.v)。
+alg_temp_sync #(
+    .TEMP_INIT (7'd0)
+) u_alg_temp_sync (
+    .clk_a    (CLK_25M),
+    .rst_a_n  (w_arstn),
+    .i_commit (w_cfg_commit),
+    .i_temp   (w_cfg_temp),
+    .clk_b    (vid_clk_dvi2),
+    .rst_b_n  (vid_rst_n),
+    .o_temp   (w_temp_px)
+);
+
 alg_cfg_sync #(
     .MODE_INIT   (2'd2),
     .T_INIT      (11'd24),

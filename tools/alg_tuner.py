@@ -84,6 +84,8 @@ PARAMS = [
          names={0: "0 = 关", 1: "1 = 高斯3x3", 2: "2 = 导向滤波(参考)"}),
     dict(key="gf_eps", cmd="F", name="导向滤波 eps", lo=0, hi=2047, init=400,
          note="只 EPF=2 有效; 400=参考值, 越大越平/越糊"),
+    dict(key="temp", cmd="A", name="TEMP 时域降噪", lo=0, hi=90, init=0,
+         note="0=关; 与上一帧按 alpha=1-TEMP/100 融合(参考 live_tune.py 的 TEMP 滑条), 越大越稳但运动有拖影"),
     dict(key="median_en", cmd="N", name="3x3 中值", lo=0, hi=1, init=1,
          note="0=关 1=开"),
     dict(key="gauss_en", cmd="G", name="5x5 高斯", lo=0, hi=1, init=0,
@@ -104,6 +106,7 @@ TELEM_RE = re.compile(
     r"(?:\s+EPS(?P<nms_eps>\d+))?"      # 65 字节新行才有; 旧位流(60 字节)缺这一段
     r"(?:\s+EPF(?P<epf>\d+))?"          # 77 字节新行才有
     r"(?:\s+GF(?P<gf_eps>\d+))?"
+    r"(?:\s+TMP(?P<temp>\d+))?"         # 83 字节新行才有(时域降噪强度)
     r"(?:\s+CAM(?P<cam_grp>\d+)=(?P<cam_val>[0-9A-Fa-f]{2}))?")
 
 # 状态行里 CAM 组的已知含义 (见 rtl/cam/piv2_config.v 的寄存器表)
