@@ -15,6 +15,22 @@ tools\flash_candidate.bat candidate_bitstreams\<位流文件>
 
 ---
 
+## -1. `brg_canny_smooth_78779c7_20260928.bit` —— 断线桥接版（2026-09-28 晚，**待上板**）
+
+| 项 | 值 |
+| --- | --- |
+| 来源提交 | `78779c7`（分支 `canny-smooth`，基于 `a390a99`） |
+| 编译时间 | 2026-09-28 18:29:55（在 `imx219_smooth` 内编译，`outflow/compile.log`：map/interface/pnr/pgm 全 PASS） |
+| 字节数 | 2548746 |
+| SHA-256 | `09A44591609D17C25A70A32DCAD7BC04136531DA5FF9719E4611A6719ABB642F` |
+| **上板状态** | ❌ **未烧录**（写记录时板子 USB 未连接，设备管理器里 FT4232H 整体不在） |
+| 内容 | 与回退版同链，新增 **断线桥接 `alg_ebridge`**（命令 `B0..B3`，默认 B2）与精确深度行缓存 `alg_ring_ram`；`ROWD` 11→14、`L` 51→55；遥测行 77→82 字节 |
+| 时序 | `hdmi_tx_slow_clk` setup **+4.774 ns**；`core_clk`（100 MHz）setup **+4.582 ns**；全设计最小 setup **+0.454 ns**、0 条负 slack |
+| 资源 | XLRs 28809/60800 (47.4%)、**Memory Blocks 242/256 (94.5%)**、LUT 16157 / FF 12201、DSP 36/160 |
+| 对拍 | `check_ebridge.py` K=0/1/2/3 全 0 mismatch；`check_chain.py` 含 BRG=0/1/3 三档 + 显示逐像素 `RESULT: PASS` |
+| 回退 | 效果不满意就直接烧 `rollback_epf_guided_99540aa_20260928.bit`（`tools\flash_best.bat` / `烧录最佳版.bat`），本目录的 `imx219_smooth` 可继续改 |
+
+
 ## 0. `rollback_epf_guided_99540aa_20260928.bit` —— 回退版（2026-09-28 晚起为板上运行版本）
 
 > 取代下面第 1 节：TEMP 时域降噪版上板实测不合格后，按板主指示回退到加 TEMP 之前的版本。
