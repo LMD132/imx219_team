@@ -66,6 +66,7 @@ module alg_top #(
     input  wire [10:0] cfg_lo,
     input  wire [10:0] cfg_hi,
     input  wire [3:0]  cfg_eps,         // NMS 容差 0..8 (只 CANNY 档有效, 0 = 参考代码)
+    input  wire        cfg_inms,        // 1 = 亚像素方向插值 NMS (0 = 参考 4 方向量化)
     input  wire [1:0]  cfg_epf,         // 前置滤波 0=关 1=3x3高斯 2=导向滤波(参考代码默认档)
     input  wire [10:0] cfg_gf_eps,      // 导向滤波 eps 0..2000 (参考代码 400)
     input  wire [1:0]  cfg_brg,         // 断线桥接档 0..3 (0=关; 只双阈值档生效)
@@ -187,7 +188,9 @@ alg_nms #(.W(W), .VEXT(VEXT), .H(H)) u_nms (
     .clk(clk), .rst_n(rst_n),
     .in_vs(sob_vs), .in_hs(sob_hs), .in_de(sob_def),
     .in_x(sob_x), .in_y(sob_y), .in_mag(sob_mag), .in_dir(sob_dir),
+    .in_gx(sob_gx), .in_gy(sob_gy),
     .cfg_eps(cfg_eps),
+    .cfg_inms(cfg_inms),
     .out_vs(nms_vs), .out_hs(nms_hs), .out_de_full(nms_def), .out_de(nms_de),
     .out_x(nms_x), .out_y(nms_y), .out_data(nms_d)
 );

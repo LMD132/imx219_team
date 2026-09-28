@@ -871,6 +871,7 @@ wire [3:0]  w_cfg_eps;
 wire [1:0]  w_cfg_epf;
 wire [10:0] w_cfg_gf_eps;
 wire [1:0]  w_cfg_brg;
+wire        w_cfg_inms;
 wire        w_cfg_median_en;
 wire        w_cfg_gauss_en;
 wire        w_cfg_isol_en;
@@ -886,6 +887,7 @@ wire [3:0]  w_px_eps;
 wire [1:0]  w_px_epf;
 wire [10:0] w_px_gf_eps;
 wire [1:0]  w_px_brg;
+wire        w_px_inms;
 wire        w_px_median_en;
 wire        w_px_gauss_en;
 wire        w_px_isol_en;
@@ -910,6 +912,7 @@ alg_cfg_uart #(
     .EPF_INIT    (2'd2),
     .GFEPS_INIT  (11'd400),
     .BRG_INIT    (2'd2),
+    .INMS_INIT   (1'b1),
     .MEDIAN_INIT (1'b1),
     .GAUSS_INIT  (1'b0),
     .ISOL_INIT   (1'b1),
@@ -928,6 +931,7 @@ alg_cfg_uart #(
     .o_epf       (w_cfg_epf),
     .o_gf_eps    (w_cfg_gf_eps),
     .o_brg       (w_cfg_brg),
+    .o_inms      (w_cfg_inms),
     .o_median_en (w_cfg_median_en),
     .o_gauss_en  (w_cfg_gauss_en),
     .o_isol_en   (w_cfg_isol_en),
@@ -1030,6 +1034,7 @@ alg_cfg_sync #(
     .EPF_INIT    (2'd2),
     .GFEPS_INIT  (11'd400),
     .BRG_INIT    (2'd2),
+    .INMS_INIT   (1'b1),
     .MEDIAN_INIT (1'b1),
     .GAUSS_INIT  (1'b0),
     .ISOL_INIT   (1'b1),
@@ -1047,6 +1052,7 @@ alg_cfg_sync #(
     .i_epf     (w_cfg_epf),
     .i_gf_eps  (w_cfg_gf_eps),
     .i_brg     (w_cfg_brg),
+    .i_inms    (w_cfg_inms),
     .i_median  (w_cfg_median_en),
     .i_gauss   (w_cfg_gauss_en),
     .i_isol    (w_cfg_isol_en),
@@ -1062,6 +1068,7 @@ alg_cfg_sync #(
     .o_epf     (w_px_epf),
     .o_gf_eps  (w_px_gf_eps),
     .o_brg     (w_px_brg),
+    .o_inms    (w_px_inms),
     .o_median  (w_px_median_en),
     .o_gauss   (w_px_gauss_en),
     .o_isol    (w_px_isol_en),
@@ -1081,6 +1088,7 @@ alg_top #(
     .cfg_mode(w_px_mode),                 // CANNY 全链路
     .cfg_t(w_px_t), .cfg_lo(w_px_lo), .cfg_hi(w_px_hi),
     .cfg_eps(w_px_eps),                   // NMS 容差 (只 CANNY 档有效; 0 = 参考算法)
+    .cfg_inms(w_px_inms),                 // 亚像素插值 NMS (1=开, 治锯齿/流动抖动)
     .cfg_epf(w_px_epf),                   // 前置滤波 0=关 1=高斯3x3 2=导向滤波(参考)
     .cfg_gf_eps(w_px_gf_eps),             // 导向滤波 eps (参考值 400)
     .cfg_brg(w_px_brg),                   // 断线桥接 0=关 1~3 档 (只双阈值档生效)

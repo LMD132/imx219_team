@@ -104,6 +104,8 @@ PARAMS = [
          note="0=关 1=开"),
     dict(key="brg", cmd="B", name="断线桥接 BRG", lo=0, hi=3, init=2,
          note="只双阈值档有效; 0=关 1/2/3=填1/3/5px空洞(边缘闭运算连线)"),
+    dict(key="inms", cmd="J", name="亚像素插值NMS", lo=0, hi=1, init=1,
+         names={0: "0 = 4方向量化(参考算法)", 1: "1 = 亚像素插值(治锯齿/流动)"}),
     dict(key="disp_mode", cmd="D", name="显示模式", lo=0, hi=3, init=0,
          names={0: "0 = 左右分屏(灰度|边缘)", 1: "1 = 彩色+红边叠加",
                 2: "2 = 左右 1:1", 3: "3 = 纯边缘"}),

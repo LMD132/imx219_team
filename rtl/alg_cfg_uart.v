@@ -40,6 +40,15 @@
 //                           dual-threshold modes (mode 1/2) read it: it repairs
 //                           the "a straight edge comes out as dashes" look of
 //                           Canny.  Default 2.  See algo/alg_ebridge.v.
+//     J<n>   cfg_inms        sub-pixel interpolated NMS   0/1   (default 1)
+//                           1 = compare the centre against the *interpolated*
+//                           neighbours along the true (continuous) gradient
+//                           direction, instead of the 4-axis quantised pair.
+//                           Removes the "line creeps / splits into 2-3 strands"
+//                           look that the 22.5-degree direction quantisation
+//                           puts on slanted edges.  0 = the reference 4-axis
+//                           comparison (bit-identical to the Python gold model).
+//                           See the long note at the top of algo/alg_nms.v.
 //     N<n>   cfg_median_en  0/1
 //     G<n>   cfg_gauss_en   0/1
 //     I<n>   cfg_isol_en    0/1
@@ -74,6 +83,7 @@ module alg_cfg_uart #(
     parameter [1:0]  EPF_INIT    = 2'd2,
     parameter [10:0] GFEPS_INIT  = 11'd400,
     parameter [1:0]  BRG_INIT    = 2'd2,
+    parameter        INMS_INIT   = 1'b1,
     parameter        MEDIAN_INIT = 1'b1,
     parameter        GAUSS_INIT  = 1'b0,
     parameter        ISOL_INIT   = 1'b1,
@@ -92,6 +102,7 @@ module alg_cfg_uart #(
     output reg  [1:0]  o_epf,
     output reg  [10:0] o_gf_eps,
     output reg  [1:0]  o_brg,
+    output reg         o_inms,
     output reg         o_median_en,
     output reg         o_gauss_en,
     output reg         o_isol_en,
@@ -102,22 +113,23 @@ module alg_cfg_uart #(
     output reg         o_cam_rd        // 1-cycle pulse: start one read-back
 );
 
-    localparam [3:0] K_NONE = 4'd0,
-                     K_MODE = 4'd1,
-                     K_T    = 4'd2,
-                     K_LO   = 4'd3,
-                     K_HI   = 4'd4,
-                     K_MED  = 4'd5,
-                     K_GAU  = 4'd6,
-                     K_ISO  = 4'd7,
-                     K_DSP  = 4'd8,
-                     K_OVC  = 4'd9,
-                     K_RST  = 4'd10,
-                     K_CAM  = 4'd11,
-                     K_EPS  = 4'd12,
-                     K_EPF  = 4'd13,
-                     K_GFE  = 4'd14,
-                     K_BRG  = 4'd15;
+    localparam [4:0] K_NONE = 5'd0,
+                     K_MODE = 5'd1,
+                     K_T    = 5'd2,
+                     K_LO   = 5'd3,
+                     K_HI   = 5'd4,
+                     K_MED  = 5'd5,
+                     K_GAU  = 5'd6,
+                     K_ISO  = 5'd7,
+                     K_DSP  = 5'd8,
+                     K_OVC  = 5'd9,
+                     K_RST  = 5'd10,
+                     K_CAM  = 5'd11,
+                     K_EPS  = 5'd12,
+                     K_EPF  = 5'd13,
+                     K_GFE  = 5'd14,
+                     K_BRG  = 5'd15,
+                     K_INMS = 5'd16;
 
     localparam S_KEY = 1'b0,
                S_VAL = 1'b1;
@@ -126,7 +138,7 @@ module alg_cfg_uart #(
     // Explicit widths everywhere: an implicit wire here is one bit wide in
     // Efinity and silently destroys the digit value (see the trap recorded in
     // the sibling project's uart docs).
-    function [3:0] key_of;
+    function [4:0] key_of;
         input [7:0] c;
         begin
             case (c)
@@ -138,6 +150,7 @@ module alg_cfg_uart #(
                 8'h50, 8'h70: key_of = K_EPF;    // P p
                 8'h46, 8'h66: key_of = K_GFE;    // F f
                 8'h42, 8'h62: key_of = K_BRG;    // B b
+                8'h4A, 8'h6A: key_of = K_INMS;   // J j
                 8'h4E, 8'h6E: key_of = K_MED;    // N n
                 8'h47, 8'h67: key_of = K_GAU;    // G g
                 8'h49, 8'h69: key_of = K_ISO;    // I i
@@ -166,18 +179,18 @@ module alg_cfg_uart #(
         end
     endfunction
 
-    wire [3:0] w_key    = key_of(i_data);
+    wire [4:0] w_key    = key_of(i_data);
     wire       w_is_dig = (i_data >= 8'h30) && (i_data <= 8'h39);
     wire [7:0] w_digit  = i_data - 8'h30;
     wire       w_eol    = (i_data == 8'h0A) || (i_data == 8'h0D);
 
     // ---------------------------------------------------------------- parser
     reg        state;
-    reg [3:0]  key;
+    reg [4:0]  key;
     reg [11:0] acc;
 
     reg        apply_en;
-    reg [3:0]  apply_key;
+    reg [4:0]  apply_key;
     reg [11:0] apply_val;
 
     always @(posedge clk or negedge rst_n) begin
@@ -233,6 +246,7 @@ module alg_cfg_uart #(
             o_epf       <= EPF_INIT;
             o_gf_eps    <= GFEPS_INIT;
             o_brg       <= BRG_INIT;
+            o_inms      <= INMS_INIT;
             o_median_en <= MEDIAN_INIT;
             o_gauss_en  <= GAUSS_INIT;
             o_isol_en   <= ISOL_INIT;
@@ -258,6 +272,8 @@ module alg_cfg_uart #(
                     K_GFE:  o_gf_eps    <= (apply_val > 12'd2047) ? 11'd2047 : apply_val[10:0];
                     // 断线桥接档位: 2bit 寄存器, 超过 3 夹到 3
                     K_BRG:  o_brg       <= (apply_val > 12'd3)    ? 2'd3    : apply_val[1:0];
+                    // 亚像素插值 NMS 开关: 0 = 参考 4 方向量化, 1 = 插值(默认)
+                    K_INMS: o_inms      <= (apply_val != 12'd0);
                     K_MED:  o_median_en <= (apply_val != 12'd0);
                     K_GAU:  o_gauss_en  <= (apply_val != 12'd0);
                     K_ISO:  o_isol_en   <= (apply_val != 12'd0);
@@ -272,6 +288,7 @@ module alg_cfg_uart #(
                         o_epf       <= EPF_INIT;
                         o_gf_eps    <= GFEPS_INIT;
                         o_brg       <= BRG_INIT;
+                        o_inms      <= INMS_INIT;
                         o_median_en <= MEDIAN_INIT;
                         o_gauss_en  <= GAUSS_INIT;
                         o_isol_en   <= ISOL_INIT;
