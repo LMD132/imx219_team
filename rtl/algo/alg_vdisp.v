@@ -56,7 +56,8 @@ module alg_vdisp #(
     parameter integer H      = 720,    // 有效行数
     parameter integer HTOTAL = 1650,   // 输入光栅行周期初值(clk 数, 含消隐)
     parameter integer ROWD   = 11,     // 算法垂直/水平提前量(各级 H2 累计)
-    parameter integer HALF   = 640     // W/2
+    parameter integer HALF   = 640,    // W/2
+    parameter integer NBX    = 6       // 形状识别框数上限(shp_detect/shp_overlay)
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -75,6 +76,15 @@ module alg_vdisp #(
 
     input  wire [1:0]  mode,
     input  wire        ov_color,
+
+    // 形状识别叠加(创意拓展⑥): 框表来自 shp_detect; shp_en=0 时完全不画
+    input  wire        shp_en,
+    input  wire [NBX*12-1:0] shp_bx0,
+    input  wire [NBX*12-1:0] shp_bx1,
+    input  wire [NBX*13-1:0] shp_by0,
+    input  wire [NBX*13-1:0] shp_by1,
+    input  wire [NBX*3-1:0]  shp_bcls,
+    input  wire [NBX-1:0]    shp_bval,
 
     output wire        out_vs,
     output wire        out_hs,
@@ -403,13 +413,63 @@ always @(posedge clk) begin
     end
 end
 
-assign out_x = x2_r;
-assign out_y = y2_r;
-assign out_de = de2_r & primed;
-assign out_vs = vs2_r & primed;
-assign out_hs = hs2_r & primed;
-assign out_r = orr;
-assign out_g = org;
-assign out_b = orb;
+//--------------------------------------------------------------------------
+// 4b) 形状识别叠加(创意拓展⑥): 画 bbox + 中文标签
+//     shp_overlay 用"显示坐标"当拍(x_q/y_q 与 col_q 同拍)组合算命中 + 字库地址;
+//     字库 1 拍读延迟 -> k0+1 有数据; k0+2 出 ov_hit/ov_rgb。
+//     所以输出级在原 2 级之后再顺延 2 级(第 3/4 级), 在第 4 级寄存时把叠加合入。
+//     out_* 整体比原来晚 2 个像素(所有信号同步顺延, 画面上不可见)。
+//--------------------------------------------------------------------------
+wire        ov_hit;
+wire [23:0] ov_rgb;
+
+shp_overlay #(.W(W), .H(H), .NBX(NBX), .HALF(HALF)) u_shp_ov (
+    .clk(clk), .rst_n(rst_n),
+    .en(shp_en), .de(de_q), .x(x_q), .y(y_q), .mode(mode),
+    .bx0(shp_bx0), .bx1(shp_bx1), .by0(shp_by0), .by1(shp_by1),
+    .bcls(shp_bcls), .bval(shp_bval),
+    .ov_hit(ov_hit), .ov_rgb(ov_rgb)
+);
+
+// 输出寄存器第 3/4 级(第 2 级 = 上面的 orr/org/orb, 定义不变)
+reg [7:0]  orr_b, org_b, orb_b;
+reg [7:0]  orr_c, org_c, orb_c;
+reg [11:0] x3_r, x4_r;
+reg [12:0] y3_r, y4_r;
+reg        de3_r, de4_r, vs3_r, vs4_r, hs3_r, hs4_r;
+
+always @(posedge clk) begin
+    if (!rst_n) begin
+        orr_b <= 8'd0; org_b <= 8'd0; orb_b <= 8'd0;
+        orr_c <= 8'd0; org_c <= 8'd0; orb_c <= 8'd0;
+        x3_r <= 12'd0; x4_r <= 12'd0;
+        y3_r <= 13'd0; y4_r <= 13'd0;
+        de3_r <= 1'b0; de4_r <= 1'b0;
+        vs3_r <= 1'b0; vs4_r <= 1'b0;
+        hs3_r <= 1'b0; hs4_r <= 1'b0;
+    end else begin
+        // 第 3 级
+        orr_b <= orr;  org_b <= org;  orb_b <= orb;
+        x3_r  <= x2_r; y3_r  <= y2_r;
+        de3_r <= de2_r; vs3_r <= vs2_r; hs3_r <= hs2_r;
+        // 第 4 级: 形状识别叠加在这里合入(与背景第 3 级同拍 -> 逐像素对齐)
+        if (ov_hit & primed) begin
+            orr_c <= ov_rgb[23:16]; org_c <= ov_rgb[15:8]; orb_c <= ov_rgb[7:0];
+        end else begin
+            orr_c <= orr_b; org_c <= org_b; orb_c <= orb_b;
+        end
+        x4_r  <= x3_r; y4_r  <= y3_r;
+        de4_r <= de3_r; vs4_r <= vs3_r; hs4_r <= hs3_r;
+    end
+end
+
+assign out_x = x4_r;
+assign out_y = y4_r;
+assign out_de = de4_r & primed;
+assign out_vs = vs4_r & primed;
+assign out_hs = hs4_r & primed;
+assign out_r = orr_c;
+assign out_g = org_c;
+assign out_b = orb_c;
 
 endmodule

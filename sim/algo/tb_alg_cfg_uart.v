@@ -269,6 +269,12 @@ module tb_alg_cfg_uart;
             if (!matched) begin
                 errors = errors + 1;
                 $display("FAIL telemetry line never matched (%0d bytes read)", n);
+                $write("  got: ");
+                for (k = 0; k < NB; k = k + 1) $write("%c", win[k]);
+                $write("\n");
+                $write("  hex: ");
+                for (k = 0; k < NB; k = k + 1) $write("%02x ", win[k]);
+                $write("\n");
             end else begin
                 $display("  ok  telemetry line matched after %0d bytes @%0t", n, $time);
             end

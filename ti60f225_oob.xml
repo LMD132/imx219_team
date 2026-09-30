@@ -23,8 +23,11 @@
         <efx:design_file name="rtl/algo/alg_ebridge.v" version="default" library="default" />
         <efx:design_file name="rtl/algo/alg_ring_ram.v" version="default" library="default" />
         <efx:design_file name="rtl/algo/alg_vdisp.v" version="default" library="default" />
-        <efx:design_file name="rtl/algo/alg_blend.v" version="default" library="default" />
-        <efx:design_file name="rtl/algo/alg_top.v" version="default" library="default" />
+<efx:design_file name="rtl/algo/alg_blend.v" version="default" library="default" />
+<efx:design_file name="rtl/algo/alg_top.v" version="default" library="default" />
+<efx:design_file name="rtl/algo/shp_detect.v" version="default" library="default" />
+<efx:design_file name="rtl/algo/shp_font.v" version="default" library="default" />
+<efx:design_file name="rtl/algo/shp_overlay.v" version="default" library="default" />
         <efx:design_file name="rtl/uart_rx.v" version="default" library="default" />
         <efx:design_file name="rtl/uart_tx.v" version="default" library="default" />
         <efx:design_file name="rtl/alg_cfg_uart.v" version="default" library="default" />

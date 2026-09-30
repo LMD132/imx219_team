@@ -45,6 +45,12 @@
 //     I<n>   cfg_isol_en    0/1
 //     D<n>   cfg_disp_mode  0..3
 //     C<n>   cfg_ov_color   0/1
+//     S<n>   cfg_shp_en     0/1  (创意拓展⑥ 形状识别总开关: 0 = 不画框不画字)
+//     Y<n>   cfg_shp_min    bbox 最小边长 px        8..255  (参考 24)
+//     Z<n>   cfg_shp_fill   圆/矩形 填充率分界      800..990 (参考 875)
+//                            (千分比; 圆/空心圆环实测 ≈785, 方形框 ≈1000)
+//     W<n>   cfg_shp_nbox   同时显示的框数上限      1..6  (参考 4)
+//     A<n>   cfg_shp_area   最大 bbox 面积(占全屏%) 5..100 (参考 50)
 //     R      every parameter back to its power-on default
 //     X<n>   read camera register group <n> (0..78) back over I2C and show
 //            it as the CAM field of the status line.  <n> indexes this
@@ -78,7 +84,12 @@ module alg_cfg_uart #(
     parameter        GAUSS_INIT  = 1'b0,
     parameter        ISOL_INIT   = 1'b1,
     parameter [1:0]  DISP_INIT   = 2'd0,
-    parameter        OVC_INIT    = 1'b1
+    parameter        OVC_INIT    = 1'b1,
+    parameter        SHP_INIT    = 1'b1,
+    parameter [7:0]  SHP_MIN_INIT= 8'd24,
+    parameter [9:0]  SHP_FIL_INIT= 10'd875,
+    parameter [2:0]  SHP_NBX_INIT= 3'd4,
+    parameter [6:0]  SHP_ARE_INIT= 7'd50
 ) (
     input  wire        clk,
     input  wire        rst_n,
@@ -97,27 +108,37 @@ module alg_cfg_uart #(
     output reg         o_isol_en,
     output reg  [1:0]  o_disp_mode,
     output reg         o_ov_color,
+    output reg         o_shp_en,
+    output reg  [7:0]  o_shp_min,
+    output reg  [9:0]  o_shp_fill,
+    output reg  [2:0]  o_shp_nbox,
+    output reg  [6:0]  o_shp_area,
     output reg         o_commit,
     output reg  [9:0]  o_cam_grp,      // last X<grp> value (read-back index)
     output reg         o_cam_rd        // 1-cycle pulse: start one read-back
 );
 
-    localparam [3:0] K_NONE = 4'd0,
-                     K_MODE = 4'd1,
-                     K_T    = 4'd2,
-                     K_LO   = 4'd3,
-                     K_HI   = 4'd4,
-                     K_MED  = 4'd5,
-                     K_GAU  = 4'd6,
-                     K_ISO  = 4'd7,
-                     K_DSP  = 4'd8,
-                     K_OVC  = 4'd9,
-                     K_RST  = 4'd10,
-                     K_CAM  = 4'd11,
-                     K_EPS  = 4'd12,
-                     K_EPF  = 4'd13,
-                     K_GFE  = 4'd14,
-                     K_BRG  = 4'd15;
+    localparam [4:0] K_NONE = 5'd0,
+                     K_MODE = 5'd1,
+                     K_T    = 5'd2,
+                     K_LO   = 5'd3,
+                     K_HI   = 5'd4,
+                     K_MED  = 5'd5,
+                     K_GAU  = 5'd6,
+                     K_ISO  = 5'd7,
+                     K_DSP  = 5'd8,
+                     K_OVC  = 5'd9,
+                     K_RST  = 5'd10,
+                     K_CAM  = 5'd11,
+                     K_EPS  = 5'd12,
+                     K_EPF  = 5'd13,
+                     K_GFE  = 5'd14,
+                     K_BRG  = 5'd15,
+                     K_SHP  = 5'd16,     // 形状识别开关
+                     K_SZ   = 5'd17,     // 形状最小边长
+                     K_FIL  = 5'd18,     // 填充率分界
+                     K_NBX  = 5'd19,     // 框数上限
+                     K_ARE  = 5'd20;     // 最大面积百分比
 
     localparam S_KEY = 1'b0,
                S_VAL = 1'b1;
@@ -126,7 +147,7 @@ module alg_cfg_uart #(
     // Explicit widths everywhere: an implicit wire here is one bit wide in
     // Efinity and silently destroys the digit value (see the trap recorded in
     // the sibling project's uart docs).
-    function [3:0] key_of;
+    function [4:0] key_of;
         input [7:0] c;
         begin
             case (c)
@@ -145,6 +166,11 @@ module alg_cfg_uart #(
                 8'h43, 8'h63: key_of = K_OVC;    // C c
                 8'h52, 8'h72: key_of = K_RST;    // R r
                 8'h58, 8'h78: key_of = K_CAM;    // X x
+                8'h53, 8'h73: key_of = K_SHP;    // S s
+                8'h59, 8'h79: key_of = K_SZ;     // Y y
+                8'h5A, 8'h7A: key_of = K_FIL;    // Z z
+                8'h57, 8'h77: key_of = K_NBX;    // W w
+                8'h41, 8'h61: key_of = K_ARE;    // A a
                 default:      key_of = K_NONE;
             endcase
         end
@@ -166,18 +192,18 @@ module alg_cfg_uart #(
         end
     endfunction
 
-    wire [3:0] w_key    = key_of(i_data);
+    wire [4:0] w_key    = key_of(i_data);
     wire       w_is_dig = (i_data >= 8'h30) && (i_data <= 8'h39);
     wire [7:0] w_digit  = i_data - 8'h30;
     wire       w_eol    = (i_data == 8'h0A) || (i_data == 8'h0D);
 
     // ---------------------------------------------------------------- parser
     reg        state;
-    reg [3:0]  key;
+    reg [4:0]  key;
     reg [11:0] acc;
 
     reg        apply_en;
-    reg [3:0]  apply_key;
+    reg [4:0]  apply_key;
     reg [11:0] apply_val;
 
     always @(posedge clk or negedge rst_n) begin
@@ -238,6 +264,11 @@ module alg_cfg_uart #(
             o_isol_en   <= ISOL_INIT;
             o_disp_mode <= DISP_INIT;
             o_ov_color  <= OVC_INIT;
+            o_shp_en    <= SHP_INIT;
+            o_shp_min   <= SHP_MIN_INIT;
+            o_shp_fill  <= SHP_FIL_INIT;
+            o_shp_nbox  <= SHP_NBX_INIT;
+            o_shp_area  <= SHP_ARE_INIT;
             o_commit    <= 1'b0;
             o_cam_grp   <= 10'd0;
             o_cam_rd    <= 1'b0;
@@ -263,6 +294,16 @@ module alg_cfg_uart #(
                     K_ISO:  o_isol_en   <= (apply_val != 12'd0);
                     K_DSP:  o_disp_mode <= (apply_val > 12'd3)    ? 2'd3    : apply_val[1:0];
                     K_OVC:  o_ov_color  <= (apply_val != 12'd0);
+                    // 形状识别: 开关 + 4 个判据(全部有内部限幅, 这里再夹一次)
+                    K_SHP:  o_shp_en    <= (apply_val != 12'd0);
+                    K_SZ:   o_shp_min   <= (apply_val < 12'd8)    ? 8'd8    :
+                                           ((apply_val > 12'd255) ? 8'd255 : apply_val[7:0]);
+                    K_FIL:  o_shp_fill  <= (apply_val < 12'd800)  ? 10'd800 :
+                                           ((apply_val > 12'd990) ? 10'd990 : apply_val[9:0]);
+                    K_NBX:  o_shp_nbox  <= (apply_val < 12'd1)    ? 3'd1    :
+                                           ((apply_val > 12'd6)   ? 3'd6    : apply_val[2:0]);
+                    K_ARE:  o_shp_area  <= (apply_val < 12'd5)    ? 7'd5    :
+                                           ((apply_val > 12'd100) ? 7'd100  : apply_val[6:0]);
                     K_RST: begin
                         o_mode      <= MODE_INIT;
                         o_t         <= T_INIT;
@@ -277,6 +318,11 @@ module alg_cfg_uart #(
                         o_isol_en   <= ISOL_INIT;
                         o_disp_mode <= DISP_INIT;
                         o_ov_color  <= OVC_INIT;
+                        o_shp_en    <= SHP_INIT;
+                        o_shp_min   <= SHP_MIN_INIT;
+                        o_shp_fill  <= SHP_FIL_INIT;
+                        o_shp_nbox  <= SHP_NBX_INIT;
+                        o_shp_area  <= SHP_ARE_INIT;
                     end
                     // Index into the register table this build actually programs:
                     // MEM_DEPTH=237 bytes / 3 = groups 0..78.  Above that the

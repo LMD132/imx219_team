@@ -15,7 +15,7 @@
 
 板子每 500ms 回一行状态, 收到命令后还会立刻回一行:
 
-    M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0077=C0
+    M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0077=C0 SHP1 SZ024 FL875 BX4 AR050
 
 界面右边"板端"那一列显示的就是这行回读值, 也就是 FPGA 里真正生效的值。
 如果它和滑块不一致(比如串口没接好), 会变成红色并在状态栏提示。
@@ -51,6 +51,18 @@
           组号 = piv2_720p_7M_2L_reg.mem 里 3 字节一组的序号, 一组是
           [地址高, 地址低, 值], 所以 X77 就是读 0x0157 (AGAIN) 的当前值,
           X75/X76 是曝光 0x015A/0x015B。越界会夹到 78。
+    S<n>  形状识别总开关         0/1      (创意拓展⑥, 默认 1 = 开)
+           rtl/algo/alg_top.v 里的 shp_detect: 对边缘图做游程/连通域统计,
+           符合"圆形/矩形/三角/十字"的块画彩色框 + 16x16 点阵汉字标签。
+           S0 = 全关(输出与没加这个模块时逐位一致)。
+    Y<n>  形状 最小边长 px       8..255   (默认 24, 越界夹住)
+           bbox 任一边小于它就丢弃, 用来滤掉噪点碎块。
+    Z<n>  形状 圆/矩形分界       800..990 (默认 875, 越界夹住)
+           填充率千分比: 实测圆心(含空心环, 行跨度按外轮廓算)≈785 < 875 <
+           方形≈1000。 >该值判矩形, 落在 [600,该值) 判圆形。
+    W<n>  形状 同时显示框数上限   1..6     (默认 4)
+    A<n>  形状 最大面积(占全屏%)  5..100   (默认 50)
+           bbox 面积超过全屏该比例就丢弃(滤掉整片背景大块)。
 
 用法:  python tools/alg_tuner.py
 依赖:  pip install pyserial   (标准库自带 tkinter)
@@ -109,6 +121,16 @@ PARAMS = [
                 2: "2 = 左右 1:1", 3: "3 = 纯边缘"}),
     dict(key="ov_color", cmd="C", name="边缘彩色叠加", lo=0, hi=1, init=1,
          note="只对显示模式 1 有效"),
+    dict(key="shp_en", cmd="S", name="形状识别开关", lo=0, hi=1, init=1,
+         note="创意拓展⑥; 1 = 检到图形画框 + 汉字标签, 0 = 全关"),
+    dict(key="shp_min", cmd="Y", name="形状 最小边长", lo=8, hi=255, init=24,
+         note="bbox 任一边小于它就丢弃(px), 调大=滤掉小碎块"),
+    dict(key="shp_fill", cmd="Z", name="形状 圆/矩形分界", lo=800, hi=990, init=875,
+         note="填充率千分比; 圆≈785<该值<方形≈1000"),
+    dict(key="shp_nbox", cmd="W", name="形状 最多框数", lo=1, hi=6, init=4,
+         note="同时显示的框数上限"),
+    dict(key="shp_area", cmd="A", name="形状 最大面积%", lo=5, hi=100, init=50,
+         note="bbox 面积超过全屏该百分比就丢弃(滤大背景块)"),
 ]
 
 TELEM_RE = re.compile(
@@ -119,7 +141,12 @@ TELEM_RE = re.compile(
     r"(?:\s+EPF(?P<epf>\d+))?"          # EPF 起(77 字节行)才有
     r"(?:\s+GF(?P<gf_eps>\d+))?"
     r"(?:\s+BRG(?P<brg>\d+))?"          # 82 字节新行才有
-    r"(?:\s+CAM(?P<cam_grp>\d+)=(?P<cam_val>[0-9A-Fa-f]{2}))?")
+    r"(?:\s+CAM(?P<cam_grp>\d+)=(?P<cam_val>[0-9A-Fa-f]{2}))?"
+    r"(?:\s+SHP(?P<shp_en>\d+))?"       # 108 字节行(形状识别)才有
+    r"(?:\s+SZ(?P<shp_min>\d+))?"
+    r"(?:\s+FL(?P<shp_fill>\d+))?"
+    r"(?:\s+BX(?P<shp_nbox>\d+))?"
+    r"(?:\s+AR(?P<shp_area>\d+))?")
 
 # 状态行里 CAM 组的已知含义 (见 rtl/cam/piv2_config.v 的寄存器表)
 CAM_HINT = "77=AGAIN 0x0157   75/76=曝光 0x015A/B   71=帧长 0x0160"

@@ -75,6 +75,13 @@ module alg_top #(
     input  wire [1:0]  cfg_disp_mode,
     input  wire        cfg_ov_color,
 
+    // 形状识别(创意拓展⑥): 开关 + 4 个判据参数(全部由调参台在线改)
+    input  wire        cfg_shp_en,        // 0 = 关闭(不画框不画字)
+    input  wire [7:0]  cfg_shp_min,       // bbox 最小边长(px)   默认 24
+    input  wire [9:0]  cfg_shp_fill,      // 圆/矩形 填充率分界   默认 875
+    input  wire [2:0]  cfg_shp_nbox,      // 显示框数上限 1..6    默认 4
+    input  wire [6:0]  cfg_shp_area,      // 最大面积(占全屏%)   默认 50
+
     output wire        out_vs,
     output wire        out_hs,
     output wire        out_de,
@@ -267,6 +274,31 @@ alg_despeckle #(.W(W), .VEXT(VEXT), .H(H)) u_dsp (
 );
 
 //--------------------------------------------------------------------------
+// 8b) 形状识别(创意拓展⑥): 在 dsp 边缘流上做游程连通域 + 几何特征分类
+//     输出最多 6 个框(bbox + 类别)给 alg_vdisp 画出来; 只读旁路, 不占 BRAM。
+//     参数 cfg_shp_en=0 时内部清表、输出全 0 -> 与上一版逐位一致(可回退对照)。
+//--------------------------------------------------------------------------
+wire [6*12-1:0] shp_bx0, shp_bx1;
+wire [6*13-1:0] shp_by0, shp_by1;
+wire [6*3-1:0]  shp_bcls;
+wire [5:0]      shp_bval;
+wire [9:0]      shp_cnt;
+wire [15:0]     shp_ovf;
+
+shp_detect #(.W(W), .H(H), .NB(8), .NBX(6)) u_shp (
+    .clk(clk), .rst_n(rst_n),
+    .cfg_en(cfg_shp_en), .cfg_min_size(cfg_shp_min),
+    .cfg_max_boxes(cfg_shp_nbox), .cfg_fill_th(cfg_shp_fill),
+    .cfg_max_area(cfg_shp_area),
+    .in_vs(dsp_vs), .in_de(dsp_def),
+    .in_x(dsp_x), .in_y(dsp_y), .in_d(dsp_d),
+    .o_bx0(shp_bx0), .o_bx1(shp_bx1),
+    .o_by0(shp_by0), .o_by1(shp_by1),
+    .o_bcls(shp_bcls), .o_bval(shp_bval),
+    .o_cnt(shp_cnt), .o_ovf(shp_ovf)
+);
+
+//--------------------------------------------------------------------------
 // 9) 显示合成与对齐(alg_vdisp)
 //    alg_vdisp 内部: 显示光栅 = 输入光栅整体延迟 TDLY = ROWS*HTOTAL 拍, 彩色
 //    行缓存按"显示坐标"读出, 边缘行缓存按 dsp 标签(= 源像素坐标)写入 ->
@@ -280,6 +312,10 @@ alg_vdisp #(
     .in_rgb({in_r, in_g, in_b}),
     .ed_de(dsp_def), .ed_x(dsp_x), .ed_y(dsp_y), .ed_d(dsp_d),
     .mode(cfg_disp_mode), .ov_color(cfg_ov_color),
+    .shp_en(cfg_shp_en),
+    .shp_bx0(shp_bx0), .shp_bx1(shp_bx1),
+    .shp_by0(shp_by0), .shp_by1(shp_by1),
+    .shp_bcls(shp_bcls), .shp_bval(shp_bval),
     .out_vs(out_vs), .out_hs(out_hs), .out_de(out_de),
     .out_x(out_x), .out_y(out_y),
     .out_r(out_r), .out_g(out_g), .out_b(out_b)

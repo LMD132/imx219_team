@@ -871,6 +871,12 @@ wire [3:0]  w_cfg_eps;
 wire [1:0]  w_cfg_epf;
 wire [10:0] w_cfg_gf_eps;
 wire [1:0]  w_cfg_brg;
+// 形状识别(创意拓展⑥) 运行期参数
+wire        w_cfg_shp_en;
+wire [7:0]  w_cfg_shp_min;
+wire [9:0]  w_cfg_shp_fill;
+wire [2:0]  w_cfg_shp_nbox;
+wire [6:0]  w_cfg_shp_area;
 wire        w_cfg_median_en;
 wire        w_cfg_gauss_en;
 wire        w_cfg_isol_en;
@@ -886,6 +892,11 @@ wire [3:0]  w_px_eps;
 wire [1:0]  w_px_epf;
 wire [10:0] w_px_gf_eps;
 wire [1:0]  w_px_brg;
+wire        w_px_shp_en;
+wire [7:0]  w_px_shp_min;
+wire [9:0]  w_px_shp_fill;
+wire [2:0]  w_px_shp_nbox;
+wire [6:0]  w_px_shp_area;
 wire        w_px_median_en;
 wire        w_px_gauss_en;
 wire        w_px_isol_en;
@@ -914,7 +925,12 @@ alg_cfg_uart #(
     .GAUSS_INIT  (1'b0),
     .ISOL_INIT   (1'b1),
     .DISP_INIT   (2'd0),
-    .OVC_INIT    (1'b1)
+    .OVC_INIT    (1'b1),
+    .SHP_INIT    (1'b1),
+    .SHP_MIN_INIT(8'd24),
+    .SHP_FIL_INIT(10'd875),
+    .SHP_NBX_INIT(3'd4),
+    .SHP_ARE_INIT(7'd50)
 ) u_alg_cfg_uart (
     .clk         (CLK_25M),
     .rst_n       (w_arstn),
@@ -935,7 +951,12 @@ alg_cfg_uart #(
     .o_ov_color  (w_cfg_ov_color),
     .o_commit    (w_cfg_commit),
     .o_cam_grp   (w_cam_grp),
-    .o_cam_rd    (w_cam_rd)
+    .o_cam_rd    (w_cam_rd),
+    .o_shp_en    (w_cfg_shp_en),
+    .o_shp_min   (w_cfg_shp_min),
+    .o_shp_fill  (w_cfg_shp_fill),
+    .o_shp_nbox  (w_cfg_shp_nbox),
+    .o_shp_area  (w_cfg_shp_area)
 );
 
 //==============================================================================
@@ -1019,6 +1040,11 @@ alg_cfg_telemetry #(
     .i_cam_grp(w_cam_grp),
     .i_cam_val(w_cam_val),
     .i_update (w_cfg_commit | w_cam_done),
+    .i_shp_en (w_cfg_shp_en),
+    .i_shp_min(w_cfg_shp_min),
+    .i_shp_fill(w_cfg_shp_fill),
+    .i_shp_nbox(w_cfg_shp_nbox),
+    .i_shp_area(w_cfg_shp_area),
     .o_txd    (o_uart_txd)
 );
 alg_cfg_sync #(
@@ -1034,7 +1060,12 @@ alg_cfg_sync #(
     .GAUSS_INIT  (1'b0),
     .ISOL_INIT   (1'b1),
     .DISP_INIT   (2'd0),
-    .OVC_INIT    (1'b1)
+    .OVC_INIT    (1'b1),
+    .SHP_INIT    (1'b1),
+    .SHP_MIN_INIT(8'd24),
+    .SHP_FIL_INIT(10'd875),
+    .SHP_NBX_INIT(3'd4),
+    .SHP_ARE_INIT(7'd50)
 ) u_alg_cfg_sync (
     .clk_a     (CLK_25M),
     .rst_a_n   (w_arstn),
@@ -1052,6 +1083,11 @@ alg_cfg_sync #(
     .i_isol    (w_cfg_isol_en),
     .i_disp    (w_cfg_disp_mode),
     .i_ovc     (w_cfg_ov_color),
+    .i_shp_en  (w_cfg_shp_en),
+    .i_shp_min (w_cfg_shp_min),
+    .i_shp_fill(w_cfg_shp_fill),
+    .i_shp_nbox(w_cfg_shp_nbox),
+    .i_shp_area(w_cfg_shp_area),
     .clk_b     (hdmi_tx_slow_clk),
     .rst_b_n   (vid_rst_n),
     .o_mode    (w_px_mode),
@@ -1066,7 +1102,12 @@ alg_cfg_sync #(
     .o_gauss   (w_px_gauss_en),
     .o_isol    (w_px_isol_en),
     .o_disp    (w_px_disp_mode),
-    .o_ovc     (w_px_ov_color)
+    .o_ovc     (w_px_ov_color),
+    .o_shp_en  (w_px_shp_en),
+    .o_shp_min (w_px_shp_min),
+    .o_shp_fill(w_px_shp_fill),
+    .o_shp_nbox(w_px_shp_nbox),
+    .o_shp_area(w_px_shp_area)
 );
 
 alg_top #(
@@ -1089,6 +1130,11 @@ alg_top #(
     .cfg_isol_en(w_px_isol_en),
     .cfg_disp_mode(w_px_disp_mode),       // 同视野左右分屏
     .cfg_ov_color(w_px_ov_color),             // 仅 mode 1 使用; mode 0 忽略此位
+    .cfg_shp_en(w_px_shp_en),             // 形状识别总开关 (创意拓展⑥)
+    .cfg_shp_min(w_px_shp_min),           // bbox 最小边长 px
+    .cfg_shp_fill(w_px_shp_fill),         // 圆/矩形 填充率分界(千分比)
+    .cfg_shp_nbox(w_px_shp_nbox),         // 同时显示的框数上限
+    .cfg_shp_area(w_px_shp_area),         // 最大 bbox 面积(占全屏%)
     .out_vs(edge_vs), .out_hs(edge_hs), .out_de(edge_de),
     .out_x(edge_x), .out_y(edge_y),
     .out_r(edge_r), .out_g(edge_g), .out_b(edge_b)
