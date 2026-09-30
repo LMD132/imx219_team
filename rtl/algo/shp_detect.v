@@ -431,18 +431,38 @@ module shp_detect #(
     wire ok_area = ({7'd0, ret_area} <= area_max);
     wire aspect_round = (w10 >= h7) & (h10 >= w7);    // 0.7 <= w/h <= 1.43
 
-    wire c_rect   = (fill1000 >= r_a_th);                            // >=fill_th
-    wire c_circle = (fill1000 >= area600) & (fill1000 < r_a_th) & aspect_round;
-    wire c_low    = (fill1000 >= area300) & (fill1000 < area600);
     // 三角/十字分界: "最宽的行在哪"
-    //   三角: 最宽行贴着 bbox 的上边或下边(4*d_top<=h 或 4*d_bot<=h)
+    //   三角: 最宽行贴着 bbox 的上边或下边(4*d_top<=h 或 4*d_bot<=h),
+    //         即 4*(my0-y0) <= h 或 4*(y1-my1) <= h;
     //   十字: 最宽行(横杠)在中间, 上下都远
     //   OR 上旧的 lsp 判据(底边真占满时仍算三角) —— 只放宽不收紧。
+    wire [15:0] h16   = {4'b0, ret_h};
     wire [15:0] dtop4 = ({3'b0, (ret_my0 - ret_ytop)} << 2);   // 4*d_top
     wire [15:0] dbot4 = ({3'b0, (ret_ybot - ret_my1)} << 2);   // 4*d_bot
-    wire [15:0] h16   = {4'b0, ret_h};
     wire tri_end  = (dtop4 <= h16) | (dbot4 <= h16);
     wire tri_full = (lsp2 >= {2'b0, ret_w});           // 旧判据: 最后一行占满全宽
+
+    // ---- 最宽平台率(治"矩形稍微拿歪就掉进圆形/十字档") ----
+    //   空心框/实心块旋转时 fill(每行 x 跨度累加)几乎不变, 但水平外接矩形
+    //   bbox 随旋转变大 -> fill1000 = fill/(w*h)*1000 一路掉:
+    //   仿真实测 0°->1000, 8°->778, 15°->659, 22°->587, 30°->526, 45°->500。
+    //   而"取得最大跨度的行区间"长度(平台)随角度缓慢缩短, 占 bbox 高的
+    //   比例 = |cos-sin|/(cos+sin): 15°->58%, 22°->43%, 30°->27%;
+    //   圆只有 1~4%(仿真实测 r40/r30 圆各 1 行平台)。
+    //   阈值取 40%: 排除 正十字(横杠平台 25.5%)/粗臂十字(37.9%)/圆(<=4%),
+    //   保留 600~875 档里的歪方框(该档对应 6°~20°, 平台率 57%~82%)。
+    //   约束 flat_rect 要 aspect_round(0.7<=w/h<=1.43): 圆形候选本来就是
+    //   近方的; 长条/数字不受影响。
+    wire [13:0] flat_w  = {1'b0, ret_my1} - {1'b0, ret_my0} + 14'd1;
+    wire [16:0] flat5   = ({3'b0, flat_w} << 2) + {3'b0, flat_w};   // 5 x 平台行数
+    wire [16:0] h2      = {1'b0, h16} << 1;                         // 2 x 高度
+    wire        flat_hi = (flat5 >= h2);                            // 平台率 >= 40%
+    wire        flat_rect = flat_hi & aspect_round;
+
+    wire c_rect   = (fill1000 >= r_a_th) |
+                    ((fill1000 >= area300) & (fill1000 < r_a_th) & flat_rect);
+    wire c_circle = (fill1000 >= area600) & (fill1000 < r_a_th) & aspect_round & ~flat_hi;
+    wire c_low    = (fill1000 >= area300) & (fill1000 < area600) & ~flat_rect;
     wire c_tri    = c_low & (tri_end | tri_full);
     wire c_cross  = c_low & ~(tri_end | tri_full);
     wire qualified = ok_size & ok_area & (c_circle | c_rect | c_tri | c_cross);
