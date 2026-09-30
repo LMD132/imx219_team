@@ -13,17 +13,23 @@
 //     一行的左右两段(比如圆的左弧和右弧)会先后落进同一个 blob 的 x 范围内,
 //     于是被正确并到一起。表里最多 NB=8 个并发 blob(够画面上 8 个图形)。
 //
-//  2) 每个 blob 用 11 个累加量描述: bbox(x0,x1,y0,y1) + 边缘像素数 cnt
+//  2) 每个 blob 用 14 个累加量描述: bbox(x0,x1,y0,y1) + 边缘像素数 cnt
 //     + 行跨度累加 sum(每行的 x1-x0+1 累加, 当"填充面积"的估计)
-//     + 当前行暂存(rmn,rmx,rs)。表很小, 全用寄存器, 不占 BRAM。
+//     + 当前行暂存(rmn,rmx,rs) + 最宽行记录(mxc,my0,my1)。
+//     表很小, 全用寄存器, 不占 BRAM。
 //
 //  3) 一个 blob "退休"(行尾超时/帧末)时算几何特征并分类:
 //        r   = sum / (w*h)                   -- 填充率(千分比)
-//        lsp = 最后一行的跨度(≈底边宽度)
 //        矩形:   r >= fill_th                (方形框/矩形框 r≈1000)
 //        圆形:   600 <= r < fill_th 且 bbox 近正方 (圆/空心圆环 r≈785)
-//        三角:   r < 600 且 lsp >= w/2       (三角 r≈500, 底边占满全宽)
-//        十字:   r < 600 且 lsp <  w/2       (加号 r≈420, 底边只有臂宽)
+//        三角/十字: r < 600, 再看"最宽的行在哪"(mxc/my0/my1):
+//               三角: 最宽的行贴着 bbox 的上边或下边(正三角=底边, 倒三角=顶边),
+//                     即 4*(my0-y0) <= h 或 4*(y1-my1) <= h;
+//               十字: 最宽的行是中间那根"横杠", 上下都离得远。
+//             旧版只看"最后一行的跨度 lsp"当底边宽度, 相机略微倾斜(手持几乎不可避
+//             免)或底边混进一小段杂线时底边那一行就变短 -> 三角被误判成十字, 而且
+//             在阈值附近来回跳。lsp >= w/2 保留为 OR 项: 底边确实占满时仍算三角,
+//             只放宽不收紧(十字的底边只有中间臂宽, 不受影响)。
 //        (直线段/数字 r<300 记无效; 圆是空心还是实心不影响上述边缘特征)
 //     阈值比较全部用乘加比较(和 fill_th 比用一次乘法), 无除法器。
 //
@@ -160,6 +166,9 @@ module shp_detect #(
     reg  [11:0]    b_rmn [0:NB-1];      // 当前行的跨度
     reg  [11:0]    b_rmx [0:NB-1];
     reg            b_rs  [0:NB-1];      // 当前行已开始
+    reg  [11:0]    b_mxc [0:NB-1];      // 已完成行里最大的 x 跨度(0=还没有已完成行)
+    reg  [12:0]    b_my0 [0:NB-1];      // 取到该最大跨度的首行
+    reg  [12:0]    b_my1 [0:NB-1];      // ...末行(连成一片时取整个区间)
 
     // ------------------------------------------------------- top 列表(NBX)
     reg            l_val [0:NBX-1];
@@ -210,6 +219,8 @@ module shp_detect #(
     reg  [11:0] ret_lsp;                 // 最后一行(底边)跨度
     reg  [19:0] ret_fill, ret_area;
     reg  [9:0]  f_cnt_cur;               // 本帧已提交的合格图形数
+    reg  [12:0] ret_ytop, ret_ybot;      // bbox 上/下边(退休时锁存)
+    reg  [12:0] ret_my0,  ret_my1;       // 最宽行的首/末行(退休时锁存)
 
     integer i;
     reg [3:0]  t_idx;
@@ -248,6 +259,64 @@ module shp_detect #(
         end
     end
 
+    // ---- 最宽行记录(合并值): 打包 {span[11:0], my0[12:0], my1[12:0]} = 38bit ----
+    //   mx2     : 合并两份记录 —— 取跨度大的; 跨度相等时行号区间取并集。
+    //   slot_mx : 单个槽的候选 = 已记录的最宽行 ∪ (本拍被冲掉的挂起行)。
+    // 8 槽串行比较在 74.25MHz 域跑不完一个周期(旧写法报 -6.98ns), 故拆三级折叠:
+    //   S_MATCH 折半寄存(8->4) → S_MPRI 折半寄存(4->2) → S_APPLY 组合折成 1 份。
+    function [37:0] mx2;
+        input [37:0] a, b;
+        reg [11:0] sa, sb;
+        begin
+            sa = a[37:26]; sb = b[37:26];
+            if (sa > sb)          mx2 = a;
+            else if (sb > sa)     mx2 = b;
+            else if (sa == 12'd0) mx2 = 38'd0;      // 两侧都"还没有已完成行"
+            else                  mx2 = { sa,
+                        (a[25:13] < b[25:13]) ? a[25:13] : b[25:13],
+                        (a[12:0]  > b[12:0])  ? a[12:0]  : b[12:0] };
+        end
+    endfunction
+
+    function [37:0] slot_mx;
+        input [11:0] mxc;   input [12:0] my0i, my1i;
+        input        flush; input [11:0] sp;   input [12:0] fy;
+        begin
+            // 挂起行在"换行"那一拍才算完成; 最后一行由退休侧的 sp_last 补偿。
+            slot_mx = mx2({mxc, my0i, my1i},
+                          flush ? {sp, fy, fy} : {12'd0, 13'd0, 13'd0});
+        end
+    endfunction
+
+    wire [37:0] mx_s0 = c_match[0] ? slot_mx(b_mxc[0], b_my0[0], b_my1[0],
+                          b_rs[0] & (s_y != b_lr[0]), b_rmx[0] - b_rmn[0] + 12'd1, b_lr[0]) : 38'd0;
+    wire [37:0] mx_s1 = c_match[1] ? slot_mx(b_mxc[1], b_my0[1], b_my1[1],
+                          b_rs[1] & (s_y != b_lr[1]), b_rmx[1] - b_rmn[1] + 12'd1, b_lr[1]) : 38'd0;
+    wire [37:0] mx_s2 = c_match[2] ? slot_mx(b_mxc[2], b_my0[2], b_my1[2],
+                          b_rs[2] & (s_y != b_lr[2]), b_rmx[2] - b_rmn[2] + 12'd1, b_lr[2]) : 38'd0;
+    wire [37:0] mx_s3 = c_match[3] ? slot_mx(b_mxc[3], b_my0[3], b_my1[3],
+                          b_rs[3] & (s_y != b_lr[3]), b_rmx[3] - b_rmn[3] + 12'd1, b_lr[3]) : 38'd0;
+    wire [37:0] mx_s4 = c_match[4] ? slot_mx(b_mxc[4], b_my0[4], b_my1[4],
+                          b_rs[4] & (s_y != b_lr[4]), b_rmx[4] - b_rmn[4] + 12'd1, b_lr[4]) : 38'd0;
+    wire [37:0] mx_s5 = c_match[5] ? slot_mx(b_mxc[5], b_my0[5], b_my1[5],
+                          b_rs[5] & (s_y != b_lr[5]), b_rmx[5] - b_rmn[5] + 12'd1, b_lr[5]) : 38'd0;
+    wire [37:0] mx_s6 = c_match[6] ? slot_mx(b_mxc[6], b_my0[6], b_my1[6],
+                          b_rs[6] & (s_y != b_lr[6]), b_rmx[6] - b_rmn[6] + 12'd1, b_lr[6]) : 38'd0;
+    wire [37:0] mx_s7 = c_match[7] ? slot_mx(b_mxc[7], b_my0[7], b_my1[7],
+                          b_rs[7] & (s_y != b_lr[7]), b_rmx[7] - b_rmn[7] + 12'd1, b_lr[7]) : 38'd0;
+
+    wire [37:0] mx_p0 = mx2(mx_s0, mx_s1);
+    wire [37:0] mx_p1 = mx2(mx_s2, mx_s3);
+    wire [37:0] mx_p2 = mx2(mx_s4, mx_s5);
+    wire [37:0] mx_p3 = mx2(mx_s6, mx_s7);
+
+    reg  [37:0] pm_mx0, pm_mx1, pm_mx2, pm_mx3;   // S_MATCH 折半寄存(8->4)
+    reg  [37:0] pq_mx0, pq_mx1;                    // S_MPRI  折半寄存(4->2)
+    wire [37:0] mx_fin = mx2(pq_mx0, pq_mx1);      // S_APPLY 组合(2->1)
+    wire [11:0] mg_mxc = mx_fin[37:26];            // 最宽行跨度(合并后)
+    wire [12:0] mg_my0 = mx_fin[25:13];            // 该跨度对应的行区间
+    wire [12:0] mg_my1 = mx_fin[12:0];
+
     // 掩码里最小的置位下标(从高往低扫, 后写的胜)
     function [3:0] low_idx;
         input [NB-1:0] m;
@@ -279,6 +348,8 @@ module shp_detect #(
                 end else if (b_rs[i]) begin       // 换行: 把上一行的跨度冲进 sum
                     mg_sum = mg_sum + {8'd0, (b_rmx[i] - b_rmn[i] + 12'd1)};
                 end
+                // (最宽行记录的合并已移出本循环: 按 mx2/slot_mx 三级折叠,
+                //  见上方函数与 S_MATCH/S_MPRI 的折半寄存, 避免 8 槽串行比较)
             end
         end
     end
@@ -328,6 +399,19 @@ module shp_detect #(
     //   fill/area >= fil_th/1000
     reg [31:0] r_a_th;
 
+    // ---- 退休用组合量(ret_slot 指向正要退休的 blob) -------------------------
+    //   sp_last = "挂起行"(blob 最后一行)的跨度。挂起行还没进 b_sum/b_mxc,
+    //   退休时把它也算进最宽行(和 ret_fill 的算法一致), 得到 sp_my0/sp_my1。
+    wire [11:0] sp_last = b_rmx[ret_slot] - b_rmn[ret_slot] + 12'd1;
+    wire        sp_gt   = (sp_last >  b_mxc[ret_slot]);
+    wire        sp_eq   = (sp_last == b_mxc[ret_slot]);
+    wire [12:0] sp_my0  = sp_gt ? b_lr[ret_slot] :
+                          sp_eq ? ((b_lr[ret_slot] < b_my0[ret_slot]) ? b_lr[ret_slot] : b_my0[ret_slot])
+                                : b_my0[ret_slot];
+    wire [12:0] sp_my1  = sp_gt ? b_lr[ret_slot] :
+                          sp_eq ? ((b_lr[ret_slot] > b_my1[ret_slot]) ? b_lr[ret_slot] : b_my1[ret_slot])
+                                : b_my1[ret_slot];
+
     wire [31:0] fill1000 = ({12'd0, ret_fill} << 10)
                          - ({12'd0, ret_fill} << 4)
                          - ({12'd0, ret_fill} << 3);
@@ -350,8 +434,17 @@ module shp_detect #(
     wire c_rect   = (fill1000 >= r_a_th);                            // >=fill_th
     wire c_circle = (fill1000 >= area600) & (fill1000 < r_a_th) & aspect_round;
     wire c_low    = (fill1000 >= area300) & (fill1000 < area600);
-    wire c_tri    = c_low & (lsp2 >= {2'b0, ret_w});   // 底边占满 => 三角
-    wire c_cross  = c_low & ~(lsp2 >= {2'b0, ret_w});  // 底边只中段 => 十字
+    // 三角/十字分界: "最宽的行在哪"
+    //   三角: 最宽行贴着 bbox 的上边或下边(4*d_top<=h 或 4*d_bot<=h)
+    //   十字: 最宽行(横杠)在中间, 上下都远
+    //   OR 上旧的 lsp 判据(底边真占满时仍算三角) —— 只放宽不收紧。
+    wire [15:0] dtop4 = ({3'b0, (ret_my0 - ret_ytop)} << 2);   // 4*d_top
+    wire [15:0] dbot4 = ({3'b0, (ret_ybot - ret_my1)} << 2);   // 4*d_bot
+    wire [15:0] h16   = {4'b0, ret_h};
+    wire tri_end  = (dtop4 <= h16) | (dbot4 <= h16);
+    wire tri_full = (lsp2 >= {2'b0, ret_w});           // 旧判据: 最后一行占满全宽
+    wire c_tri    = c_low & (tri_end | tri_full);
+    wire c_cross  = c_low & ~(tri_end | tri_full);
     wire qualified = ok_size & ok_area & (c_circle | c_rect | c_tri | c_cross);
     wire [2:0] cls_now = c_circle ? 3'd1 : c_rect ? 3'd2 :
                          c_tri ? 3'd3 : c_cross ? 3'd4 : 3'd0;
@@ -383,12 +476,14 @@ module shp_detect #(
                 b_y0[i] <= 13'd0; b_y1[i] <= 13'd0; b_lr[i] <= 13'd0;
                 b_cnt[i] <= 20'd0; b_sum[i] <= 20'd0;
                 b_rmn[i] <= 12'd0; b_rmx[i] <= 12'd0; b_rs[i] <= 1'b0;
+                b_mxc[i] <= 12'd0; b_my0[i] <= 13'd0; b_my1[i] <= 13'd0;
             end
         end else begin
             if (clr_all) begin
                 for (i = 0; i < NB; i = i + 1) begin
                     b_act[i] <= 1'b0; b_cnt[i] <= 20'd0; b_sum[i] <= 20'd0;
                     b_rs[i] <= 1'b0; b_rmn[i] <= 12'd0; b_rmx[i] <= 12'd0;
+                    b_mxc[i] <= 12'd0; b_my0[i] <= 13'd0; b_my1[i] <= 13'd0;
                 end
             end
             if ((state == S_APPLY) && ~clr_all) begin
@@ -406,6 +501,8 @@ module shp_detect #(
                         b_sum[i] <= b_sum[i] + mg_sum;
                         b_rmn[i] <= mg_rmn; b_rmx[i] <= mg_rmx;
                         b_rs[i]  <= 1'b1;
+                        b_mxc[i] <= mg_mxc;              // 最宽行记录一起并过来
+                        b_my0[i] <= mg_my0; b_my1[i] <= mg_my1;
                     end
                     if (alloc_oh[i]) begin                     // 新 blob
                         b_act[i] <= 1'b1;
@@ -416,6 +513,8 @@ module shp_detect #(
                         b_sum[i] <= 20'd0;
                         b_rmn[i] <= s_x0;  b_rmx[i] <= s_x1;
                         b_rs[i]  <= 1'b1;
+                        b_mxc[i] <= 12'd0;               // 还没有"已完成行"
+                        b_my0[i] <= s_y;   b_my1[i] <= s_y;
                     end
                 end
             end
@@ -437,6 +536,10 @@ module shp_detect #(
             m0       <= 4'd0;
             s_x0 <= 12'd0; s_x1 <= 12'd0; s_y <= 13'd0; s_len <= 13'd0;
             ret_w <= 12'd0; ret_h <= 12'd0; ret_fill <= 20'd0; ret_area <= 20'd0;
+            ret_lsp <= 12'd0; ret_ytop <= 13'd0; ret_ybot <= 13'd0;
+            ret_my0 <= 13'd0; ret_my1 <= 13'd0;
+            pm_mx0 <= 38'd0; pm_mx1 <= 38'd0; pm_mx2 <= 38'd0; pm_mx3 <= 38'd0;
+            pq_mx0 <= 38'd0; pq_mx1 <= 38'd0;
             r_a_th <= 32'd0;
             mul_start <= 1'b0;
             m_a <= 32'd0; m_b <= 11'd0;
@@ -475,11 +578,15 @@ module shp_detect #(
                         c_free[i] <= ~b_act[i];
                         c_exp[i]  <= b_act[i] & (s_y > b_lr[i]) & ((s_y - b_lr[i]) > GAPY);
                     end
+                    pm_mx0 <= mx_p0; pm_mx1 <= mx_p1;    // 最宽行候选: 8->4 折半寄存
+                    pm_mx2 <= mx_p2; pm_mx3 <= mx_p3;
                     state <= S_MPRI;
                 end
 
                 // ---- 优先级/分配决策 ----
                 S_MPRI: begin
+                    pq_mx0 <= mx2(pm_mx0, pm_mx1);       // 最宽行候选: 4->2 折半寄存
+                    pq_mx1 <= mx2(pm_mx2, pm_mx3);
                     if (|m_mask) begin
                         m0       <= low_idx(m_mask);
                         alloc_oh <= {NB{1'b0}};
@@ -506,7 +613,11 @@ module shp_detect #(
                 S_PREP: begin
                     ret_w    <= b_x1[ret_slot] - b_x0[ret_slot] + 12'd1;
                     ret_h    <= b_y1[ret_slot][11:0] - b_y0[ret_slot][11:0] + 12'd1;
-                    ret_lsp  <= b_rmx[ret_slot] - b_rmn[ret_slot] + 12'd1;
+                    ret_lsp  <= sp_last;              // 最后一行(挂起行)跨度
+                    ret_ytop <= b_y0[ret_slot];       // bbox 上下边 + 最宽行位置
+                    ret_ybot <= b_y1[ret_slot];
+                    ret_my0  <= sp_my0;               // (挂起行也算进最宽行)
+                    ret_my1  <= sp_my1;
                     ret_fill <= b_sum[ret_slot]
                               + (b_rs[ret_slot]
                                  ? {8'd0, (b_rmx[ret_slot] - b_rmn[ret_slot] + 12'd1)}
