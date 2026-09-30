@@ -453,18 +453,46 @@ module shp_detect #(
     //   保留 600~875 档里的歪方框(该档对应 6°~20°, 平台率 57%~82%)。
     //   约束 flat_rect 要 aspect_round(0.7<=w/h<=1.43): 圆形候选本来就是
     //   近方的; 长条/数字不受影响。
+    //   (注: 精确平台率在真实抖动下不稳 —— 20° 以上只剩 1~11%, 单靠它会
+    //    把方框漏去圆形/十字档, 下面追加 fill 分段救援, 二者取并。)
     wire [13:0] flat_w  = {1'b0, ret_my1} - {1'b0, ret_my0} + 14'd1;
     wire [16:0] flat5   = ({3'b0, flat_w} << 2) + {3'b0, flat_w};   // 5 x 平台行数
     wire [16:0] h2      = {1'b0, h16} << 1;                         // 2 x 高度
     wire        flat_hi = (flat5 >= h2);                            // 平台率 >= 40%
     wire        flat_rect = flat_hi & aspect_round;
 
+    // ---- 倾斜矩形救援(20261001): fill 分段(治"方框拿歪 15~25° 被判成圆/十字") ----
+    //   数据(黄金模型=板级链路+噪声 sigma6, fill1000 稳±2):
+    //     圆环(r145 lw20) 790; 小圆(tb r30/r40) 758~765;
+    //     方框 10°=750, 15°=672, 20°=615, 25°=571, 30°=541, 34°=526;
+    //     1.7:1 矩形 20°=612, 25°=569;  2:1 矩形 15°=618, 20°=559;
+    //     三角 <=511;  细臂十字(18%臂) 336;  30%臂十字 516。
+    //   判据: fill in [600,750) -> 矩形(圆档下半; 750 距最小圆 758 留 8,
+    //         距主用圆环 790 留 40);
+    //         fill in [520,600) 且非三角 -> 矩形(十字档上半; 三角由
+    //         tri_end/tri_full 几何保护, 另有 fill<520 兜底)。
+    //   长条矩形歪了以后 bbox 变宽, w/h 会超出圆形用的 aspect_round,
+    //   故救援判据用 aspect_wide(0.5<=w/h<=2.0)。
+    wire [31:0] area520 = ({12'd0, ret_area} << 9) + ({12'd0, ret_area} << 3);
+                                                                    // x520
+    wire [31:0] area150 = ({12'd0, ret_area} << 7) + ({12'd0, ret_area} << 4)
+                        + ({12'd0, ret_area} << 2) + ({12'd0, ret_area} << 1);
+    wire [31:0] area750 = area600 + area150;                        // x750
+    wire [13:0] w2v = {2'b0, ret_w} << 1;                           // 2w
+    wire [13:0] h2v = {2'b0, ret_h} << 1;                           // 2h
+    wire        aspect_wide = (w2v >= {2'b0, ret_h}) & (h2v >= {2'b0, ret_w});
+    wire        band_rect_tilt = (fill1000 >= area600) & (fill1000 < area750)
+                               & aspect_wide;
+    wire        c_low_all = (fill1000 >= area300) & (fill1000 < area600) & ~flat_rect;
+    wire        rect_tilt_low = c_low_all & (fill1000 >= area520)
+                              & aspect_wide & ~(tri_end | tri_full);
+
     wire c_rect   = (fill1000 >= r_a_th) |
-                    ((fill1000 >= area300) & (fill1000 < r_a_th) & flat_rect);
-    wire c_circle = (fill1000 >= area600) & (fill1000 < r_a_th) & aspect_round & ~flat_hi;
-    wire c_low    = (fill1000 >= area300) & (fill1000 < area600) & ~flat_rect;
-    wire c_tri    = c_low & (tri_end | tri_full);
-    wire c_cross  = c_low & ~(tri_end | tri_full);
+                    ((fill1000 >= area300) & (fill1000 < r_a_th) & flat_rect) |
+                    band_rect_tilt | rect_tilt_low;
+    wire c_circle = (fill1000 >= area750) & (fill1000 < r_a_th) & aspect_round & ~flat_hi;
+    wire c_tri    = c_low_all & ~rect_tilt_low & (tri_end | tri_full);
+    wire c_cross  = c_low_all & ~rect_tilt_low & ~(tri_end | tri_full);
     wire qualified = ok_size & ok_area & (c_circle | c_rect | c_tri | c_cross);
     wire [2:0] cls_now = c_circle ? 3'd1 : c_rect ? 3'd2 :
                          c_tri ? 3'd3 : c_cross ? 3'd4 : 3'd0;
