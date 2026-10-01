@@ -1,0 +1,15 @@
+故障分级改动门禁转录 2026-10-02（源码 534a1d8，构建 2026-10-02 02:03）
+
+===== tb_shp_clutter =====
+CLUTTER_BOXES cnt=1 fault=0 reason=1 ovf=199 slots=199 drops=0 max_queue=22
+CLUTTER_BOX slot=0 cls=2 bx=520..680 by=210..360
+CLUTTER scene=2 spans=1120 fifo_drops=0 slot_drops=199 late=0 bad=0 max_queue=22 cnt=1 fault=0 reason=1 ovf=199
+SHAPE_TEST_PASS tb_shp_clutter eight-slot overload committed with R1 record
+
+===== tb_shp_r3_pressure =====
+R3_PRESSURE P=1 S=202/202 Q=365/365 marker_bad=1/1 lost=0 pending=1 maxQ=24 CNT=1 F=0 R=3 OV=567
+R3_BOX slot=0 cls=2 bx=520..680 by=210..360
+SHAPE_TEST_PASS tb_shp_r3_pressure exact R3 without whole-frame void
+
+===== tb_shp_throughput =====
+SHAPE_TEST_PASS tb_shp_throughput six targets and overload hold

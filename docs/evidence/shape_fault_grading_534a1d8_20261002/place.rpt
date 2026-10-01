@@ -1,0 +1,147 @@
+
+Elitestek FPGA Placement and Routing.
+Version: 2026.1.132.4.5 
+Date: Fri Oct  2 01:56:36 2026
+
+Copyright (C) 2013 - 2026 Efinix, Inc. All rights reserved.
+ 
+Family: Titanium 
+Device: Ti60F225
+Top-level Entity Name: ti60f225_oob
+
+---------- IO Interface Summary (begin) ----------
+
++------------------------+--------------+
+| Missing Interface Pins | Input/Output |
++------------------------+--------------+
+|    jtag_inst1_DRCK     |    Input     |
+|     jtag_inst1_TMS     |    Input     |
+|   jtag_inst1_RUNTEST   |    Input     |
+|    i_mipi_txd_sclk     |    Input     |
+|    i_cam_ck_LP_P_IN    |    Input     |
+|    i_cam_ck_LP_N_IN    |    Input     |
+|     i_mipi_tx_pclk     |    Input     |
+|     i_mipi_rx_pclk     |    Input     |
+|    i_mipi_txc_sclk     |    Input     |
+|      ddr_addr[15]      |    Output    |
+|      ddr_addr[14]      |    Output    |
+|         CLK_5M         |    Input     |
++------------------------+--------------+
+
+----------- IO Interface Summary (end) ----------
+
+
+---------- IO Placement Summary (begin) ----------
+
++-------------------------+--------------+
+|  Unassigned Core Pins   | Input/Output |
++-------------------------+--------------+
+|        LCD_POWER        |    Output    |
+|        LCD_RST_P        |    Output    |
+|    mipi_dp_clk_HS_OE    |    Output    |
+|  mipi_dp_clk_HS_OUT[0]  |    Output    |
+|  mipi_dp_clk_HS_OUT[1]  |    Output    |
+|  mipi_dp_clk_HS_OUT[2]  |    Output    |
+|  mipi_dp_clk_HS_OUT[3]  |    Output    |
+|  mipi_dp_clk_HS_OUT[4]  |    Output    |
+|  mipi_dp_clk_HS_OUT[5]  |    Output    |
+|  mipi_dp_clk_HS_OUT[6]  |    Output    |
+|  mipi_dp_clk_HS_OUT[7]  |    Output    |
+|   mipi_dp_clk_LP_N_OE   |    Output    |
+|  mipi_dp_clk_LP_N_OUT   |    Output    |
+|   mipi_dp_clk_LP_P_OE   |    Output    |
+|  mipi_dp_clk_LP_P_OUT   |    Output    |
+|     mipi_dp_clk_RST     |    Output    |
+|   mipi_dp_data0_HS_OE   |    Output    |
+| mipi_dp_data0_HS_OUT[0] |    Output    |
+| mipi_dp_data0_HS_OUT[1] |    Output    |
+| mipi_dp_data0_HS_OUT[2] |    Output    |
+| mipi_dp_data0_HS_OUT[3] |    Output    |
+| mipi_dp_data0_HS_OUT[4] |    Output    |
+| mipi_dp_data0_HS_OUT[5] |    Output    |
+| mipi_dp_data0_HS_OUT[6] |    Output    |
+| mipi_dp_data0_HS_OUT[7] |    Output    |
+|  mipi_dp_data0_LP_N_OE  |    Output    |
+| mipi_dp_data0_LP_N_OUT  |    Output    |
+|  mipi_dp_data0_LP_P_OE  |    Output    |
+| mipi_dp_data0_LP_P_OUT  |    Output    |
+|    mipi_dp_data0_RST    |    Output    |
+|   mipi_dp_data1_HS_OE   |    Output    |
+| mipi_dp_data1_HS_OUT[0] |    Output    |
+| mipi_dp_data1_HS_OUT[1] |    Output    |
+| mipi_dp_data1_HS_OUT[2] |    Output    |
+| mipi_dp_data1_HS_OUT[3] |    Output    |
+| mipi_dp_data1_HS_OUT[4] |    Output    |
+| mipi_dp_data1_HS_OUT[5] |    Output    |
+| mipi_dp_data1_HS_OUT[6] |    Output    |
+| mipi_dp_data1_HS_OUT[7] |    Output    |
+|  mipi_dp_data1_LP_N_OE  |    Output    |
+| mipi_dp_data1_LP_N_OUT  |    Output    |
+|  mipi_dp_data1_LP_P_OE  |    Output    |
+| mipi_dp_data1_LP_P_OUT  |    Output    |
+|    mipi_dp_data1_RST    |    Output    |
+|   mipi_dp_data2_HS_OE   |    Output    |
+| mipi_dp_data2_HS_OUT[0] |    Output    |
+| mipi_dp_data2_HS_OUT[1] |    Output    |
+| mipi_dp_data2_HS_OUT[2] |    Output    |
+| mipi_dp_data2_HS_OUT[3] |    Output    |
+| mipi_dp_data2_HS_OUT[4] |    Output    |
+| mipi_dp_data2_HS_OUT[5] |    Output    |
+| mipi_dp_data2_HS_OUT[6] |    Output    |
+| mipi_dp_data2_HS_OUT[7] |    Output    |
+|  mipi_dp_data2_LP_N_OE  |    Output    |
+| mipi_dp_data2_LP_N_OUT  |    Output    |
+|  mipi_dp_data2_LP_P_OE  |    Output    |
+| mipi_dp_data2_LP_P_OUT  |    Output    |
+|    mipi_dp_data2_RST    |    Output    |
+|   mipi_dp_data3_HS_OE   |    Output    |
+| mipi_dp_data3_HS_OUT[0] |    Output    |
+| mipi_dp_data3_HS_OUT[1] |    Output    |
+| mipi_dp_data3_HS_OUT[2] |    Output    |
+| mipi_dp_data3_HS_OUT[3] |    Output    |
+| mipi_dp_data3_HS_OUT[4] |    Output    |
+| mipi_dp_data3_HS_OUT[5] |    Output    |
+| mipi_dp_data3_HS_OUT[6] |    Output    |
+| mipi_dp_data3_HS_OUT[7] |    Output    |
+|  mipi_dp_data3_LP_N_OE  |    Output    |
+| mipi_dp_data3_LP_N_OUT  |    Output    |
+|  mipi_dp_data3_LP_P_OE  |    Output    |
+| mipi_dp_data3_LP_P_OUT  |    Output    |
+|    mipi_dp_data3_RST    |    Output    |
+|     pll_inst4_RSTN      |    Output    |
++-------------------------+--------------+
+
+----------- IO Placement Summary (end) ----------
+
+
+---------- Module Resource Usage Distribution Estimates (begin) ----------
+
+'Module Resource Usage Distribution Estimates' table printed in: outflow\ti60f225_oob.hier_util.rpt
+
+----------- Module Resource Usage Distribution Estimates (end) ----------
+
+Elapsed time for packing: 0 hours 0 minutes 3 seconds
+---------- Resource Summary (begin) ----------
+Inputs: 85 / 1703 (4.99%)
+Outputs: 328 / 2267 (14.47%)
+Global Clocks (GBUF): 13 / 32 (40.62%)
+Regional Clocks (RBUF): 1 / 32 (3.12%)
+	RBUF: Core: 0 / 16 (0.00%)
+	RBUF: Periphery: 1 / 8 (12.50%)
+	RBUF: Multi-Region: 0 / 8 (0.00%)
+XLRs: 55187 / 60800 (90.77%)
+	XLRs needed for LUT4: 27656 / 60800 (45.49%)
+	XLRs needed for LUT4 + FF: 8418 / 60800 (13.85%)
+	XLRs needed for COMB4: 0 / 60800 (0.00%)
+	XLRs needed for COMB4 + FF: 0 / 60800 (0.00%)
+	XLRs needed for Adder: 7251 / 60800 (11.93%)
+	XLRs needed for Adder + FF: 1375 / 60800 (2.26%)
+	XLRs needed for SRL8: 1327 / 14720 (9.01%)
+	XLRs needed for SRL8 + FF: 0 / 14720 (0.00%)
+	XLRs needed for FF: 9160 / 60800 (15.07%)
+	XLRs needed for Routing: 0 / 60800 (0.00%)
+Memory Blocks: 251 / 256 (98.05%)
+DSP Blocks: 154 / 160 (96.25%)
+---------- Resource Summary (end) ----------
+
+Elapsed time for placement: 0 hours 2 minutes 7 seconds

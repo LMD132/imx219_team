@@ -128,3 +128,37 @@
 - 运行 `tools\flash_candidate.bat candidate_bitstreams\shape_summary_prefetch_12ac41a_20261002.bit`，退出码 0；板载 FT4232H、6.0 MHz JTAG，器件 ID `0x10660A79`，日志以 `... finished with JTAG programming` 结束。[下载日志](evidence/summary_prefetch_12ac41a_20261002/jtag_20261002.txt)已保存。
 - **未写 Flash，未关闭/操作调参界面，未发送参数或读取 COM5，未做画面和形状识别验收。** 烧录会重新配置 FPGA；如板端参数回到默认值，由板主持有的界面手动恢复先前测试参数，再比较同一场景下的 F/R 与 S/Q 增量。尚不能认定实拍 R3 已修复，不晋升最佳回退版。
 - 更新本下载记录前，已创建并验证快照 `D:\FPGA_Project\_backups\20261002_005645_pre-prefetch-jtag-record`，592 个文件、35 个引用，未覆盖项 0，结果 `BACKUP VERIFIED RESTORABLE`。
+
+## 2026-10-02 故障分级：局部故障不再作废整帧（已编译归档，未烧录）
+
+### 用户证据与根因
+
+- 板主对照 ChatGPT 线版本的现象：分类比旧版准，但“纸放上去经常完全不识别”；旧版（`2cb0932`）分类粗糙却一直有识别。
+- 代码证据：`rtl/algo/shp_detect.v` 原第 173-176 行把 `no_slot_drop`（槽位不足）与 `marker_read && f_dout[38]`（捕获期丢一条游程的坏标记）和“VS 待处理边界 / 丢边界 / 合成恢复边界”一起并入 `frame_fault`；`S_COMMIT` 时 `frame_fault` 会令 `o_cnt<=0` 并清空显示框。一帧几万条游程里丢一条，整屏一个框都不显示。
+- git 溯源：`frame_fault` 整帧作废由 `8bbfdd0` 引入；`2cb0932` 没有它，与“老版一直有识别”的对比一致。
+
+### 改动（提交 `534a1d8`，基于 `058d05c`）
+
+- `frame_fault` 只保留三类整帧不可信来源：VS 到来时仍有未处理边界、边界入队失败、合成恢复边界。
+- 槽位耗尽只影响当次那一个候选目标；坏标记只伤丢游程附近的局部轮廓；两者仍照常写入 `frame_reason[0]/[1]` 与 `S/Q/OV` 计数，`F` 不再因此置位。
+- 行为上：局部故障帧照常提交其余合格目标（可能局部缺边、顶边裁短），屏幕沿用 hold 而不是整屏清空。
+
+### 红绿证据
+
+- 压力台 `tb_shp_r3_pressure`（全 720p，含槽位耗尽 + FIFO 满丢游程 + VS 标记完整）：改前 `CNT=0 F=1 R=3`；改后 `S=202/202 Q=365/365 marker_bad=1/1 lost=0 CNT=1 F=0 R=3`，提交框为 `520..680 × 210..360` 的矩形（顶边 10 行被丢槽裁短，允许）。来源码一条不少，矩形不再被整帧清掉。
+- 八噪声台 `tb_shp_clutter`：改前 `cnt=0 fault=1 reason=1`（整帧作废）；改后 `cnt=1 fault=0 reason=1 slots=199 fifo_drops=0`，真矩形照常给出（顶边同样裁短）。
+- 过载台 `tb_shp_throughput`：过载帧自身 0 个目标，屏幕保持上一帧的六个框（hold），不再走“整帧清屏”，也不发布半成品几何。
+- 以上三台的带数值转录见 `docs/evidence/shape_fault_grading_534a1d8_20261002/tb_fault_grading_details.txt`。
+
+### 门禁与构建
+
+- `check_shape.py --all` 退出 0、`ALL PASS`（23 项 Python、10,381 组几何、18 个形状 RTL 台）。
+- `check_chain.py`、`check_ebridge.py` 均 `RESULT: PASS`；`tools/smoke_alg_tuner.py` `SMOKE OK`。
+- 构建：Efinity 2026.1.132.4.5 的 map/interface/pnr/pgm 全 PASS，退出 0；setup/hold 最小 `+0.199/+0.026 ns`，342 条报告路径无负 slack；XLR `55187/60800`、RAM `251/256`、DSP `154/160`。IV 与组合环计时警告仍存在，不扩大为全设计无条件签核。
+- 位流 `candidate_bitstreams/shape_fault_grading_534a1d8_20261002.bit`，3,133,584 字节，SHA-256 `4A08CD0EE5D82948C9FCC2BD9386C575DD8EE91B0780B3EE92187C40EA87F427`，与 `outflow` 原件一致。
+
+### 状态与遗留
+
+- **未烧录、未写 Flash、未做屏幕肉眼验收**；本候选不覆盖 `known_good/` 或最佳回退版，不被认定为“最新版”，也不宣称实拍效果已改善，需板主上板确认“纸放上去是否还整屏不显示”。
+- 快照：改前 `20261002_012138_pre-shape-fault-policy`、提交前 `20261002_015347_post-shape-fault-grading`、归档前 `20261002_020546_pre-fault-grading-archive`，均已 `BACKUP VERIFIED RESTORABLE`。
+- 遗留：丢槽时目标顶边可能裁短；彻底消除需扩大槽位或提前过滤小目标，曾试“小目标让槽”会伤三角尖端已撤回（见 2026-10-01 记录）。

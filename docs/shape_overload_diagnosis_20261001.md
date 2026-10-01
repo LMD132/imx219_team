@@ -45,3 +45,7 @@
 - `outflow/ti60f225_oob.timing.rpt` 中列出的 setup 最小余量 `+0.294 ns`，hold 最小余量 `+0.026 ns`。资源为 XLR `54797/60800`、RAM `251/256`、DSP `154/160`。日志保留 `cannot find correct IV value` 警告和计时器切断组合环的警告，因此不把这些正余量解读为无条件全设计签核。
 - `check_shape.py --all` 退出码 0、`ALL PASS`：23 项 Python、10381 个几何黄金样本，以及 16 个形状 RTL 台（含本轮拥挤场景）。`tb_shp_diag`、`tb_shape_diag_cdc`、`tb_alg_tel_shp`、`tb_alg_cfg_uart` 另行通过；串口协议测试共 68 项。
 - `check_chain.py` 与 `check_ebridge.py` 本轮最终 RTL 逐位对拍通过（各组 mismatch 0）；调参界面冒烟测试 `SMOKE OK`。真实串口 GUI 和摄像头/屏幕肉眼测试尚未执行。
+
+## 后续更新（2026-10-02）
+
+故障分级已落地：槽位耗尽与捕获期坏标记不再作废整帧，`R1`/`R2` 仍照常记录，真目标照常提交；八噪声台不再把漏检写成预期结果（改为要求提交真目标并保留 `R1`）。实现、红绿证据与构建归档见 `docs/shape_r3_load_validation.md` 的“2026-10-02 故障分级”一节；候选位流 `shape_fault_grading_534a1d8_20261002.bit` 已归档、**未烧录**。
