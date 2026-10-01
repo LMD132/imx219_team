@@ -129,7 +129,7 @@
 - **未写 Flash，未关闭/操作调参界面，未发送参数或读取 COM5，未做画面和形状识别验收。** 烧录会重新配置 FPGA；如板端参数回到默认值，由板主持有的界面手动恢复先前测试参数，再比较同一场景下的 F/R 与 S/Q 增量。尚不能认定实拍 R3 已修复，不晋升最佳回退版。
 - 更新本下载记录前，已创建并验证快照 `D:\FPGA_Project\_backups\20261002_005645_pre-prefetch-jtag-record`，592 个文件、35 个引用，未覆盖项 0，结果 `BACKUP VERIFIED RESTORABLE`。
 
-## 2026-10-02 故障分级：局部故障不再作废整帧（已编译归档，未烧录）
+## 2026-10-02 故障分级：局部故障不再作废整帧（已 JTAG 临时下载，待实板效果验收）
 
 ### 用户证据与根因
 
@@ -157,8 +157,15 @@
 - 构建：Efinity 2026.1.132.4.5 的 map/interface/pnr/pgm 全 PASS，退出 0；setup/hold 最小 `+0.199/+0.026 ns`，342 条报告路径无负 slack；XLR `55187/60800`、RAM `251/256`、DSP `154/160`。IV 与组合环计时警告仍存在，不扩大为全设计无条件签核。
 - 位流 `candidate_bitstreams/shape_fault_grading_534a1d8_20261002.bit`，3,133,584 字节，SHA-256 `4A08CD0EE5D82948C9FCC2BD9386C575DD8EE91B0780B3EE92187C40EA87F427`，与 `outflow` 原件一致。
 
+### 2026-10-02 故障分级候选 JTAG 下载
+
+- 板主在归档后明确要求“现在就烧录并帮我打开调参台”。下载前再次核验归档 SHA-256 为 `4A08CD0EE5D82948C9FCC2BD9386C575DD8EE91B0780B3EE92187C40EA87F427`，与本节构建记录一致；使用的是归档位流，不是可被后续编译覆盖的 `outflow/` 文件。
+- 运行 `tools\flash_candidate.bat candidate_bitstreams\shape_fault_grading_534a1d8_20261002.bit`，退出码 0；板载 FT4232H、6.0 MHz JTAG，器件 ID `0x10660A79`，日志以 `... finished with JTAG programming` 结束。[下载日志](evidence/shape_fault_grading_534a1d8_20261002/jtag_20261002.txt)已保存。
+- 随后按板主指令打开运行期调参台并 `--connect` COM5（进程保持响应，COM5 在系统中存在）；助手未代替板主拖动滑块或改任何参数值。**未写 Flash、未做画面和形状识别验收。** 烧录会重新配置 FPGA；如板端参数回到默认值，由板主在界面手动恢复先前测试参数，再比较同一场景下的帧显示与 S/Q 增量。
+- 更新本下载记录前，已创建并验证快照 `D:\FPGA_Project\_backups\20261002_020913_pre-fault-grading-jtag-record`，601 个文件、35 个引用，未覆盖项 0，结果 `BACKUP VERIFIED RESTORABLE`。（首次验证曾因未传 `-Worktree` 指向旧工作区而误报，复验时以 `-Worktree D:\FPGA_Project\imx219_shape` 通过。）
+
 ### 状态与遗留
 
-- **未烧录、未写 Flash、未做屏幕肉眼验收**；本候选不覆盖 `known_good/` 或最佳回退版，不被认定为“最新版”，也不宣称实拍效果已改善，需板主上板确认“纸放上去是否还整屏不显示”。
-- 快照：改前 `20261002_012138_pre-shape-fault-policy`、提交前 `20261002_015347_post-shape-fault-grading`、归档前 `20261002_020546_pre-fault-grading-archive`，均已 `BACKUP VERIFIED RESTORABLE`。
+- **2026-10-02 已经板主明确要求 JTAG 临时下载（见上节）；未写 Flash、未做屏幕肉眼验收**；本候选不覆盖 `known_good/` 或最佳回退版，不被认定为“最新版”，也不宣称实拍效果已改善，需板主上板确认“纸放上去是否还整屏不显示”。预期副作用：被丢槽裁短的目标顶边可能少几行像素。
+- 快照：改前 `20261002_012138_pre-shape-fault-policy`、提交前 `20261002_015347_post-shape-fault-grading`、归档前 `20261002_020546_pre-fault-grading-archive`、下载记录前 `20261002_020913_pre-fault-grading-jtag-record`，均已 `BACKUP VERIFIED RESTORABLE`。
 - 遗留：丢槽时目标顶边可能裁短；彻底消除需扩大槽位或提前过滤小目标，曾试“小目标让槽”会伤三角尖端已撤回（见 2026-10-01 记录）。

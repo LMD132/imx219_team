@@ -1,6 +1,6 @@
 # 候选位流归档记录
 
-## 2026-10-02 故障分级候选（已编译归档，未烧录）
+## 2026-10-02 故障分级候选（已 JTAG 临时下载，待实板效果验收）
 
 | 项 | 值 |
 | --- | --- |
@@ -11,7 +11,7 @@
 | 构建与时序 | Efinity 2026.1.132.4.5，map/interface/pnr/pgm 全 PASS，退出 0；19 组时钟关系的 setup/hold 最小 `+0.199/+0.026 ns`，342 条报告路径无负 slack；XLR `55187/60800`、RAM `251/256`、DSP `154/160`。IV 与组合环计时警告仍存在，不宣称全设计无条件签核 |
 | 功能 | 故障分级：槽位耗尽与捕获期坏标记不再作废整帧，只保留 VS 待处理边界、边界入队失败、合成恢复边界三类整帧来源；帧照常提交其余合格目标。针对实拍“纸张放上去偶尔整屏无框”的根因修复，允许被丢槽裁短的局部几何 |
 | 离线验证 | `check_shape.py --all` 退出 0、`ALL PASS`（23 项 Python、10,381 组几何、18 个形状 RTL 台）；`check_chain`/`check_ebridge` `RESULT: PASS`；`smoke_alg_tuner` `SMOKE OK`。过载台现要求提交真目标并保留 R1/R3 来源码，不是把过载写成正常帧 |
-| 实板状态 | **未烧录、未写 Flash、未做画面验收**；不覆盖 `known_good/` 或最佳回退版，也不被认定为“最新版”。实拍“放上去不识别”是否消除必须以板主上板效果为准 |
+| 实板状态 | **2026-10-02 经板主明确要求“烧录”，已用板载 FT4232H、6 MHz JTAG 临时下载此归档位流**：下载前 SHA-256 核对一致，命令退出 0，器件 ID `0x10660A79`，日志以 `finished with JTAG programming` 结束；随后按板主指令打开运行期调参台并连接 COM5（未代替板主调参）。**未写 Flash、未做画面验收**；不覆盖 `known_good/` 或最佳回退版，也不被认定为“最新版”。实拍“放上去不识别”是否消除必须以板主上板效果为准。下载日志见 [evidence/shape_fault_grading_534a1d8_20261002](../docs/evidence/shape_fault_grading_534a1d8_20261002/jtag_20261002.txt) |
 
 验证记录见 [R3 负载诊断验证记录](../docs/shape_r3_load_validation.md) 末节；原始构建与回归证据保存在 [evidence/shape_fault_grading_534a1d8_20261002](../docs/evidence/shape_fault_grading_534a1d8_20261002/)。
 
