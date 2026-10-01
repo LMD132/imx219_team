@@ -150,6 +150,18 @@ TELEM_RE = re.compile(
     r"(?:\s+BX(?P<shp_nbox>\d+))?"
     r"(?:\s+AR(?P<shp_area>\d+))?")
 
+SHAPE_DIAG_RE = re.compile(
+    r"^M[^\r\n]*\bAR\d{3} CNT(?P<cnt>\d{3}) "
+    r"OV(?P<ov>[0-9A-F]{4}) F(?P<fault>[01?])$")
+
+
+def parse_shape_diag(line: str) -> tuple[int, int, str] | None:
+    """Return a complete optional diagnostic suffix; legacy lines lack it."""
+    match = SHAPE_DIAG_RE.fullmatch(line)
+    if match is None:
+        return None
+    return int(match["cnt"]), int(match["ov"], 16), match["fault"]
+
 # 状态行里 CAM 组的已知含义 (见 rtl/cam/piv2_config.v 的寄存器表)
 CAM_HINT = "77=AGAIN 0x0157   75/76=曝光 0x015A/B   71=帧长 0x0160"
 
@@ -227,6 +239,8 @@ class Tuner:
         self.last_readback = 0.0
         self.last_line = ""
         self.port_map = {}
+        self._connection_epoch = 0
+        self._prev_diag_ov = None
 
         self.vars = {}            # key -> IntVar: 本机当前值(唯一权威副本)
         self.scales = {}          # key -> tk.Scale: 拖动滑块
@@ -240,6 +254,7 @@ class Tuner:
         self._build_top()
         self._build_rows()
         self._build_bottom()
+        self._reset_diag()
         self.refresh_ports()
         self.root.after(50, self._poll)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -351,6 +366,15 @@ class Tuner:
         self.cam_lbl.pack(side="left", padx=(10, 6))
         ttk.Label(cam, text=CAM_HINT, foreground="#555").pack(side="left")
 
+        diag = ttk.Frame(self.root, padding=(10, 0, 10, 6))
+        diag.pack(fill="x")
+        ttk.Label(diag, text="形状诊断（只读）:").pack(side="left")
+        self.diag_labels = {}
+        for key in ("cnt", "ov", "fault"):
+            label = ttk.Label(diag, text="--", font=("Consolas", 10, "bold"))
+            label.pack(side="left", padx=(10, 10))
+            self.diag_labels[key] = label
+
         box = ttk.Frame(self.root, padding=(10, 0, 10, 10))
         box.pack(fill="both", expand=True)
         self.log = tk.Text(box, height=9, wrap="none", font=("Consolas", 9))
@@ -427,8 +451,12 @@ class Tuner:
             self._log("打开 %s 失败: %s" % (port, exc))
             self.ser = None
             return
-        self.reader_stop.clear()
-        self.reader = threading.Thread(target=self._read_loop, daemon=True)
+        self._connection_epoch += 1
+        self._reset_diag()
+        self.reader_stop = threading.Event()
+        self.reader = threading.Thread(
+            target=self._read_loop,
+            args=(self.ser, self.reader_stop, self._connection_epoch), daemon=True)
         self.reader.start()
         self.conn_btn.configure(text="断开")
         self.status.set("已连接 %s, 等待板子回读..." % port)
@@ -436,6 +464,7 @@ class Tuner:
         self.root.after(250, self.send_all)      # 上电先与滑块对齐一次
 
     def disconnect(self):
+        self._connection_epoch += 1
         self.reader_stop.set()
         if self.ser is not None:
             try:
@@ -446,29 +475,32 @@ class Tuner:
         self.reader = None
         self.conn_btn.configure(text="连接")
         self.status.set("未连接")
+        self._reset_diag()
 
-    def _read_loop(self):
+    def _read_loop(self, ser_obj, stop_event, epoch):
         buf = b""
-        while not self.reader_stop.is_set():
+        while not stop_event.is_set():
             try:
-                data = self.ser.read(256)
+                data = ser_obj.read(256)
             except Exception as exc:
-                self.rx_queue.put(("ERR", str(exc)))
+                self.rx_queue.put(("ERR", str(exc), epoch))
                 break
             if not data:
                 continue
             buf += data
             while b"\n" in buf:
                 line, buf = buf.split(b"\n", 1)
-                self.rx_queue.put(("LINE", line.strip(b"\r").decode("ascii", "replace")))
-        self.rx_queue.put(("CLOSED", ""))
+                self.rx_queue.put(("LINE", line.strip(b"\r").decode("ascii", "replace"), epoch))
+        self.rx_queue.put(("CLOSED", "", epoch))
 
     def _poll(self):
         drained = 0
         try:
             while drained < 60:
-                kind, payload = self.rx_queue.get_nowait()
+                kind, payload, epoch = self.rx_queue.get_nowait()
                 drained += 1
+                if epoch != self._connection_epoch or self.ser is None:
+                    continue
                 if kind == "LINE":
                     self._on_line(payload)
                 elif kind == "ERR":
@@ -488,6 +520,7 @@ class Tuner:
         self.last_readback = time.time()
         m = TELEM_RE.search(line)
         if not m:
+            self._reset_diag()
             self._log("RX  %s" % line)
             return
         vals = {}
@@ -526,6 +559,40 @@ class Tuner:
             self.status.set("已连接, 板端与滑块一致 (%s)" % time.strftime("%H:%M:%S"))
         self.count_lbl.configure(text="最近回读: " + " ".join(
             "%s%s" % (p["cmd"], vals.get(p["key"], "-")) for p in PARAMS))
+        self._render_diag(parse_shape_diag(line))
+
+    def _reset_diag(self):
+        self._prev_diag_ov = None
+        for key, label in self.diag_labels.items():
+            label.configure(text={"cnt": "CNT --", "ov": "OV --", "fault": "F --"}[key],
+                            foreground="#888")
+
+    def _render_diag(self, diag):
+        if diag is None:
+            self._reset_diag()
+            return
+        cnt, ov, fault = diag
+        cnt_text = "CNT %03d" % cnt
+        if fault == "?":
+            cnt_text += " (等待完整帧)"
+        elif fault == "0" and cnt == 0:
+            cnt_text += " (无合格目标)"
+        self.diag_labels["cnt"].configure(text=cnt_text, foreground="#555")
+
+        ov_text = "OV %04X" % ov
+        if ov == 0xFFFF:
+            ov_text += " (已饱和)"
+        elif self._prev_diag_ov is not None and ov >= self._prev_diag_ov:
+            ov_text += " (+%d)" % (ov - self._prev_diag_ov)
+        elif self._prev_diag_ov is not None:
+            ov_text += " (计数重置)"
+        self.diag_labels["ov"].configure(
+            text=ov_text, foreground="#b70" if ov == 0xFFFF else "#555")
+        self._prev_diag_ov = None if fault == "?" else ov
+
+        fault_text = {"?": "F? 等待完整帧", "0": "F0 本帧正常", "1": "F1 整帧故障"}[fault]
+        self.diag_labels["fault"].configure(
+            text=fault_text, foreground="#c00" if fault == "1" else "#555")
 
     # -------------------------------------------------------------- 下发命令
     @staticmethod

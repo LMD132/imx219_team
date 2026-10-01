@@ -14,9 +14,21 @@ spec = importlib.util.spec_from_file_location(
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 
+LEGACY_SHAPE_LINE = (
+    "M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 "
+    "GF0400 BRG2 CAM0000=FF SHP1 SZ024 FL875 BX4 AR050")
+NEW_SHAPE_LINE = LEGACY_SHAPE_LINE + " CNT005 OV000A F1"
+assert m.parse_shape_diag(NEW_SHAPE_LINE) == (5, 10, "1")
+assert m.parse_shape_diag(LEGACY_SHAPE_LINE) is None
+assert m.parse_shape_diag(NEW_SHAPE_LINE[:-1]) is None
+assert m.parse_shape_diag("CNT005 OV000A F1") is None
+assert m.parse_shape_diag(NEW_SHAPE_LINE + " garbage") is None
+
 root = tk.Tk()
 root.withdraw()
 t = m.Tuner(root)
+assert set(t.diag_labels) == {"cnt", "ov", "fault"}
+assert all(label.cget("text").endswith("--") for label in t.diag_labels.values())
 
 t._on_line("M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1")
 print("default line ->", {k: v.cget("text") for k, v in t.board_labels.items()})
@@ -83,6 +95,23 @@ assert t.board_labels["epf"].cget("text") == "--"
 assert t.board_labels["gf_eps"].cget("text") == "--"
 print("old 65B line  -> epf/gf show", t.board_labels["epf"].cget("text"),
       "(旧位流没有该字段, 只提示不报错)")
+
+# New read-only diagnostics and old-bitstream fallback.
+t._on_line(NEW_SHAPE_LINE)
+assert "005" in t.diag_labels["cnt"].cget("text")
+assert "000A" in t.diag_labels["ov"].cget("text")
+assert "整帧故障" in t.diag_labels["fault"].cget("text")
+t._on_line(NEW_SHAPE_LINE.replace("OV000A", "OV000C"))
+assert "+2" in t.diag_labels["ov"].cget("text")
+t._on_line(NEW_SHAPE_LINE.replace("CNT005 OV000A F1", "CNT000 OV000C F0"))
+assert "无合格目标" in t.diag_labels["cnt"].cget("text")
+assert "正常" in t.diag_labels["fault"].cget("text")
+t._on_line(NEW_SHAPE_LINE.replace("CNT005 OV000A F1", "CNT000 OVFFFF F?"))
+assert "饱和" in t.diag_labels["ov"].cget("text")
+assert "+" not in t.diag_labels["ov"].cget("text")
+assert "等待" in t.diag_labels["fault"].cget("text")
+t._on_line(LEGACY_SHAPE_LINE)
+assert all(label.cget("text").endswith("--") for label in t.diag_labels.values())
 
 # 命令下发: 记录写进假串口, 确认滑块拖出来的就是 "P2" / "F400"
 class _FakeSer(object):
@@ -164,5 +193,20 @@ print("cmds after edit ->", t.ser.written)
 assert "T1001" in t.ser.written and "H230" in t.ser.written, t.ser.written
 assert "L255" in t.ser.written and "M1" in t.ser.written, t.ser.written
 t.ser = None
+t._on_line(NEW_SHAPE_LINE)
+old_epoch = t._connection_epoch
+t.disconnect()
+assert all(label.cget("text").endswith("--") for label in t.diag_labels.values())
+# A queued line from the prior serial session must not repopulate diagnostics.
+t.rx_queue.put(("LINE", NEW_SHAPE_LINE, old_epoch))
+from types import SimpleNamespace
+m.serial = SimpleNamespace(Serial=lambda *args, **kwargs: _FakeSer())
+t.port_var.set("COM_TEST")
+t.port_map["COM_TEST"] = "COM_TEST"
+t._read_loop = lambda *args: None
+t.connect()
+t._poll()
+assert all(label.cget("text").endswith("--") for label in t.diag_labels.values())
+t.disconnect()
 root.destroy()
 print("SMOKE OK")

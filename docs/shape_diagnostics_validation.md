@@ -33,3 +33,10 @@
 - 桥接回归 `check_ebridge.py` 退出码 0，`RESULT: PASS`；主流水 `check_chain.py` 退出码 0，`RESULT: PASS`。两项初跑因测试进程没有 `ALG_OSS_BIN` 找不到已安装的 `iverilog.exe`，设置为 `C:\iverilog\bin` 后重跑通过，未改产品源码。
 - `check_shape.py --all` 退出码 0，23 项软件测试、10381 个 RTL 几何样本和全部 15 个既有形状 RTL 台通过，末尾 `ALL PASS`；新增 `tb_shp_diag` 单项复跑亦退出码 0。
 - Efinity 编译、JTAG 与上板肉眼验收仍未进行。
+
+## Task 4：调参界面只读诊断
+
+- 改前快照：`D:\FPGA_Project\_backups\20261001_173318_pre-shape-diagnostics-task4`，`RESULT: BACKUP VERIFIED RESTORABLE`。
+- RED：扩展 `tools/smoke_alg_tuner.py` 后退出码 1，报 `alg_tuner` 无 `parse_shape_diag`。
+- GREEN：同一冒烟测试退出码 0，末尾 `SMOKE OK`；`py_compile` 退出码 0。覆盖新行解析、旧行/半行回退、`F?`、`OVFFFF` 饱和、同连接内 OV 差量、`CNT000 F0` 只是无合格目标、断开/重连后旧队列丢弃，并保留滑块及手动输入原测试。
+- 此测试未连接真实串口；`tools/gui_hw_test.py` 本轮不运行，不声称已读到板上诊断。Efinity 编译、JTAG 与上板肉眼验收仍未进行。
