@@ -84,6 +84,8 @@ module alg_top #(
 
     output wire [9:0]  diag_cnt,
     output wire [15:0] diag_ovf,
+    output wire [31:0] diag_slot_drop_total,
+    output wire [31:0] diag_fifo_full_total,
     output wire        diag_last_fault,
     output wire [3:0]  diag_last_reason,
     output wire        diag_frame_valid,
@@ -290,11 +292,14 @@ wire [6*3-1:0]  shp_bcls;
 wire [5:0]      shp_bval;
 wire [9:0]      shp_cnt;
 wire [15:0]     shp_ovf;
+wire [31:0]     shp_slot_drop_total, shp_fifo_full_total;
 wire            shp_last_fault, shp_frame_valid;
 wire [3:0]      shp_last_reason;
 
 assign diag_cnt = shp_cnt;
 assign diag_ovf = shp_ovf;
+assign diag_slot_drop_total = shp_slot_drop_total;
+assign diag_fifo_full_total = shp_fifo_full_total;
 assign diag_last_fault = shp_last_fault;
 assign diag_last_reason = shp_last_reason;
 assign diag_frame_valid = shp_frame_valid;
@@ -310,6 +315,8 @@ shp_detect #(.W(W), .H(H), .NB(8), .NBX(6)) u_shp (
     .o_by0(shp_by0), .o_by1(shp_by1),
     .o_bcls(shp_bcls), .o_bval(shp_bval),
     .o_cnt(shp_cnt), .o_ovf(shp_ovf),
+    .o_slot_drop_total(shp_slot_drop_total),
+    .o_fifo_full_total(shp_fifo_full_total),
     .o_last_fault(shp_last_fault), .o_last_reason(shp_last_reason),
     .o_frame_valid(shp_frame_valid)
 );

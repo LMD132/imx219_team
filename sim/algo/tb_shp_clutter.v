@@ -10,12 +10,14 @@ module tb_shp_clutter;
  wire [17:0] bcls;wire [5:0] bval;wire [9:0] cnt;wire [15:0] ovf;
  wire fault,frame_valid;
  wire [3:0] reason;
+ wire [31:0] slot_total,fifo_total;
  shp_detect dut(.clk(clk),.rst_n(rst_n),.cfg_en(1'b1),
   .cfg_min_size(8'd24),.cfg_max_boxes(3'd6),.cfg_fill_th(10'd875),
   .cfg_max_area(7'd50),.in_vs(in_vs),.in_de(in_de),.in_x(in_x),.in_y(in_y),.in_d(in_d),
   .o_bx0(bx0),.o_bx1(bx1),.o_by0(by0),.o_by1(by1),
   .o_bcls(bcls),.o_bval(bval),.o_cnt(cnt),.o_ovf(ovf),
-  .o_last_fault(fault),.o_last_reason(reason),.o_frame_valid(frame_valid));
+  .o_last_fault(fault),.o_last_reason(reason),.o_frame_valid(frame_valid),
+  .o_slot_drop_total(slot_total),.o_fifo_full_total(fifo_total));
  integer x,y,i,dx,dy,n,scene=2,shape_class=2,no_clutter=0,noise_count;
  integer drops=0,slots=0,late=0,bad=0,max_queue=0,spans=0;
  reg edge_pixel;
@@ -73,7 +75,8 @@ module tb_shp_clutter;
   if(!frame_valid||drops!=0||late!=0||bad!=0)
    $fatal(1,"FAIL unrelated stream or retirement fault in clutter test");
   if(scene>=2 && !no_clutter && noise_count>=8)begin
-   if(!fault||cnt!=0||reason!=4'h1||slots==0)
+   if(!fault||cnt!=0||reason!=4'h1||slots==0||
+      slot_total!==slots||fifo_total!==32'd0)
     $fatal(1,"FAIL slot exhaustion source must be R1 on a discarded frame");
    if($test$plusargs("EXPECT_DETECT"))
     $fatal(1,"KNOWN LIMITATION: valid shape not recognized under dense clutter");

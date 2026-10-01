@@ -68,6 +68,8 @@ module shp_detect #(
 
     output reg  [9:0]  o_cnt,            // 本帧提交的合格图形数(0..999)
     output reg  [15:0] o_ovf,            // 饱和的处理异常计数(含游程溢出/无空槽)
+    output reg  [31:0] o_slot_drop_total, // 累计无槽游程事件, 32 位自然回卷
+    output reg  [31:0] o_fifo_full_total, // 累计 FIFO 满时到达的游程
     output reg         o_last_fault,     // 最近提交帧是否整体丢弃
     output reg  [3:0]  o_last_reason,    // 最近提交帧故障来源位图
     output reg         o_frame_valid     // 复位后是否已有完整提交帧
@@ -147,6 +149,8 @@ module shp_detect #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             f_wp <= 5'd0; f_rp <= 5'd0; f_cnt <= 5'd0; o_ovf <= 16'd0;
+            o_slot_drop_total <= 32'd0;
+            o_fifo_full_total <= 32'd0;
             pending_edges <= 5'd0; lost_edges <= 5'd0; sync_lost <= 1'b0;
             capture_fault <= 1'b0;
             frame_fault <= 1'b0;
@@ -158,6 +162,10 @@ module shp_detect #(
             frame_fault <= 1'b0;
             frame_reason <= 4'b0;
         end else begin
+            if (no_slot_drop)
+                o_slot_drop_total <= o_slot_drop_total + 32'd1;
+            if (span_end && f_full)
+                o_fifo_full_total <= o_fifo_full_total + 32'd1;
             if (state==S_COMMIT) begin
                 frame_fault <= 1'b0;
                 frame_reason <= 4'b0;
