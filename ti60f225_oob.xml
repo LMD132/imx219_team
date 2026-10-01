@@ -34,6 +34,7 @@
         <efx:design_file name="rtl/uart_tx.v" version="default" library="default" />
         <efx:design_file name="rtl/alg_cfg_uart.v" version="default" library="default" />
         <efx:design_file name="rtl/alg_cfg_sync.v" version="default" library="default" />
+        <efx:design_file name="rtl/alg_shape_diag_cdc.v" version="default" library="default" />
         <efx:design_file name="rtl/alg_cfg_telemetry.v" version="default" library="default" />
         <efx:design_file name="rtl/mipi_csi_rx.sv" version="default" library="default" />
         <efx:design_file name="rtl/cam/piv2_config.v" version="default" library="default" />
