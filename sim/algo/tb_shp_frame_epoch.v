@@ -48,6 +48,50 @@ module tb_shp_frame_epoch;
   if(commits!=1)$fatal(1,"FAIL full-queue boundary lost: commits=%0d",commits);
   if(ovf==0||bval!=0||cnt!=0)
    $fatal(1,"FAIL full-queue frame not invalidated ovf=%0d bval=%0h cnt=%0d",ovf,bval,cnt);
+  if(dut.sync_lost!==1'b1)
+   $fatal(1,"FAIL capture resumed without a real recovery boundary");
+  for(k=0;k<8;k=k+1)begin
+   @(negedge clk);in_x=20+k*2;in_y=70;in_de=1;in_d=8'hff;
+   @(negedge clk);in_x=21+k*2;in_d=0;
+  end
+  @(negedge clk);in_de=0;
+  if(dut.f_cnt!=0)$fatal(1,"FAIL partial recovery frame entered queue");
+  frame_edge();
+  cycles=0;
+  while(commits<2 && cycles<100000)begin @(negedge clk);cycles=cycles+1;end
+  if(commits!=2||bval!=0||cnt!=0)
+   $fatal(1,"FAIL recovery frame was not invalidated");
+
+  // A's end marker can be processing while B fills the FIFO.  B's damage
+  // must stay attached to B after A commits, even if B's VS comes later.
+  @(negedge clk);rst_n=0;in_de=0;in_vs=0;in_d=0;
+  repeat(5)@(negedge clk);rst_n=1;commits=0;
+  for(k=0;k<8;k=k+1)begin
+   @(negedge clk);in_x=20+k*30;in_y=20;in_de=1;in_d=8'hff;
+   @(negedge clk);in_x=21+k*30;in_d=0;
+  end
+  @(negedge clk);in_de=0;
+  frame_edge(); // frame A
+  for(k=0;k<50;k=k+1)begin
+   @(negedge clk);in_x=20+k*2;in_y=60;in_de=1;in_d=8'hff;
+   @(negedge clk);in_x=21+k*2;in_d=0;
+  end
+  @(negedge clk);in_de=0;
+  if(ovf==0||commits!=0)$fatal(1,"FAIL B did not overflow while A was pending");
+  cycles=0;
+  while((commits<1 || dut.f_cnt!=0 || dut.state!=0) && cycles<100000)begin
+   @(negedge clk);cycles=cycles+1;
+  end
+  if(cycles==100000)$fatal(1,"FAIL A/B backlog did not drain");
+  k=dut.f_wp;
+  @(negedge clk);in_vs=1;
+  @(posedge clk);#1;
+  if(dut.fifo[k][38]!==1'b1)
+   $fatal(1,"FAIL B overflow not carried by B's boundary marker");
+  @(negedge clk);in_vs=0;
+  cycles=0;
+  while(commits<2 && cycles<100000)begin @(negedge clk);cycles=cycles+1;end
+  if(commits!=2||bval!=0||cnt!=0)$fatal(1,"FAIL B partial frame published");
   $display("SHAPE_TEST_PASS tb_shp_frame_epoch boundaries and deadline");
   $finish_and_return(0);
  end

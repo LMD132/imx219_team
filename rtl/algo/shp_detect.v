@@ -119,6 +119,7 @@ module shp_detect #(
     reg  [4:0]  f_wp, f_rp, f_cnt;
     reg  [4:0]  pending_edges, lost_edges;
     reg         sync_lost;
+    reg         capture_fault;
     reg         vs_r;
     reg         frame_fault;
     wire        f_empty = (f_cnt == 5'd0);
@@ -129,35 +130,48 @@ module shp_detect #(
     wire synthetic_boundary = (state==S_IDLE) && f_empty &&
                               (lost_edges!=0) && cfg_en;
     wire marker_read = (state==S_IDLE) && !f_empty && f_dout[37];
+    // After a lost marker, discard whole source frames.  The next real VS
+    // may resynchronise only after all old queued work and synthetic commits
+    // have finished; that boundary itself is marked invalid.
+    wire recovery_edge = vs_edge && sync_lost && f_empty &&
+                         (lost_edges==0) && (pending_edges==0) &&
+                         (state==S_IDLE) && !f_pop;
     wire push_req = vs_edge || span_end;
-    wire push_ok = push_req && !f_full && !sync_lost;
-    wire lost_boundary = vs_edge && (f_full || sync_lost);
+    wire push_ok = push_req && !f_full && (!sync_lost || recovery_edge);
+    wire lost_boundary = vs_edge && (f_full || (sync_lost && !recovery_edge));
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             f_wp <= 5'd0; f_rp <= 5'd0; f_cnt <= 5'd0; o_ovf <= 16'd0;
             pending_edges <= 5'd0; lost_edges <= 5'd0; sync_lost <= 1'b0;
+            capture_fault <= 1'b0;
             frame_fault <= 1'b0;
         end else if (!cfg_en) begin
             f_wp <= 5'd0; f_rp <= 5'd0; f_cnt <= 5'd0;   // 关闭时清空
             pending_edges <= 5'd0; lost_edges <= 5'd0; sync_lost <= 1'b0;
+            capture_fault <= 1'b0;
             frame_fault <= 1'b0;
         end else begin
             if (state==S_COMMIT) frame_fault <= 1'b0;
-            if ((span_end && !push_ok) || no_slot_drop ||
+            if (no_slot_drop ||
                 (vs_edge && pending_edges!=0) || lost_boundary ||
                 (marker_read && f_dout[38]) || synthetic_boundary)
                 frame_fault <= 1'b1;
+            // Dropped input belongs to the CAPTURE frame, which can be one
+            // or more frames ahead of the blob currently being retired.
+            if (vs_edge) capture_fault <= 1'b0;
+            else if (span_end && !push_ok) capture_fault <= 1'b1;
             if (push_ok) begin
                 // The VS marker wins an otherwise simultaneous span-end;
                 // that dropped span also invalidates the frame.
-                fifo[f_wp] <= vs_edge ? {1'b0 | (pending_edges!=0),1'b1,37'd0} :
+                fifo[f_wp] <= vs_edge ? {(capture_fault || span_end ||
+                                        (pending_edges!=0) || recovery_edge),
+                                        1'b1,37'd0} :
                                        {2'b00,y_r,x_r,sx0};
                 f_wp <= (f_wp == (FQ5 - 5'd1)) ? 5'd0 : (f_wp + 5'd1);
             end
-            if (vs_edge && span_end) frame_fault <= 1'b1;
             if (lost_boundary) sync_lost <= 1'b1;
-            else if (state==S_COMMIT && lost_edges==0 && f_empty)
+            else if (recovery_edge)
                 sync_lost <= 1'b0;
             case ({vs_edge, state==S_COMMIT})
                 2'b10: if (pending_edges!=5'h1f) pending_edges<=pending_edges+5'd1;
