@@ -37,3 +37,37 @@
 - 红：`python tools/smoke_alg_tuner.py` 在新行 `S/Q` 解析断言处失败，旧正则尚不接受 148 字节行，退出码 1。
 - 绿：相同冒烟测试退出码 0，结尾 `SMOKE OK`。验证旧四元组接口、新二元组解析、旧/残缺行与 `F?` 隐藏计数、5 秒内差分、超过 5 秒及计数下降不显示虚假增量、断线重连后不沿用旧基准；原滑块与命令检查保持通过。
 - 此项是离线 Tk/假串口测试，**不是** COM5 实机通信或屏幕肉眼验收。
+
+## Task 6：完整回归、构建与归档
+
+- 改前快照：`D:\FPGA_Project\_backups\20261001_231021_pre-shape-r3-load-task6`，已验证 `RESULT: BACKUP VERIFIED RESTORABLE`。
+- 构建源码提交：`72380a3e177d7ef3cceaf6ae5cadb08c752e3c8d`；构建前工作区干净。Efinity 只去掉 `ti60f225_oob.xml` 末尾换行，归档前恢复；没有改变有效 RTL、SDC 或工程参数。
+
+| 命令 | 退出码与证据 |
+| --- | --- |
+| `python sim/algo/model/check_shape.py --all` | 0，`ALL PASS`：23 项 Python、10,381 组几何、17 个形状 RTL 台；含 `tb_shp_clutter` 的 R1 与 `tb_shp_r3_pressure exact R3` |
+| `python sim/algo/model/check_chain.py` | 配置 `ALG_OSS_BIN=C:\iverilog\bin` 后退出 0，`RESULT: PASS`，逐级像素对拍无差异 |
+| `python sim/algo/model/check_ebridge.py` | 同上工具目录，退出 0，`RESULT: PASS`，全部六组桥接/模式对拍 mismatch 0 |
+| `python sim/algo/model/check_shape.py --rtl tb_shape_diag_cdc` | 0，`SHAPE_TEST_PASS`，20 组异步元组与独立复位 |
+| `python sim/algo/model/check_shape.py --rtl tb_alg_tel_shp` | 0，`SHAPE_TEST_PASS`，21 项 |
+| `python sim/algo/model/check_shape.py --rtl tb_alg_cfg_uart` | 0，`SHAPE_TEST_PASS`，68 项 |
+| `python tools/smoke_alg_tuner.py` | 0，`SMOKE OK` |
+| `tools\compile.bat` | 0；`outflow/compile.log` 的 map/interface/pnr/pgm 均 PASS |
+
+主链与桥接首次启动时因未配置 `ALG_OSS_BIN`、PATH 中找不到 `iverilog` 而退出 1；指定已有的 `C:\iverilog\bin` 后重跑通过，未因此修改产品代码。
+
+- 最终 Efinity 时序报告时间 2026-10-01 23:37:45，版本 `2026.1.132.4.5`：19 组 setup 和 19 组 hold 关系均非负，最小分别 `+0.091/+0.028 ns`；全部 342 条报告路径 slack 非负。工具保留 IV 值与组合环计时警告，以上是报告所列路径的结果，不能扩大为全设计无条件签核。
+- `outflow/ti60f225_oob.place.rpt` 资源：XLR `54798/60800`（90.13%）、RAM `251/256`（98.05%）、DSP `154/160`（96.25%），均未超容量。
+- 本次 `outflow/ti60f225_oob.map.v` 明确包含像素域及 UART 域两个计数器的 bit 31 寄存器，及 `u_shape_diag_cdc/held_tuple[95:0]`，确认完整新计数链进入综合。
+- 23:37:50 生成位流，归档为 `candidate_bitstreams/shape_r3_load_72380a3_20261001.bit`，3,116,013 字节；归档与原输出 SHA-256 均为 `C671A57EB3E87502DA1C428ED50C416CB3B9C66902854E18B98AA0D0689C3211`。
+- **未上板**：本轮未执行 JTAG/Flash，也未做 COM5 实机或画面验收，`known_good/` 与最佳回退版未修改。
+
+## 后续实板读数的解释
+
+在同一阈值、固定纸张场景下比较连续新状态行，并留出数行等待快照稳定。`S/Q` 是累计模计数，`CNT/F/R` 是最近提交帧，两者不是严格同帧事件统计；界面超过 5 秒、断线重连或计数下降会暂停增量。
+
+- `ΔS>0、ΔQ>0`：支持槽位耗尽与 FIFO 满丢游程同时发生。
+- `ΔS>0、ΔQ=0` 且仍为 `R3`：检查 VS 同拍、待处理边界或重同步；不能把 R3 直接等同 FIFO 满。
+- 两者增量都为 0：先排除采样滞后，再检查其他坏帧来源。
+
+离线的 `S=199 Q=369 F1 R3` 只证明压力路径可复现，不能替代上述实板连续读数。
