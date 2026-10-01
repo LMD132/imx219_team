@@ -1,0 +1,27 @@
+Command: python sim/algo/model/check_shape.py --all
+ALG_OSS_BIN=C:\iverilog\bin
+Exit code: 0
+Captured final stdout chunk; Python 23-test output preceded this chunk.
+
+MODEL DIAGNOSTICS {"count": 66, "counts": [{"case": "clip10pct", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "decorative", "count": 6, "model": "contour", "outcome": "correct"}, {"case": "gap1", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "gap3", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "gap5", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "noise16", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "noise2", "count": 2, "model": "contour", "outcome": "correct"}, {"case": "noise2", "count": 4, "model": "contour", "outcome": "reject"}, {"case": "noise8", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "perspective15pct", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "perspective30pct", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "perspective5pct", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "clip10pct", "count": 6, "model": "fixed", "outcome": "reject"}, {"case": "decorative", "count": 6, "model": "fixed", "outcome": "correct"}, {"case": "gap1", "count": 4, "model": "fixed", "outcome": "correct"}, {"case": "gap1", "count": 2, "model": "fixed", "outcome": "reject"}, {"case": "gap3", "count": 4, "model": "fixed", "outcome": "correct"}, {"case": "gap3", "count": 2, "model": "fixed", "outcome": "reject"}, {"case": "gap5", "count": 4, "model": "fixed", "outcome": "correct"}, {"case": "gap5", "count": 2, "model": "fixed", "outcome": "reject"}, {"case": "noise16", "count": 6, "model": "fixed", "outcome": "reject"}, {"case": "noise2", "count": 2, "model": "fixed", "outcome": "correct"}, {"case": "noise2", "count": 4, "model": "fixed", "outcome": "reject"}, {"case": "noise8", "count": 6, "model": "fixed", "outcome": "reject"}, {"case": "perspective15pct", "count": 3, "model": "fixed", "outcome": "correct"}, {"case": "perspective15pct", "count": 3, "model": "fixed", "outcome": "reject"}, {"case": "perspective30pct", "count": 1, "model": "fixed", "outcome": "correct"}, {"case": "perspective30pct", "count": 5, "model": "fixed", "outcome": "reject"}, {"case": "perspective5pct", "count": 5, "model": "fixed", "outcome": "correct"}, {"case": "perspective5pct", "count": 1, "model": "fixed", "outcome": "reject"}], "params_sha256": "14ee97ae06492d91651db56e3376a5618fad34cf6bdf8d644e859fe28820d6f4", "seed": 20261001, "versions": {"numpy": "2.5.2", "opencv": "5.0.0", "python": "3.12.10"}}
+MODEL GATE PASS
+SHAPE_TEST_PASS tb_shp_summary 11 phases 498 spans max_busy=34
+SHAPE_TEST_PASS tb_shp_recent scan merge gap and capacity
+SHAPE_TEST_PASS tb_shp_connect historical bbox overlap stays separate
+SHAPE_TEST_PASS tb_shp_geometry 10381 golden cases
+SHAPE_TEST_PASS tb_shp_rot
+SHAPE_TEST_PASS tb_shp_detect three classes and cross rejection
+SHAPE_TEST_PASS tb_shp_ring
+SHAPE_TEST_PASS tb_shp_tilt
+SHAPE_TEST_PASS tb_shp_spacing 2/4/8/16/32 pixel gaps
+SHAPE_TEST_PASS tb_shp_lifecycle bounded hold disable reject reset
+SHAPE_TEST_PASS tb_shp_frame_epoch boundaries and deadline
+SHAPE_TEST_PASS tb_shp_throughput six targets and overload reject
+SHAPE_TEST_PASS tb_shp_no_blank boxes=6 ovf=0
+SHAPE_TEST_PASS tb_shp_stream_matrix 120 cases
+SHAPE_TEST_PASS tb_shp_clutter overload diagnosed (not recognition acceptance)
+SHAPE_TEST_PASS tb_shp_r3_pressure exact R3
+SHAPE_TEST_PASS tb_shp_summary_load six classified squares without S/Q loss
+SHAPE_TEST_PASS tb_shp_overlay modes colors labels and two-cycle latency
+ALL PASS
+
