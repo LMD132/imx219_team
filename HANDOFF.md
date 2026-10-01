@@ -5,12 +5,14 @@
 - 2026-10-01 下午进度更新：`shape-detect` 已完成圆形/圆环、三角形、矩形
   的抗平面旋转分类RTL、流式摘要/连接、三类叠加显示及十字拒识；
   OCR未实现。软件标准矩阵每模型7776个正样本和1296个负样本通过，
-  RTL几何10369例黄金向量及多目标/吞吐/生命周期测试通过。
-  最终整套门禁及Efinity四阶段构建已通过；候选位流为
-  `candidate_bitstreams/shape_rotation_e74ced2_20261001.bit`，SHA-256
-  `CC906672CC24907D5F87E121DF214B527AE53F54A0F5570E5FAF4D7CA00461DB`。
-  RAM251/256、DSP154/160，余量较紧。**没有在开发板上JTAG下载或肉眼验证**。
-  不能晋升最佳回退版。具体证据与限制见
+  审查修复后RTL几何10381例黄金向量、15个RTL台及多目标/吞吐/生命周期测试通过。
+  从干净源码 `34e5d39` 重编译，Efinity四阶段均通过；当前可测候选为
+  `candidate_bitstreams/shape_rotation_34e5d39_20261001.bit`，SHA-256
+  `EC1799C6DAE0B4D554A7E9184905328A833152B44F928220AEFBCB0D4AA8B32F`。
+  旧 `shape_rotation_e74ced2_20261001.bit` 经审查判定**不可用于验收或烧录**。
+  新版XLR54488/60800、RAM251/256、DSP154/160，余量较紧；
+  15组已报告时钟关系的setup/hold均为正，但仍有SDC时钟名未匹配警告。
+  **没有在开发板上JTAG下载或肉眼验证**，不能晋升最佳回退版。具体证据与限制见
   `docs/shape_rotation_validation.md`。下方“尚未改产品RTL”是早期历史状态。
 - 最新范围：用户明确不识别十字／加号，也不做OCR；保留三类图形及类别文字标注。
   用户已确认轻量轮廓几何、先软件验证后RTL的方向。具体设计位于
@@ -22,7 +24,7 @@
   9项模型测试及 `--model` 门禁通过，断边/噪声/透视实测限制见验证记录。
   产品RTL、十字拒识及新候选位流现已完成；下一步由板主安排JTAG和实拍验收。
   可复跑命令及每项证据见 `docs/shape_rotation_validation.md`。
-- 继续修改：`D:\FPGA_Project\imx219_shape` / `shape-detect`；本次构建输入提交 `e74ced2`。
+- 继续修改：`D:\FPGA_Project\imx219_shape` / `shape-detect`；本次构建输入提交 `34e5d39`。
   用户指定继续在本候选目录工作，且**实际效果好、得到用户确认后才可升级为最佳回退版**。
 - 最佳回退版仍为 `D:\FPGA_Project\imx219_notemp` / `no-temp` / `a390a99`；
   冻结实验版 `D:\FPGA_Project\imx219_smooth` / `canny-smooth` / `c1add67` 不动。
