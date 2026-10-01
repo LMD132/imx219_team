@@ -205,9 +205,9 @@ module tb_alg_tel_shp;
         chk12("ar_max",  {5'b0, c_shp_area}, 12'd100);
         expect_line(exp_final);
 
-        if (errors == 0) $display("ALL PASS (%0d checks)", checks);
-        else             $display("FAILED (%0d errors / %0d checks)", errors, checks);
-        $finish;
+        if (errors != 0) $fatal(1,"FAIL shape telemetry: %0d errors / %0d checks", errors, checks);
+        $display("SHAPE_TEST_PASS tb_alg_tel_shp %0d checks", checks);
+        $finish_and_return(0);
     end
 
 endmodule

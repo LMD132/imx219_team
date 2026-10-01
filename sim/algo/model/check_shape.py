@@ -8,6 +8,11 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 RUN = ROOT / 'outflow/diagnostics'
+ALL_RTL = (
+    'tb_shp_summary', 'tb_shp_recent', 'tb_shp_connect', 'tb_shp_geometry',
+    'tb_shp_rot', 'tb_shp_detect', 'tb_shp_ring', 'tb_shp_tilt',
+    'tb_shp_spacing', 'tb_shp_lifecycle', 'tb_shp_throughput', 'tb_shp_overlay',
+)
 
 
 def prepare_summary_vectors():
@@ -159,26 +164,61 @@ def run_tb(name: str, extra_sources: list[str] = []) -> subprocess.CompletedProc
     return result
 
 
+def run_model_gate(all_tests: bool = False) -> int:
+    import unittest
+    sys.path.insert(0, str(ROOT / 'sim/algo'))
+    pattern = 'test_shape_*.py' if all_tests else 'test_shape_model.py'
+    suite = unittest.defaultTestLoader.discover(str(ROOT / 'sim/algo'), pattern=pattern)
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    if not result.wasSuccessful():
+        print('MODEL GATE FAIL')
+        return 1
+    from model.shape_cases import diagnostic_report
+    import json
+    params = json.loads((Path(__file__).parent / 'shape_params.json').read_text(encoding='utf-8'))
+    diagnostic_report(params)
+    print('MODEL GATE PASS')
+    return 0
+
+
+def run_all() -> int:
+    if run_model_gate(all_tests=True):
+        print('MODEL GATE FAIL')
+        return 1
+    for name in ALL_RTL:
+        # The aggregate gate always runs the full 5-degree geometry matrix.
+        previous = os.environ.get('SHAPE_GEOMETRY_FULL')
+        if Path(name).stem == 'tb_shp_geometry':
+            os.environ['SHAPE_GEOMETRY_FULL'] = '1'
+        try:
+            result = run_tb(name)
+        finally:
+            if previous is None:
+                os.environ.pop('SHAPE_GEOMETRY_FULL', None)
+            else:
+                os.environ['SHAPE_GEOMETRY_FULL'] = previous
+        if result.returncode:
+            print(f'RTL GATE FAIL {name} (exit {result.returncode})')
+            print(result.stdout, end='')
+            print(result.stderr, end='', file=sys.stderr)
+            return 1
+        markers = [line for line in result.stdout.splitlines() if 'SHAPE_TEST_PASS' in line]
+        print(markers[-1] if markers else f'RTL GATE FAIL {name}: no marker')
+    print('ALL PASS')
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group(required=True)
     modes.add_argument('--rtl', help='Testbench name or .v path')
-    modes.add_argument('--model', action='store_true', help='Run the complete software acceptance gate')
+    modes.add_argument('--model', action='store_true', help='Run the software acceptance gate')
+    modes.add_argument('--all', action='store_true', help='Run all software and shape RTL gates')
     args = parser.parse_args(argv)
     if args.model:
-        import unittest
-        sys.path.insert(0, str(ROOT / 'sim/algo'))
-        suite = unittest.defaultTestLoader.discover(str(ROOT / 'sim/algo'), pattern='test_shape_model.py')
-        result = unittest.TextTestRunner(verbosity=2).run(suite)
-        if not result.wasSuccessful():
-            print('MODEL GATE FAIL')
-            return 1
-        from model.shape_cases import diagnostic_report
-        import json
-        params = json.loads((Path(__file__).parent / 'shape_params.json').read_text(encoding='utf-8'))
-        diagnostic_report(params)
-        print('MODEL GATE PASS')
-        return 0
+        return run_model_gate()
+    if args.all:
+        return run_all()
     result = run_tb(args.rtl)
     print(result.stdout, end='')
     print(result.stderr, end='', file=sys.stderr)
