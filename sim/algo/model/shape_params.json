@@ -12,7 +12,7 @@
   "profile_error_pixels": 2,
   "perpendicular_cos2_per_10000": 400,
   "parallel_sin2_per_10000": 400,
-  "min_side_pixels": 8,
+  "min_side_pixels": 12,
   "min_aspect_per_100": 20,
   "max_ellipse_aspect_per_100": 135,
   "radial_error_pct": 14,

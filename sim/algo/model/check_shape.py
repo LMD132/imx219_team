@@ -43,6 +43,62 @@ def prepare_summary_vectors():
     (RUN / 'shape_summary_vectors.txt').write_text('\n'.join(lines) + '\n', encoding='ascii')
 
 
+def prepare_geometry_vectors():
+    sys.path.insert(0, str(ROOT / 'sim/algo'))
+    from model.shape_cases import make_case
+    from model.shape_fixed import summarize_runs, classify_summary, PARAMS
+    full = os.environ.get('SHAPE_GEOMETRY_FULL') == '1'
+    angles = range(0, 360, 5) if full else (0, 15, 30, 40, 45, 60, 90, 135)
+    cases = []
+    for kind, aspect in (('ring', 1.0), ('circle', 1.0), ('triangle', 1.0),
+                         ('square', 1.0), ('rectangle', 1.5), ('rectangle', 2.0),
+                         ('cross', 0.15), ('cross', 0.3), ('cross', 0.5),
+                         ('line', 1.0), ('pentagon', 1.0), ('star', 1.0)):
+        for angle in angles:
+            for size in (48, 80, 160):
+                for center in (((240, 180), (640, 360), (1000, 500)) if full and
+                               kind in ('ring', 'circle', 'triangle', 'square', 'rectangle')
+                               else ((640, 360),)):
+                    for phase in ((0.0, 0.0), (0.5, 0.5)):
+                        cases.append((kind, angle, size, aspect, center, phase))
+    cases.append(('flat_apex', 0, 0, 1.0, (640, 360), (0.0, 0.0)))
+    lines = [str(len(cases))]
+    for kind, angle, size, aspect, center, phase in cases:
+        if kind == 'flat_apex':
+            runs = []
+            for y in range(500, 601):
+                lx = 200 - ((y - 500) * 80) // 100
+                rx = 200 + ((y - 500) * 80) // 100
+                xs = [x for x in range(115, 285)
+                      if abs(x-lx) <= 2 or abs(x-rx) <= 2 or
+                      (y >= 598 and abs(x-200) <= 80)]
+                a = b = xs[0]
+                for x in xs[1:]:
+                    if x > b + 1:
+                        runs.append((y, a, b))
+                        a = x
+                    b = x
+                runs.append((y, a, b))
+            summary = summarize_runs(runs)
+            expected = 3
+        else:
+            case = make_case(kind, angle, size, aspect, center, phase)
+            summary = summarize_runs(case.runs)
+            expected = case.expected_cls
+        result = classify_summary(summary, PARAMS)
+        if (result.cls if result.valid else 0) != expected:
+            raise AssertionError(f'software geometry gate failed for {kind} {angle}')
+        x0, y0, x1, y1 = summary.bounds
+        lines.append(f'{expected} {x0} {x1} {y0} {y1} {int(summary.bad)}')
+        lines.extend(f'{((int(v)<<25)|(y<<12)|x):07x}' for v, x, y in summary.support)
+        lines.extend(f'{((int(v)<<24)|(left<<12)|right):07x}'
+                     for v, left, right in summary.strips)
+    RUN.mkdir(parents=True, exist_ok=True)
+    vector_path = RUN / ('shape_geometry_vectors_full.txt' if full else 'shape_geometry_vectors.txt')
+    vector_path.write_text('\n'.join(lines) + '\n', encoding='ascii')
+    return vector_path
+
+
 def _invoke(command: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
@@ -75,6 +131,7 @@ def run_tb(name: str, extra_sources: list[str] = []) -> subprocess.CompletedProc
     RUN.mkdir(parents=True, exist_ok=True)
     if path.stem == 'tb_shp_summary':
         prepare_summary_vectors()
+    geometry_vectors = prepare_geometry_vectors() if path.stem == 'tb_shp_geometry' else None
     output = RUN / (path.stem + '.vvp')
     sources = [path, *sorted((ROOT / 'rtl/algo').glob('*.v')),
                ROOT / 'rtl/simple_dual_port_ram.v', ROOT / 'rtl/true_dual_port_ram.v']
@@ -88,7 +145,10 @@ def run_tb(name: str, extra_sources: list[str] = []) -> subprocess.CompletedProc
         return subprocess.CompletedProcess(compile_result.args, compile_result.returncode,
                                            compile_result.stdout,
                                            'compile failed: ' + compile_result.stderr)
-    result = _invoke([str(bin_dir / 'vvp.exe'), str(output), '-none'], timeout)
+    sim_args = [str(bin_dir / 'vvp.exe'), str(output), '-none']
+    if geometry_vectors is not None:
+        sim_args.append('+VECTORS=' + str(geometry_vectors))
+    result = _invoke(sim_args, timeout)
     transcript = result.stdout + result.stderr
     if result.returncode == 0 and re.search(r'\b(?:FAIL|ERROR)\b', transcript, re.I):
         return subprocess.CompletedProcess(result.args, 1, result.stdout,

@@ -6,8 +6,8 @@
 // 给形状识别喂的是 ~2px 细轮廓线。空心圆环在细轮廓下每行有 4 段游程
 // (外左/内左/内右/外右), 必须验证它们还能并成 1 个 blob, 填充率仍≈785‰.
 //
-// 帧1: 4 个空心圆环 R=82, 线宽 T=4/9/16/24 (细轮廓 2px)
-//      (160,180) (480,180) (800,180) (1120,180)
+// 帧1: 4 个空心圆环 R=82, 线宽 T=4/9/16/24 (细轮廓 2px)，
+//      在高度方向错开，验证每种线宽与多目标连接。
 // 帧2: (200,520) 实心圆 2px线   (560,520) 实心圆 4px线
 //      (920,520) 实心环带(旧画法回归)  (1100,650) 空心方框 100x100 线宽4
 //      + 斜线负样本(150..350) -> 必须被丢弃
@@ -23,6 +23,7 @@ module tb_shp_ring;
 
     localparam integer W = 1280;
     localparam integer H = 720;
+    localparam integer HTOTAL = 1650;
 
     integer errors = 0;
     integer frame  = 0;
@@ -43,6 +44,16 @@ module tb_shp_ring;
     wire [5:0]      b_val;
     wire [9:0]      b_cnt;
     wire [15:0]     b_ovf;
+    reg [4:0] last_geom_state = 0;
+    always @(posedge clk) begin
+        last_geom_state <= dut.geometry.state;
+        if (dut.geometry.state == 19 && last_geom_state != 19)
+            $display("  reject slot=%0d bbox=(%0d,%0d)-(%0d,%0d) from_state=%0d hn=%0d pn=%0d idx=%0d sum_bad=%0d recent_bad=%0d",
+                     dut.ret_slot, dut.b_x0[dut.ret_slot], dut.b_y0[dut.ret_slot],
+                     dut.b_x1[dut.ret_slot], dut.b_y1[dut.ret_slot],
+                     last_geom_state, dut.geometry.hn, dut.geometry.pn,
+                     dut.geometry.idx, dut.summary_bad[dut.ret_slot], dut.recent_bad[dut.ret_slot]);
+    end
 
     shp_detect #(.W(W), .H(H), .NB(8), .NBX(6)) dut (
         .clk(clk), .rst_n(rst_n),
@@ -125,14 +136,14 @@ module tb_shp_ring;
         begin
             is_edge = 0;
             if (frame == 0) begin
-                if ((x >= 70) && (x <= 250) && (y >= 90) && (y <= 270)
-                    && ring_hit(x,y, 160,180, 82, 4))  is_edge = 1;
-                else if ((x >= 390) && (x <= 570) && (y >= 90) && (y <= 270)
-                    && ring_hit(x,y, 480,180, 82, 9))  is_edge = 1;
-                else if ((x >= 710) && (x <= 890) && (y >= 90) && (y <= 270)
-                    && ring_hit(x,y, 800,180, 82, 16)) is_edge = 1;
-                else if ((x >= 1030) && (x <= 1210) && (y >= 90) && (y <= 270)
-                    && ring_hit(x,y, 1120,180, 82, 24)) is_edge = 1;
+                if ((x >= 70) && (x <= 250) && (y >= 10) && (y <= 190)
+                    && ring_hit(x,y, 160,100, 82, 4))  is_edge = 1;
+                else if ((x >= 390) && (x <= 570) && (y >= 180) && (y <= 360)
+                    && ring_hit(x,y, 480,270, 82, 9))  is_edge = 1;
+                else if ((x >= 710) && (x <= 890) && (y >= 350) && (y <= 530)
+                    && ring_hit(x,y, 800,440, 82, 16)) is_edge = 1;
+                else if ((x >= 1030) && (x <= 1210) && (y >= 520) && (y <= 700)
+                    && ring_hit(x,y, 1120,610, 82, 24)) is_edge = 1;
             end else begin
                 if ((x >= 110) && (x <= 290) && (y >= 430) && (y <= 610)
                     && disk_hit(x,y, 200,520, 82, 1)) is_edge = 1;
@@ -153,12 +164,12 @@ module tb_shp_ring;
     task stream_frame;
         begin
             for (yy = 0; yy < H; yy = yy + 1) begin
-                for (xx = 0; xx < W; xx = xx + 1) begin
+                for (xx = 0; xx < HTOTAL; xx = xx + 1) begin
                     @(negedge clk);
-                    in_de <= 1'b1;
-                    in_x  <= xx[11:0];
+                    in_de <= (xx < W);
+                    in_x  <= (xx < W) ? xx[11:0] : 12'd0;
                     in_y  <= yy[12:0];
-                    in_d  <= is_edge(xx, yy) ? 8'hFF : 8'h00;
+                    in_d  <= (xx < W && is_edge(xx, yy)) ? 8'hFF : 8'h00;
                 end
             end
             @(negedge clk);
@@ -167,7 +178,7 @@ module tb_shp_ring;
             repeat (50) @(posedge clk);
             @(negedge clk); in_vs <= 1'b1;
             @(negedge clk); in_vs <= 1'b0;
-            repeat (15000) @(posedge clk);
+            repeat (50000) @(posedge clk);
         end
     endtask
 
@@ -196,8 +207,8 @@ module tb_shp_ring;
                     end
                 end
             end
-            $display("  o_cnt=%0d 有效框=%0d 圆形=%0d 矩形=%0d FIFO溢出=%0d",
-                     b_cnt, nv, nc1, nc2, b_ovf);
+            $display("  o_cnt=%0d 有效框=%0d 圆形=%0d 矩形=%0d FIFO溢出=%0d state=%0d fend=%0d",
+                     b_cnt, nv, nc1, nc2, b_ovf, dut.state, dut.fend_mode);
             if (nv != want_total) begin
                 $display("  FAIL 有效框数=%0d 期望=%0d", nv, want_total);
                 errors = errors + 1;
@@ -232,9 +243,13 @@ module tb_shp_ring;
             errors = errors + 1;
         end
 
-        if (errors == 0) $display("PASSED");
-        else             $display("FAILED (%0d errors)", errors);
-        $finish;
+        if (errors == 0) begin
+            $display("SHAPE_TEST_PASS tb_shp_ring");
+            $finish_and_return(0);
+        end else begin
+            $display("FAIL tb_shp_ring: %0d errors", errors);
+            $finish_and_return(1);
+        end
     end
 
 endmodule

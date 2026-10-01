@@ -1,11 +1,11 @@
 //=============================================================================
-// shp_detect.v -- 赛题4 创意拓展⑥: 边缘图上的形状识别(特征匹配法)
+// shp_detect.v -- 赛题4: 三类平面图形的流式候选检测与几何分类
 //
 // 赛题原文: "在边缘检测的基础上, 识别画面中的特定形状(如圆形、矩形);
 //            可采用特征匹配法: 在边缘图像中检测轮廓, 计算几何特征;
 //            将识别结果显示在屏幕上(如'检测到圆形')"
 //
-// 本文档按"特征匹配法"实现, 全部在像素流上完成, 不需要整帧缓存:
+// 按"特征匹配法"实现, 全部在像素流上完成, 不需要整帧缓存:
 //
 //  1) 游程(Run-Length)连通域: 二值边缘流里每一行会出来若干段"连续白点"。
 //     每段结束时, 拿它的 [x0,x1] 与"还在活动的 blob 表"比较:
@@ -13,36 +13,20 @@
 //     一行的左右两段(比如圆的左弧和右弧)会先后落进同一个 blob 的 x 范围内,
 //     于是被正确并到一起。表里最多 NB=8 个并发 blob(够画面上 8 个图形)。
 //
-//  2) 每个 blob 用 14 个累加量描述: bbox(x0,x1,y0,y1) + 边缘像素数 cnt
-//     + 行跨度累加 sum(每行的 x1-x0+1 累加, 当"填充面积"的估计)
-//     + 当前行暂存(rmn,rmx,rs) + 最宽行记录(mxc,my0,my1)。
-//     表很小, 全用寄存器, 不占 BRAM。
+//  2) shp_summary 为每个 blob 存32方向极值点和每4行左右轮廓摘要。
+//     只有最近行游程证据允许并槽；历史bbox只用于无漏检的候选预筛。
 //
-//  3) 一个 blob "退休"(行尾超时/帧末)时算几何特征并分类:
-//        r   = sum / (w*h)                   -- 填充率(千分比)
-//        矩形:   r >= fill_th                (方形框/矩形框 r≈1000)
-//        圆形:   600 <= r < fill_th 且 bbox 近正方 (圆/空心圆环 r≈785)
-//        三角/十字: r < 600, 再看"最宽的行在哪"(mxc/my0/my1):
-//               三角: 最宽的行贴着 bbox 的上边或下边(正三角=底边, 倒三角=顶边),
-//                     即 4*(my0-y0) <= h 或 4*(y1-my1) <= h;
-//               十字: 最宽的行是中间那根"横杠", 上下都离得远。
-//             旧版只看"最后一行的跨度 lsp"当底边宽度, 相机略微倾斜(手持几乎不可避
-//             免)或底边混进一小段杂线时底边那一行就变短 -> 三角被误判成十字, 而且
-//             在阈值附近来回跳。lsp >= w/2 保留为 OR 项: 底边确实占满时仍算三角,
-//             只放宽不收紧(十字的底边只有中间臂宽, 不受影响)。
-//        (直线段/数字 r<300 记无效; 圆是空心还是实心不影响上述边缘特征)
-//     阈值比较全部用乘加比较(和 fill_th 比用一次乘法), 无除法器。
+//  3) blob退休后由 shp_geometry 串行检查顶点、直边、圆/椭圆残差和
+//     条带外凹陷。只产生圆(1)、矩形(2)、三角形(3)；十字及不可靠轮廓拒识。
+//     旧填充率仍可用于框排序，但不再控制类别。
 //
-//  4) 每帧末把"面积估计最大"的前 NBX=6 个图形提交给显示叠加(shp_overlay),
-//     显示端按 1 帧的滞后画框 + 中文标签; 若本帧一个都没检出, 框可以再保持
-//     HOLD 帧(防单帧漏检导致闪一下)。
+//  4) 帧末原子提交NBX个框；空帧最多保持2帧。游程溢出或槽位不足时
+//     整帧输出无效并增加诊断计数，避免残缺轮廓被肯定分类。
 //
-// 资源: 全寄存器逻辑(blob 表 8x~130bit + top 表 6x~70bit + 乘法器 1 个),
-//       无 BRAM, 无 DSP(9600 以下的常数乘全部改成移位加)。
+// 资源: blob表/最近行游程、摘要RAM和串行定点几何计算；以构建报告为准。
 //
-// 时序: 段结束事件进一个深度 FQ=24 的 FIFO, 主状态机平均 4 拍处理一段。
-//       满屏混乱纹理(每行几百段)时 FIFO 可能溢出, 溢出计数报告给 telemetry;
-//       规则图形(圆/方/三角/数字)每行只有几段, 余量很大。
+// 时序: 游程事件经深度FQ=24的FIFO，几何分类在目标退休后进行。
+//       密纹理造成的过载记录在o_ovf，受影响帧不输出形状框。
 //
 // 边界: 只处理 x<W, y<H 的有效像素, 与显示坐标同一空间(1:1 对准)。
 //=============================================================================
@@ -55,7 +39,7 @@ module shp_detect #(
     parameter integer GAPX = 6,      // 水平合并容差(px)
     parameter integer GAPY = 4,      // 垂直容忍(行): 断线不超过 4 行仍算同一形状
     parameter integer FQ   = 24,     // 游程 FIFO 深度
-    parameter integer HOLD = 15      // 本帧没检出时, 旧框再保持多少帧
+    parameter integer HOLD = 2       // 临时漏检最多保持两帧
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -64,7 +48,7 @@ module shp_detect #(
     input  wire        cfg_en,          // 0 = 关闭形状识别(直通, 不画任何框)
     input  wire [7:0]  cfg_min_size,    // bbox 最小边长(px), 8..255, 默认 24
     input  wire [2:0]  cfg_max_boxes,   // 显示框数上限 1..6, 默认 4
-    input  wire [9:0]  cfg_fill_th,     // 圆/矩形 填充率分界(千分比), 默认 875
+    input  wire [9:0]  cfg_fill_th,     // 旧版填充率字段，保留接口；不控制新分类
     input  wire [6:0]  cfg_max_area,    // 最大 bbox 面积百分比(占全屏), 默认 50
 
     // 边缘流(dsp 级, 与 alg_vdisp 的 ed_* 同一根线)
@@ -79,22 +63,22 @@ module shp_detect #(
     output reg  [NBX*12-1:0] o_bx1,
     output reg  [NBX*13-1:0] o_by0,
     output reg  [NBX*13-1:0] o_by1,
-    output reg  [NBX*3-1:0]  o_bcls,     // 1=圆 2=矩 3=三角 4=十字 0=无效
+    output reg  [NBX*3-1:0]  o_bcls,     // 1=圆 2=矩 3=三角 0=无效
     output reg  [NBX-1:0]    o_bval,
 
     output reg  [9:0]  o_cnt,            // 本帧提交的合格图形数(0..999)
-    output reg  [15:0] o_ovf             // 游程 FIFO 溢出计数(诊断)
+    output reg  [15:0] o_ovf             // 饱和的处理异常计数(含游程溢出/无空槽)
 );
 
     // FQ/HOLD 是 integer 参数, 转定宽 localparam 再比较/做下标,
     // 避免个别综合器对 integer 位选支持不好
     localparam [4:0] FQ5   = FQ;
-    localparam [4:0] HOLD5 = HOLD;
+    localparam [4:0] HOLD5 = (HOLD > 2) ? 5'd2 : HOLD;
 
     // ---------------------------------------------------------------- 限幅
     wire [7:0]  min_sz  = (cfg_min_size  <  8'd8)   ?  8'd8   : cfg_min_size;
     wire [2:0]  nbox    = (cfg_max_boxes == 3'd0)   ?  3'd1   : cfg_max_boxes;
-    // 下限 800: 保证圆的区间 [600, fill_th) 一定包含实测圆心值 ≈785
+    // 旧调参字段照常限幅，供兼容性寄存器路径使用；不影响几何类别。
     wire [9:0]  fil_th  = (cfg_fill_th   < 10'd800) ? 10'd800 :
                           ((cfg_fill_th  > 10'd990) ? 10'd990 : cfg_fill_th);
     wire [6:0]  max_pct = (cfg_max_area  <  7'd5)   ?  7'd5   : cfg_max_area;
@@ -125,7 +109,12 @@ module shp_detect #(
 
     // ------------------------------------------------------------ 游程 FIFO
     reg  [36:0] fifo [0:FQ-1];
+    localparam [4:0] S_COMMIT=5'd13;
+    reg [4:0] state;
+    wire no_slot_drop;
+    wire malformed_retire;
     reg  [4:0]  f_wp, f_rp, f_cnt;
+    reg         frame_fault;
     wire        f_empty = (f_cnt == 5'd0);
     wire        f_full  = (f_cnt == FQ5);
     reg         f_pop;                       // 主状态机 1 拍脉冲
@@ -134,17 +123,24 @@ module shp_detect #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             f_wp <= 5'd0; f_rp <= 5'd0; f_cnt <= 5'd0; o_ovf <= 16'd0;
+            frame_fault <= 1'b0;
         end else if (!cfg_en) begin
             f_wp <= 5'd0; f_rp <= 5'd0; f_cnt <= 5'd0;   // 关闭时清空
+            frame_fault <= 1'b0;
         end else begin
+            if (state==S_COMMIT) frame_fault <= 1'b0;
+            if ((span_end && f_full) || no_slot_drop) frame_fault <= 1'b1;
             if (span_end) begin
                 if (!f_full) begin
                     fifo[f_wp] <= {y_r, x_r, sx0};
                     f_wp <= (f_wp == (FQ5 - 5'd1)) ? 5'd0 : (f_wp + 5'd1);
-                end else if (o_ovf != 16'hFFFF) begin
-                    o_ovf <= o_ovf + 16'd1;
                 end
             end
+            // Count bad geometry storage as well as dropped input work. If
+            // two anomalies coincide, this diagnostic counts the cycle once.
+            if (((span_end && f_full) || no_slot_drop || malformed_retire) &&
+                o_ovf != 16'hFFFF)
+                o_ovf <= o_ovf + 16'd1;
             if (f_pop) f_rp <= (f_rp == (FQ5 - 5'd1)) ? 5'd0 : (f_rp + 5'd1);
             case ({span_end & ~f_full, f_pop})
                 2'b10:   f_cnt <= f_cnt + 5'd1;
@@ -156,6 +152,7 @@ module shp_detect #(
 
     // ------------------------------------------------------------- blob 表
     reg            b_act [0:NB-1];
+    reg            b_amb [0:NB-1];      // two long disjoint runs shared first row
     reg  [11:0]    b_x0  [0:NB-1];
     reg  [11:0]    b_x1  [0:NB-1];
     reg  [12:0]    b_y0  [0:NB-1];
@@ -193,12 +190,11 @@ module shp_detect #(
                S_PUSH   = 5'd10,    // 写 top 列表
                S_CLR    = 5'd11,    // 释放槽位
                S_FEND   = 5'd12,    // 帧末逐个退休
-               S_COMMIT = 5'd13,    // 提交输出 + hold
                S_SUM_INIT=5'd14,S_SUM_SCAN=5'd15,S_SUM_SPAN=5'd16,
                S_SUM_ACCEPT=5'd17,S_SUM_FINISH=5'd18,
-               S_QMATCH=5'd19,S_QWAIT=5'd20;
+               S_QMATCH=5'd19,S_QWAIT=5'd20,
+               S_GEOM_START=5'd21,S_GEOM_WAIT=5'd22;
 
-    reg  [4:0]  state;
     reg         fend_req;
     reg         fend_mode;
     reg  [3:0]  ret_slot;
@@ -221,20 +217,42 @@ module shp_detect #(
     wire sum_ready=summary_ready&&recent_ready;
     wire [NB-1:0] summary_bad,recent_bad;
     wire [NB-1:0] recent_matches;
-    // The future geometry reader uses these ports; they stay idle in Task 3.
+    reg [NB-1:0] recent_candidates;
+    integer qi;
+    always @* begin
+     for(qi=0;qi<NB;qi=qi+1)
+      recent_candidates[qi]=b_act[qi]&&
+       ({1'b0,s_x0}<={1'b0,b_x1[qi]}+GAPX)&&
+       ({1'b0,s_x1}+GAPX>={1'b0,b_x0[qi]});
+    end
     wire summary_rd_ready,summary_rd_valid;
     wire [25:0] summary_rd_data;
+    wire geom_req,geom_ready,geom_done,geom_valid;
+    assign malformed_retire = (state==S_GEOM_START) && geom_ready &&
+                              (summary_bad[ret_slot] || recent_bad[ret_slot]);
+    wire [2:0] geom_rd_slot,geom_cls;
+    wire [7:0] geom_rd_index;
     wire clr_all;
     wire summary_rst_n=rst_n&&cfg_en&&!clr_all;
     shp_summary #(.W(W),.H(H),.NB(NB)) summaries(
      .clk(clk),.rst_n(summary_rst_n),.cmd_valid(sum_valid&&recent_ready),.cmd_ready(summary_ready),
      .cmd_op(sum_op),.cmd_slot(sum_slot),.cmd_other(sum_other),.cmd_x0(s_x0),.cmd_x1(s_x1),.cmd_y(s_y),
-     .rd_req(1'b0),.rd_ready(summary_rd_ready),.rd_slot(3'd0),.rd_index(8'd0),
+     .rd_req(geom_req),.rd_ready(summary_rd_ready),.rd_slot(geom_rd_slot),.rd_index(geom_rd_index),
      .rd_valid(summary_rd_valid),.rd_data(summary_rd_data),.bad(summary_bad));
+    shp_geometry geometry(
+     .clk(clk),.rst_n(summary_rst_n),.start(state==S_GEOM_START&&geom_ready),
+     .start_ready(geom_ready),.slot(ret_slot[2:0]),
+     .bbox_x0(b_x0[ret_slot]),.bbox_x1(b_x1[ret_slot]),
+     .bbox_y0(b_y0[ret_slot]),.bbox_y1(b_y1[ret_slot]),
+     .bad(summary_bad[ret_slot]||recent_bad[ret_slot]||b_amb[ret_slot]),
+     .done(geom_done),.valid(geom_valid),.cls(geom_cls),
+     .rd_req(geom_req),.rd_slot(geom_rd_slot),.rd_index(geom_rd_index),
+     .rd_valid(summary_rd_valid),.rd_data(summary_rd_data));
     shp_recent #(.W(W),.H(H),.NB(NB),.GAPX(GAPX),.GAPY(GAPY)) connections(
      .clk(clk),.rst_n(summary_rst_n),.cmd_valid(sum_valid&&summary_ready),.cmd_ready(recent_ready),
      .cmd_op(sum_op),.cmd_slot(sum_slot),.cmd_other(sum_other),.cmd_x0(s_x0),.cmd_x1(s_x1),.cmd_y(s_y),
      .query_start(state==S_QMATCH),.query_ready(recent_query_ready),
+     .query_mask(recent_candidates),
      .query_x0(s_x0),.query_x1(s_x1),.query_y(s_y),
      .query_done(recent_query_done),.o_matches(recent_matches),.bad(recent_bad));
 
@@ -280,6 +298,7 @@ module shp_detect #(
 
     // ------------------------------------------------- 匹配/优先级(组合)
     wire [NB-1:0] c_match=qm_mask;
+    assign no_slot_drop=(state==S_MPRI)&&!(|m_mask)&&!(|c_free)&&!(|c_exp);
 
     // ---- 最宽行记录(合并值): 打包 {span[11:0], my0[12:0], my1[12:0]} = 38bit ----
     //   mx2     : 合并两份记录 —— 取跨度大的; 跨度相等时行号区间取并集。
@@ -434,91 +453,15 @@ module shp_detect #(
                           sp_eq ? ((b_lr[ret_slot] > b_my1[ret_slot]) ? b_lr[ret_slot] : b_my1[ret_slot])
                                 : b_my1[ret_slot];
 
-    wire [31:0] fill1000 = ({12'd0, ret_fill} << 10)
-                         - ({12'd0, ret_fill} << 4)
-                         - ({12'd0, ret_fill} << 3);
-    wire [31:0] area600 = ({12'd0, ret_area} << 9) + ({12'd0, ret_area} << 6)
-                        + ({12'd0, ret_area} << 4) + ({12'd0, ret_area} << 3);
-                                                                        // x600
-    wire [31:0] area300 = ({12'd0, ret_area} << 8) + ({12'd0, ret_area} << 5)
-                        + ({12'd0, ret_area} << 3) + ({12'd0, ret_area} << 2);
-                                                                        // x300
-    wire [13:0] w7  = ({2'b0, ret_w} << 3) - {2'b0, ret_w};             // 7w
-    wire [13:0] w10 = ({2'b0, ret_w} << 3) + ({2'b0, ret_w} << 1);      // 10w
-    wire [13:0] h7  = ({2'b0, ret_h} << 3) - {2'b0, ret_h};             // 7h
-    wire [13:0] h10 = ({2'b0, ret_h} << 3) + ({2'b0, ret_h} << 1);      // 10h
-    wire [13:0] lsp2 = {2'b0, ret_lsp} << 1;                            // 2*lsp
+    wire ok_size=(ret_w>={4'd0,min_sz})&&(ret_h>={4'd0,min_sz});
+    wire ok_area=({7'd0,ret_area}<=area_max);
 
-    wire ok_size = (ret_w >= {4'd0, min_sz}) & (ret_h >= {4'd0, min_sz});
-    wire ok_area = ({7'd0, ret_area} <= area_max);
-    wire aspect_round = (w10 >= h7) & (h10 >= w7);    // 0.7 <= w/h <= 1.43
-
-    // 三角/十字分界: "最宽的行在哪"
-    //   三角: 最宽行贴着 bbox 的上边或下边(4*d_top<=h 或 4*d_bot<=h),
-    //         即 4*(my0-y0) <= h 或 4*(y1-my1) <= h;
-    //   十字: 最宽行(横杠)在中间, 上下都远
-    //   OR 上旧的 lsp 判据(底边真占满时仍算三角) —— 只放宽不收紧。
-    wire [15:0] h16   = {4'b0, ret_h};
-    wire [15:0] dtop4 = ({3'b0, (ret_my0 - ret_ytop)} << 2);   // 4*d_top
-    wire [15:0] dbot4 = ({3'b0, (ret_ybot - ret_my1)} << 2);   // 4*d_bot
-    wire tri_end  = (dtop4 <= h16) | (dbot4 <= h16);
-    wire tri_full = (lsp2 >= {2'b0, ret_w});           // 旧判据: 最后一行占满全宽
-
-    // ---- 最宽平台率(治"矩形稍微拿歪就掉进圆形/十字档") ----
-    //   空心框/实心块旋转时 fill(每行 x 跨度累加)几乎不变, 但水平外接矩形
-    //   bbox 随旋转变大 -> fill1000 = fill/(w*h)*1000 一路掉:
-    //   仿真实测 0°->1000, 8°->778, 15°->659, 22°->587, 30°->526, 45°->500。
-    //   而"取得最大跨度的行区间"长度(平台)随角度缓慢缩短, 占 bbox 高的
-    //   比例 = |cos-sin|/(cos+sin): 15°->58%, 22°->43%, 30°->27%;
-    //   圆只有 1~4%(仿真实测 r40/r30 圆各 1 行平台)。
-    //   阈值取 40%: 排除 正十字(横杠平台 25.5%)/粗臂十字(37.9%)/圆(<=4%),
-    //   保留 600~875 档里的歪方框(该档对应 6°~20°, 平台率 57%~82%)。
-    //   约束 flat_rect 要 aspect_round(0.7<=w/h<=1.43): 圆形候选本来就是
-    //   近方的; 长条/数字不受影响。
-    //   (注: 精确平台率在真实抖动下不稳 —— 20° 以上只剩 1~11%, 单靠它会
-    //    把方框漏去圆形/十字档, 下面追加 fill 分段救援, 二者取并。)
-    wire [13:0] flat_w  = {1'b0, ret_my1} - {1'b0, ret_my0} + 14'd1;
-    wire [16:0] flat5   = ({3'b0, flat_w} << 2) + {3'b0, flat_w};   // 5 x 平台行数
-    wire [16:0] h2      = {1'b0, h16} << 1;                         // 2 x 高度
-    wire        flat_hi = (flat5 >= h2);                            // 平台率 >= 40%
-    wire        flat_rect = flat_hi & aspect_round;
-
-    // ---- 倾斜矩形救援(20261001): fill 分段(治"方框拿歪 15~25° 被判成圆/十字") ----
-    //   数据(黄金模型=板级链路+噪声 sigma6, fill1000 稳±2):
-    //     圆环(r145 lw20) 790; 小圆(tb r30/r40) 758~765;
-    //     方框 10°=750, 15°=672, 20°=615, 25°=571, 30°=541, 34°=526;
-    //     1.7:1 矩形 20°=612, 25°=569;  2:1 矩形 15°=618, 20°=559;
-    //     三角 <=511;  细臂十字(18%臂) 336;  30%臂十字 516。
-    //   判据: fill in [600,750) -> 矩形(圆档下半; 750 距最小圆 758 留 8,
-    //         距主用圆环 790 留 40);
-    //         fill in [520,600) 且非三角 -> 矩形(十字档上半; 三角由
-    //         tri_end/tri_full 几何保护, 另有 fill<520 兜底)。
-    //   长条矩形歪了以后 bbox 变宽, w/h 会超出圆形用的 aspect_round,
-    //   故救援判据用 aspect_wide(0.5<=w/h<=2.0)。
-    wire [31:0] area520 = ({12'd0, ret_area} << 9) + ({12'd0, ret_area} << 3);
-                                                                    // x520
-    wire [31:0] area150 = ({12'd0, ret_area} << 7) + ({12'd0, ret_area} << 4)
-                        + ({12'd0, ret_area} << 2) + ({12'd0, ret_area} << 1);
-    wire [31:0] area750 = area600 + area150;                        // x750
-    wire [13:0] w2v = {2'b0, ret_w} << 1;                           // 2w
-    wire [13:0] h2v = {2'b0, ret_h} << 1;                           // 2h
-    wire        aspect_wide = (w2v >= {2'b0, ret_h}) & (h2v >= {2'b0, ret_w});
-    wire        band_rect_tilt = (fill1000 >= area600) & (fill1000 < area750)
-                               & aspect_wide;
-    wire        c_low_all = (fill1000 >= area300) & (fill1000 < area600) & ~flat_rect;
-    wire        rect_tilt_low = c_low_all & (fill1000 >= area520)
-                              & aspect_wide & ~(tri_end | tri_full);
-
-    wire c_rect   = (fill1000 >= r_a_th) |
-                    ((fill1000 >= area300) & (fill1000 < r_a_th) & flat_rect) |
-                    band_rect_tilt | rect_tilt_low;
-    wire c_circle = (fill1000 >= area750) & (fill1000 < r_a_th) & aspect_round & ~flat_hi;
-    wire c_tri    = c_low_all & ~rect_tilt_low & (tri_end | tri_full);
-    wire c_cross  = c_low_all & ~rect_tilt_low & ~(tri_end | tri_full);
-    wire qualified = ok_size & ok_area & (c_circle | c_rect | c_tri | c_cross)
-                    & ~summary_bad[ret_slot] & ~recent_bad[ret_slot];
-    wire [2:0] cls_now = c_circle ? 3'd1 : c_rect ? 3'd2 :
-                         c_tri ? 3'd3 : c_cross ? 3'd4 : 3'd0;
+    // Classes come exclusively from shp_geometry; the legacy fill/plateau
+    // heuristics are not a fallback for ambiguous rotation or cross shapes.
+    wire qualified = ok_size & ok_area & geom_valid & (geom_cls>=1) & (geom_cls<=3)
+                    & ~summary_bad[ret_slot] & ~recent_bad[ret_slot]
+                    & ~b_amb[ret_slot];
+    wire [2:0] cls_now = geom_cls;
 
     // top 列表插入位置(组合, S_CLS 拍)
     reg  [2:0]  ins_idx;
@@ -527,6 +470,11 @@ module shp_detect #(
     reg         free_found;
     reg  [19:0] min_s;
     reg  [2:0]  min_i;
+    reg         ring_dup,ring_replace;
+    reg  [2:0]  ring_idx;
+    reg  [11:0] ring_w,ring_h;
+    reg  [12:0] ring_cx2;
+    reg  [13:0] ring_cy2;
     always @* begin
         free_i = 3'd0; free_found = 1'b0;
         for (i = NBX-1; i >= 0; i = i - 1)
@@ -534,7 +482,36 @@ module shp_detect #(
         min_s = 20'hFFFFF; min_i = 3'd0;
         for (i = 0; i < NBX; i = i + 1)
             if (l_val[i] & (l_sc[i] < min_s)) begin min_s = l_sc[i]; min_i = i[2:0]; end
-        if (free_found)          begin ins_idx = free_i;  ins_en = qualified; end
+        ring_dup=1'b0;ring_replace=1'b0;ring_idx=3'd0;
+        ring_w=12'd0;ring_h=12'd0;ring_cx2=13'd0;ring_cy2=14'd0;
+        // Treat only a concentric, nested pair of *independently classified*
+        // circles as one annulus. Bbox containment by itself is insufficient.
+        for (i = 0; i < NBX; i = i + 1) begin
+            ring_w=l_x1[i]-l_x0[i]+12'd1;
+            ring_h=l_y1[i]-l_y0[i]+12'd1;
+            ring_cx2={1'b0,l_x0[i]}+{1'b0,l_x1[i]};
+            ring_cy2={1'b0,l_y0[i]}+{1'b0,l_y1[i]};
+            if (qualified && cls_now==3'd1 && l_val[i] && l_cls[i]==3'd1 &&
+                (({1'b0,b_x0[ret_slot]}+{1'b0,b_x1[ret_slot]}>=ring_cx2) ?
+                  ({1'b0,b_x0[ret_slot]}+{1'b0,b_x1[ret_slot]}-ring_cx2<=13'd8) :
+                  (ring_cx2-({1'b0,b_x0[ret_slot]}+{1'b0,b_x1[ret_slot]})<=13'd8)) &&
+                (({1'b0,b_y0[ret_slot]}+{1'b0,b_y1[ret_slot]}>=ring_cy2) ?
+                  ({1'b0,b_y0[ret_slot]}+{1'b0,b_y1[ret_slot]}-ring_cy2<=14'd8) :
+                  (ring_cy2-({1'b0,b_y0[ret_slot]}+{1'b0,b_y1[ret_slot]})<=14'd8)) &&
+                (((b_x0[ret_slot]<=l_x0[i] && b_x1[ret_slot]>=l_x1[i] &&
+                   b_y0[ret_slot]<=l_y0[i] && b_y1[ret_slot]>=l_y1[i]) &&
+                   ({1'b0,ring_w}*2 >= {1'b0,ret_w}) &&
+                   ({1'b0,ring_h}*2 >= {1'b0,ret_h})) ||
+                 ((l_x0[i]<=b_x0[ret_slot] && l_x1[i]>=b_x1[ret_slot] &&
+                   l_y0[i]<=b_y0[ret_slot] && l_y1[i]>=b_y1[ret_slot]) &&
+                   ({1'b0,ret_w}*2 >= {1'b0,ring_w}) &&
+                   ({1'b0,ret_h}*2 >= {1'b0,ring_h})))) begin
+                ring_dup=1'b1;ring_idx=i[2:0];
+                ring_replace=(ret_w>ring_w && ret_h>ring_h);
+            end
+        end
+        if (ring_dup)begin ins_idx=ring_idx;ins_en=ring_replace;end
+        else if (free_found)          begin ins_idx = free_i;  ins_en = qualified; end
         else if (ret_fill > min_s) begin ins_idx = min_i; ins_en = qualified; end
         else                     begin ins_idx = 3'd0;    ins_en = 1'b0; end
     end
@@ -543,7 +520,8 @@ module shp_detect #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             for (i = 0; i < NB; i = i + 1) begin
-                b_act[i] <= 1'b0; b_x0[i] <= 12'd0; b_x1[i] <= 12'd0;
+                b_act[i] <= 1'b0; b_amb[i] <= 1'b0;
+                b_x0[i] <= 12'd0; b_x1[i] <= 12'd0;
                 b_y0[i] <= 13'd0; b_y1[i] <= 13'd0; b_lr[i] <= 13'd0;
                 b_cnt[i] <= 20'd0; b_sum[i] <= 20'd0;
                 b_rmn[i] <= 12'd0; b_rmx[i] <= 12'd0; b_rs[i] <= 1'b0;
@@ -552,7 +530,8 @@ module shp_detect #(
         end else begin
             if (clr_all) begin
                 for (i = 0; i < NB; i = i + 1) begin
-                    b_act[i] <= 1'b0; b_cnt[i] <= 20'd0; b_sum[i] <= 20'd0;
+                    b_act[i] <= 1'b0; b_amb[i] <= 1'b0;
+                    b_cnt[i] <= 20'd0; b_sum[i] <= 20'd0;
                     b_rs[i] <= 1'b0; b_rmn[i] <= 12'd0; b_rmx[i] <= 12'd0;
                     b_mxc[i] <= 12'd0; b_my0[i] <= 13'd0; b_my1[i] <= 13'd0;
                 end
@@ -563,6 +542,14 @@ module shp_detect #(
                         b_act[i] <= 1'b0;                      // 并进 m0
                     if (m_mask[i] & (i[3:0] == m0)) begin
                         b_act[i] <= 1'b1;
+                        // Two separate full-width top edges on the first
+                        // row can otherwise masquerade as one rectangle when
+                        // their gap is below GAPX. Curved ring arcs at their
+                        // extrema are short and do not trigger this guard.
+                        if (b_y0[i]==s_y && b_lr[i]==s_y &&
+                            {1'b0,b_rmx[i]}+13'd1 < {1'b0,s_x0} &&
+                            (b_rmx[i]-b_rmn[i]+12'd1)>=min_sz &&
+                            s_len>={5'd0,min_sz}) b_amb[i]<=1'b1;
                         b_x0[i] <= mg_x0;  b_x1[i] <= mg_x1;
                         b_y0[i] <= mg_y0;  b_y1[i] <= mg_y1;
                         b_lr[i] <= s_y;
@@ -577,6 +564,7 @@ module shp_detect #(
                     end
                     if (alloc_oh[i]) begin                     // 新 blob
                         b_act[i] <= 1'b1;
+                        b_amb[i] <= 1'b0;
                         b_x0[i] <= s_x0;   b_x1[i] <= s_x1;
                         b_y0[i] <= s_y;    b_y1[i] <= s_y;
                         b_lr[i] <= s_y;
@@ -589,7 +577,10 @@ module shp_detect #(
                     end
                 end
             end
-            if (state == S_CLR) b_act[ret_slot] <= 1'b0;       // 释放
+            if (state == S_CLR) begin
+                b_act[ret_slot] <= 1'b0;
+                b_amb[ret_slot] <= 1'b0;
+            end
         end
     end
 
@@ -735,7 +726,9 @@ module shp_detect #(
                                  : 20'd0);
                     m_a     <= {12'd0, (b_x1[ret_slot] - b_x0[ret_slot] + 12'd1)};
                     m_b     <= b_y1[ret_slot][10:0] - b_y0[ret_slot][10:0] + 11'd1;
-                    state   <= S_MULS0;
+                    ret_area <= (b_x1[ret_slot]-b_x0[ret_slot]+12'd1)*
+                                (b_y1[ret_slot]-b_y0[ret_slot]+13'd1);
+                    state   <= S_GEOM_START;
                 end
 
                 S_MULS0: begin                       // area = w*h
@@ -769,6 +762,9 @@ module shp_detect #(
                     state <= S_PUSH;
                 end
 
+                S_GEOM_START: if(geom_ready) state<=S_GEOM_WAIT;
+                S_GEOM_WAIT: if(geom_done) state<=S_CLS;
+
                 // ---- 写 top 列表 ----
                 S_PUSH: begin
                     if (ins_en) begin
@@ -779,7 +775,8 @@ module shp_detect #(
                         l_y1 [ins_idx] <= b_y1[ret_slot];
                         l_cls[ins_idx] <= cls_now;
                         l_sc [ins_idx] <= ret_fill;
-                        if (f_cnt_cur != 10'd999) f_cnt_cur <= f_cnt_cur + 10'd1;
+                        if (!ring_dup && f_cnt_cur != 10'd999)
+                            f_cnt_cur <= f_cnt_cur + 10'd1;
                     end
                     state <= S_CLR;
                 end
@@ -810,7 +807,7 @@ module shp_detect #(
                 // ---- 提交输出 + hold ----
                 S_COMMIT: begin
                     fend_mode <= 1'b0;
-                    o_cnt     <= f_cnt_cur;    // 本帧总数锁存给上层/telemetry
+                    o_cnt     <= frame_fault ? 10'd0 : f_cnt_cur;
                     f_cnt_cur <= 10'd0;        // 下一帧重新计数
                     state     <= S_IDLE;
                 end
@@ -848,7 +845,7 @@ module shp_detect #(
             if ((state == S_COMMIT) && ~clr_all) begin
                 for (i = 0; i < NBX; i = i + 1) begin
                     l_val[i] <= 1'b0;              // 列表每帧重建
-                    if (any_l) begin
+                    if (any_l && !frame_fault) begin
                         o_bx0 [i*12 +: 12] <= l_x0[i];
                         o_bx1 [i*12 +: 12] <= l_x1[i];
                         o_by0 [i*13 +: 13] <= l_y0[i];
@@ -857,7 +854,9 @@ module shp_detect #(
                         o_bval[i]          <= l_val[i] & (i[2:0] < nbox);
                     end
                 end
-                if (any_l)          hold_cnt <= HOLD5;
+                // A nonempty commit itself is not an extra hold frame.
+                if (frame_fault) begin o_bval <= {NBX{1'b0}}; hold_cnt <= 5'd0; end
+                else if (any_l)     hold_cnt <= (HOLD5==0)?5'd0:HOLD5-5'd1;
                 else if (hold_cnt != 5'd0) hold_cnt <= hold_cnt - 5'd1;
                 else                o_bval <= {NBX{1'b0}};
             end
@@ -870,13 +869,16 @@ endmodule
 // read per cycle; scan all slots for a query. Overwrite of a still-recent
 // interval makes the destination uncertain rather than guessing a class.
 module shp_recent #(
- parameter integer W=1280,H=720,NB=8,GAPX=6,GAPY=4,NR=16
+ // Up to four separated contour runs per row across GAPY+1 live rows.
+ // 32 entries avoid overwriting a still-recent inner/outer ring interval,
+ // including raster aliasing at the narrow top/bottom arcs.
+ parameter integer W=1280,H=720,NB=8,GAPX=6,GAPY=4,NR=32
 )(
  input wire clk,rst_n,
  input wire cmd_valid,output wire cmd_ready,input wire [1:0] cmd_op,
  input wire [2:0] cmd_slot,cmd_other,input wire [11:0] cmd_x0,cmd_x1,
  input wire [12:0] cmd_y,
- input wire query_start,output wire query_ready,
+ input wire query_start,output wire query_ready,input wire [NB-1:0] query_mask,
  input wire [11:0] query_x0,query_x1,input wire [12:0] query_y,
  output reg query_done,output reg [NB-1:0] o_matches,
  output reg [NB-1:0] bad
@@ -889,9 +891,15 @@ module shp_recent #(
  reg [36:0] read_data;
  reg [DEPTH-1:0] valid;
  reg [PW-1:0] next_index[0:NB-1];
+ reg ordered[0:NB-1]; // false after a merge whose append order is not guaranteed
  reg [AW-1:0] scan_index;
+ wire [2:0] scan_slot=scan_index/NR;
+ wire [PW-1:0] scan_offset=scan_index%NR;
  reg [PW-1:0] merge_index;
  reg [2:0] dest,source;
+ reg [NB-1:0] qmask;
+ reg [AW-1:0] qfirst,qnext;
+ reg qfirst_found,qnext_found;
  reg [12:0] merge_y,append_y,qy;
  reg [11:0] append_x0,append_x1,qx0,qx1;
  reg merging;
@@ -901,6 +909,20 @@ module shp_recent #(
                          (state==M_READ)?merge_addr:append_addr;
  assign cmd_ready=(state==IDLE);
  assign query_ready=(state==IDLE)&&!cmd_valid;
+ integer qj;
+ always @* begin
+  qfirst=0;qnext=0;qfirst_found=0;qnext_found=0;
+  for(qj=NB-1;qj>=0;qj=qj-1)
+   if(query_mask[qj])begin
+    qfirst=qj*NR+((next_index[qj]==0)?NR-1:next_index[qj]-1'b1);
+    qfirst_found=1;
+   end
+  for(qj=NB-1;qj>=0;qj=qj-1)
+   if(qj>scan_slot&&qmask[qj])begin
+    qnext=qj*NR+((next_index[qj]==0)?NR-1:next_index[qj]-1'b1);
+    qnext_found=1;
+   end
+ end
  integer si;
  always @(posedge clk)begin
   read_data<=memory[read_addr];
@@ -909,9 +931,9 @@ module shp_recent #(
  always @(posedge clk or negedge rst_n)begin
   if(!rst_n)begin
    state<=IDLE;valid<=0;bad<=0;query_done<=0;o_matches<=0;
-   scan_index<=0;merge_index<=0;dest<=0;source<=0;merge_y<=0;
+   scan_index<=0;merge_index<=0;dest<=0;source<=0;merge_y<=0;qmask<=0;
    append_y<=0;append_x0<=0;append_x1<=0;qy<=0;qx0<=0;qx1<=0;merging<=0;
-   for(si=0;si<NB;si=si+1)next_index[si]<=0;
+   for(si=0;si<NB;si=si+1)begin next_index[si]<=0;ordered[si]<=1;end
   end else begin
    query_done<=0;
    case(state)
@@ -919,7 +941,8 @@ module shp_recent #(
      if(cmd_valid)begin
       if(cmd_slot<NB)case(cmd_op)
        0:begin
-        valid[cmd_slot*NR +: NR]<=0;next_index[cmd_slot]<=0;bad[cmd_slot]<=0;
+        valid[cmd_slot*NR +: NR]<=0;next_index[cmd_slot]<=0;
+        bad[cmd_slot]<=0;ordered[cmd_slot]<=1;
        end
        1:begin
         dest<=cmd_slot;append_y<=cmd_y;append_x0<=cmd_x0;append_x1<=cmd_x1;
@@ -931,14 +954,17 @@ module shp_recent #(
         if(cmd_other>=NB||cmd_other==cmd_slot)bad[cmd_slot]<=1;
         else begin
          dest<=cmd_slot;source<=cmd_other;merge_y<=cmd_y;merge_index<=0;
-         merging<=1;bad[cmd_slot]<=bad[cmd_slot]|bad[cmd_other];state<=M_READ;
+         merging<=1;ordered[cmd_slot]<=0;
+         bad[cmd_slot]<=bad[cmd_slot]|bad[cmd_other];state<=M_READ;
         end
        end
        default:bad[cmd_slot]<=1;
       endcase
      end else if(query_start)begin
-      qx0<=query_x0;qx1<=query_x1;qy<=query_y;scan_index<=0;
-      o_matches<=0;state<=Q_READ;
+      qx0<=query_x0;qx1<=query_x1;qy<=query_y;
+      qmask<=query_mask;scan_index<=qfirst;o_matches<=0;
+      if(qfirst_found)state<=Q_READ;
+      else query_done<=1;
      end
     end
     Q_READ:state<=Q_CHECK;
@@ -948,8 +974,18 @@ module shp_recent #(
         {1'b0,qx0}<={1'b0,read_data[11:0]}+GAPX&&
         {1'b0,qx1}+GAPX>={1'b0,read_data[23:12]})
       o_matches[scan_index/NR]<=1;
-     if(scan_index==DEPTH-1)begin state<=IDLE;query_done<=1;end
-     else begin scan_index<=scan_index+1'b1;state<=Q_READ;end
+     // Newest-first scan: on an unmerged slot, the first stale/empty word
+     // proves every older word stale too. Merged slots retain a full scan.
+     if((ordered[scan_slot]&&
+         (!valid[scan_index]||
+          (qy>=read_data[36:24]&&qy-read_data[36:24]>GAPY)))||
+        scan_offset==next_index[scan_slot])begin
+      if(qnext_found)begin scan_index<=qnext;state<=Q_READ;end
+      else begin state<=IDLE;query_done<=1;end
+     end else begin
+      scan_index<=(scan_offset==0)?scan_index+NR-1:scan_index-1'b1;
+      state<=Q_READ;
+     end
     end
     M_READ:state<=M_CHECK;
     M_CHECK:begin

@@ -112,18 +112,14 @@ module tb_shp_detect;
         if (dut.span_end && !dut.f_full) nwrite = nwrite + 1;
     end
     integer nsp_dbg = 0, nret_dbg = 0;
-    always @(posedge clk) if ((dut.state >= 5'd5) && (dut.state <= 5'd8) && dut.m_busy && (dut.m_cnt == 5'd0))
-        $display("    MUL%0d 起 a=%0d b=%0d", dut.state - 5'd5, dut.m_a, dut.m_b);
-    always @(posedge clk) if (dut.mul_done_p)
-        $display("    MUL 完 res=%0d (state=%0d)", dut.m_res, dut.state);
     always @(posedge clk) if (dut.f_pop) begin
         if (nsp_dbg < 30) $display("  span y=%0d x=%0d..%0d", dut.s_y, dut.s_x0, dut.s_x1);
         nsp_dbg = nsp_dbg + 1;
     end
     always @(posedge clk) if (dut.state == 5'd9) begin
         if (nret_dbg < 40)
-            $display("  retire w=%0d h=%0d fill=%0d f1000=%0d a_th=%0d cls=%0d qual=%0d",
-                     dut.ret_w, dut.ret_h, dut.ret_fill, dut.fill1000, dut.r_a_th,
+            $display("  retire w=%0d h=%0d fill=%0d cls=%0d qual=%0d",
+                     dut.ret_w, dut.ret_h, dut.ret_fill,
                      dut.cls_now, dut.qualified);
         nret_dbg = nret_dbg + 1;
     end
@@ -136,14 +132,14 @@ module tb_shp_detect;
         rst_n = 1'b1;
         repeat (10) @(posedge clk);
 
-        // 一帧 1280x720 边缘流(图形外的像素 d=0)
+        // 标准720p每行1650周期，其中1280有效像素；消隐时间也供FSM排队。
         for (y = 0; y < H; y = y + 1) begin
-            for (x = 0; x < W; x = x + 1) begin
+            for (x = 0; x < 1650; x = x + 1) begin
                 @(negedge clk);
-                in_de <= 1'b1;
+                in_de <= (x < W);
                 in_x  <= x[11:0];
                 in_y  <= y[12:0];
-                in_d  <= is_edge(x, y) ? 8'hFF : 8'h00;
+                in_d  <= (x < W && is_edge(x, y)) ? 8'hFF : 8'h00;
             end
         end
         // 行尾空几拍 + in_vs 上升沿(= 帧结束, 设计里 fend_req 就是这个沿)
@@ -184,20 +180,22 @@ module tb_shp_detect;
                  dut.b_act[0], dut.b_act[1], dut.b_sum[0], dut.l_val[0]);
         $display("  诊断: 边缘像素=%0d pix拍=%0d 游程=%0d 入队=%0d", nedge, npix, nspan, nwrite);
 
-        if (nvalid != 4) begin
-            $display("  FAIL 有效框数=%0d, 期望 4", nvalid);
+        if (nvalid != 3) begin
+            $display("  FAIL 有效框数=%0d, 期望 3", nvalid);
             errors = errors + 1;
         end else begin
-            $display("  ok   有效框数 = 4");
+            $display("  ok   有效框数 = 3");
         end
         expect_class(seen_c, 1, "circle(hollow ring)");
         expect_class(seen_r, 1, "rect(square frame)");
         expect_class(seen_t, 1, "triangle");
-        expect_class(seen_x, 1, "cross");
+        expect_class(seen_x, 0, "cross rejected");
+        if (b_ovf != 0) begin $display("  FAIL overflow=%0d",b_ovf);errors=errors+1;end
 
-        if (errors == 0) $display("PASSED");
-        else             $display("FAILED  (%0d errors)", errors);
-        $finish;
+        if (errors == 0) begin
+            $display("SHAPE_TEST_PASS tb_shp_detect three classes and cross rejection");
+            $finish_and_return(0);
+        end else $fatal(1,"FAIL tb_shp_detect %0d errors",errors);
     end
 
 endmodule

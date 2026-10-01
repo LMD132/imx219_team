@@ -12,6 +12,7 @@ module tb_shp_recent;
   .cmd_ready(cmd_ready),.cmd_op(cmd_op),.cmd_slot(cmd_slot),
   .cmd_other(cmd_other),.cmd_x0(cmd_x0),.cmd_x1(cmd_x1),.cmd_y(cmd_y),
   .query_start(query_start),.query_ready(query_ready),
+  .query_mask(8'hff),
   .query_x0(query_x0),.query_x1(query_x1),.query_y(query_y),
   .query_done(query_done),.o_matches(o_matches),.bad(bad));
  task command;
@@ -50,7 +51,7 @@ module tb_shp_recent;
   check_query(105,200,210,0);
   command(0,0,0,0,0,0);
   check_query(104,200,210,8'b00000010);
-  for(i=0;i<17;i=i+1)command(1,1,0,104,400+i*8,404+i*8);
+  for(i=0;i<33;i=i+1)command(1,1,0,104,400+i*8,404+i*8);
   if(!bad[1])$fatal(1,"FAIL recent capacity not marked bad");
   command(0,1,0,0,0,0);
   if(bad[1])$fatal(1,"FAIL recent clear did not clear bad");

@@ -79,6 +79,26 @@ class ShapeModelTests(unittest.TestCase):
                 self.assertTrue(result.valid, result)
                 self.assertEqual(result.cls, 1)
 
+    def test_stroked_triangle_flat_apex(self):
+        # A printed triangle with a four-pixel flat tip remains a triangle,
+        # rather than an invalid quadrilateral with a tiny fourth side.
+        runs = []
+        for y in range(500, 601):
+            left = 200 - ((y - 500) * 80) // 100
+            right = 200 + ((y - 500) * 80) // 100
+            xs = [x for x in range(115, 285)
+                  if abs(x-left) <= 2 or abs(x-right) <= 2 or
+                  (y >= 598 and abs(x-200) <= 80)]
+            start = prev = xs[0]
+            for x in xs[1:]:
+                if x > prev + 1:
+                    runs.append((y, start, prev))
+                    start = x
+                prev = x
+            runs.append((y, start, prev))
+        result = classify_summary(summarize_runs(runs), self.params)
+        self.assertEqual((result.valid, result.cls), (True, 3), result)
+
     def test_translation_and_mirror_equivalence(self):
         for kind, aspect in KINDS:
             case = make_case(kind, 35, 80, aspect, (640, 360), (0.5, 0.5))

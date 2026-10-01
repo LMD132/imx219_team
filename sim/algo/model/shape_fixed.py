@@ -115,6 +115,16 @@ def classify_summary(summary: ShapeSummary, params: dict) -> ShapeResult:
         if max(left-expected[0], expected[1]-right) > tolerance:
             return reject('concavity/profile')
     poly = simplify_hull(hull, scale, params)
+    if len(poly) == 4:
+        lengths = [((poly[(i+1) % 4][0]-poly[i][0])**2 +
+                    (poly[(i+1) % 4][1]-poly[i][1])**2) for i in range(4)]
+        short = [i for i, length in enumerate(lengths)
+                 if length < params['min_side_pixels'] ** 2]
+        if len(short) == 1:
+            i = short[0]
+            a, b = poly[i], poly[(i+1) % 4]
+            midpoint = ((a[0]+b[0]) // 2, (a[1]+b[1]) // 2)
+            poly = [midpoint, poly[(i+2) % 4], poly[(i+3) % 4]]
     # Every support point must lie near its simplified outline, not merely
     # survive a locally greedy corner removal.
     line_tolerance = max(1, scale * params['line_error_pct'] // 100)

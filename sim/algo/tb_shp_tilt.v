@@ -24,6 +24,7 @@ module tb_shp_tilt;
 
     localparam integer W = 1280;
     localparam integer H = 720;
+    localparam integer HTOTAL = 1650;
 
     integer errors = 0;
     integer frame  = 0;
@@ -44,6 +45,23 @@ module tb_shp_tilt;
     wire [5:0]      b_val;
     wire [9:0]      b_cnt;
     wire [15:0]     b_ovf;
+    reg [4:0] last_geom_state = 0;
+    always @(posedge clk) begin
+        last_geom_state <= dut.geometry.state;
+        if (frame == 2 && dut.geometry.state == 19 && last_geom_state != 19)
+            $display("  reject slot=%0d bbox=(%0d,%0d)-(%0d,%0d) from_state=%0d hn=%0d pn=%0d idx=%0d bad=%0d",
+                     dut.ret_slot, dut.b_x0[dut.ret_slot], dut.b_y0[dut.ret_slot],
+                     dut.b_x1[dut.ret_slot], dut.b_y1[dut.ret_slot],
+                     last_geom_state, dut.geometry.hn, dut.geometry.pn,
+                     dut.geometry.idx, dut.summary_bad[dut.ret_slot] || dut.recent_bad[dut.ret_slot]);
+        if (frame == 2 && dut.geometry.state == 19 && last_geom_state == 11 && dut.ret_slot == 1)
+            $display("  corners (%0d,%0d) (%0d,%0d) (%0d,%0d) (%0d,%0d) len=%0d dot=%0d parallel=%0d",
+                     dut.geometry.px[0], dut.geometry.py[0],
+                     dut.geometry.px[1], dut.geometry.py[1],
+                     dut.geometry.px[2], dut.geometry.py[2],
+                     dut.geometry.px[3], dut.geometry.py[3],
+                     dut.geometry.side_len,dut.geometry.side_dot,dut.geometry.side_parallel);
+    end
 
     shp_detect #(.W(W), .H(H), .NB(8), .NBX(6)) dut (
         .clk(clk), .rst_n(rst_n),
@@ -137,12 +155,12 @@ module tb_shp_tilt;
         begin
             frame = f;
             for (yy = 0; yy < H; yy = yy + 1) begin
-                for (xx = 0; xx < W; xx = xx + 1) begin
+                for (xx = 0; xx < HTOTAL; xx = xx + 1) begin
                     @(negedge clk);
-                    in_de <= 1'b1;
-                    in_x  <= xx[11:0];
+                    in_de <= (xx < W);
+                    in_x  <= (xx < W) ? xx[11:0] : 12'd0;
                     in_y  <= yy[12:0];
-                    in_d  <= is_edge(xx, yy) ? 8'hFF : 8'h00;
+                    in_d  <= (xx < W && is_edge(xx, yy)) ? 8'hFF : 8'h00;
                 end
             end
             @(negedge clk);
@@ -196,22 +214,27 @@ module tb_shp_tilt;
         rst_n = 1'b1;
         repeat (10) @(posedge clk);
 
-        // 帧1: 3 个倾斜三角 + 1 个正十字   (0圆 0矩 3三角 1十字)
+        // 帧1: 3 个倾斜三角 + 1 个正十字；十字必须拒识。
         run_frame(1);
-        check_frame(1, 0, 0, 3, 1);
+        check_frame(1, 0, 0, 3, 0);
 
-        // 帧2: 三角+底部杂线、粗轮廓斜三角、斜十字、空心方框 (0圆 1矩 2三角 1十字)
+        // 帧2: 底部杂线在GAPY内粘到第一个三角，改变真实轮廓，须保守拒识；
+        // 粗轮廓斜三角仍识别，斜十字拒识，空心方框识别。
         run_frame(2);
-        check_frame(2, 0, 1, 2, 1);
+        check_frame(2, 0, 1, 1, 0);
 
         if (b_ovf != 16'd0) begin
             $display("  FAIL FIFO 溢出=%0d", b_ovf);
             errors = errors + 1;
         end
 
-        if (errors == 0) $display("PASSED");
-        else             $display("FAILED  (%0d errors)", errors);
-        $finish;
+        if (errors == 0) begin
+            $display("SHAPE_TEST_PASS tb_shp_tilt");
+            $finish_and_return(0);
+        end else begin
+            $display("FAIL tb_shp_tilt: %0d errors", errors);
+            $finish_and_return(1);
+        end
     end
 
 endmodule

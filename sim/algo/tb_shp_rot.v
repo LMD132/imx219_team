@@ -6,22 +6,9 @@
 //   就被识别成"圆形"; 摆正时才是矩形。
 //   用户描述: 识别框和矩形平行(端正)->矩形; 有一定角度差->圆形。
 //
-// 假设: shp_detect 用水平外接矩形(bbox)算填充率 fill1000=fill/area*1000。
-//   空心方框图形不变时, bbox 随旋转角度变大(约 (cos+sin)^2 倍), 各级行
-//   跨度累加(fill)基本不变, fill1000 下降 -> 从 矩形档(>=fil_th=875/1000)
-//   掉进 圆形档(600..875/1000)。
-//
 // 本 tb 帧1 放 6 个不同旋转角的空心方框(80x80, 线宽3px); 帧2 放 40度方框
-//   + 圆r40 + 圆r30 + 实心矩形120x80 做对照。每个 blob 退休(S_CLS)时打印
-//   ret_w/ret_h/fill/area/fill1000/分类, 用数据验证上述假设。
-//
-// 实测(旧判据): 0度=矩形(1000), 8度=圆(778), 15度=圆(659), 22度=十字(587),
-//   30度=十字(526), 45度=十字(500); 圆=765/758 恒定。
-// 修复v1(精确平台率 40%): 0~22 度=矩形, 30/45 度=十字; 圆仍=圆。
-// 修复v2(20261001, fill 分段救援): fill>=600 走平台率, [520,600) 且非三角
-//   判矩形 -> 30 度(526)也救回矩形; 45 度(500)几何上已接近菱形, 仍=十字。
-//   fill=508 的 40 度方框(帧2)同样 <520, 仍=十字。这是误分类，不是验收通过。
-// 20261001: 预期修正为所有旋转方形均是矩形；失败用非零退出码。
+//   + 圆r40 + 圆r30 + 实心矩形120x80 做对照。按720p总列1650送入，
+//   给摘要/几何分类器与实机相同的水平消隐时间。
 //
 // 跑法(工作目录=仓库根):
 //   C:\iverilog\bin\iverilog.exe -g2005 -o sim\algo\run\tb_rot.vvp sim\algo\tb_shp_rot.v rtl\algo\shp_detect.v
@@ -32,6 +19,7 @@ module tb_shp_rot;
 
     localparam integer W = 1280;
     localparam integer H = 720;
+    localparam integer HTOTAL = 1650;
 
     integer errors = 0;
     integer frame  = 0;
@@ -133,12 +121,12 @@ module tb_shp_rot;
         begin
             frame = f;
             for (yy = 0; yy < H; yy = yy + 1) begin
-                for (xx = 0; xx < W; xx = xx + 1) begin
+                for (xx = 0; xx < HTOTAL; xx = xx + 1) begin
                     @(negedge clk);
-                    in_de <= 1'b1;
-                    in_x  <= xx[11:0];
+                    in_de <= (xx < W);
+                    in_x  <= (xx < W) ? xx[11:0] : 12'd0;
                     in_y  <= yy[12:0];
-                    in_d  <= is_edge(xx, yy) ? 8'hFF : 8'h00;
+                    in_d  <= (xx < W && is_edge(xx, yy)) ? 8'hFF : 8'h00;
                 end
             end
             @(negedge clk);
