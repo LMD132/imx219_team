@@ -67,7 +67,9 @@ module shp_detect #(
     output reg  [NBX-1:0]    o_bval,
 
     output reg  [9:0]  o_cnt,            // 本帧提交的合格图形数(0..999)
-    output reg  [15:0] o_ovf             // 饱和的处理异常计数(含游程溢出/无空槽)
+    output reg  [15:0] o_ovf,            // 饱和的处理异常计数(含游程溢出/无空槽)
+    output reg         o_last_fault,     // 最近提交帧是否整体丢弃
+    output reg         o_frame_valid     // 复位后是否已有完整提交帧
 );
 
     // FQ/HOLD 是 integer 参数, 转定宽 localparam 再比较/做下标,
@@ -647,6 +649,8 @@ module shp_detect #(
             mul_start <= 1'b0;
             m_a <= 32'd0; m_b <= 11'd0;
             o_cnt <= 10'd0;
+            o_last_fault <= 1'b0;
+            o_frame_valid <= 1'b0;
             f_cnt_cur <= 10'd0;
             sum_valid<=0;sum_op<=0;sum_slot<=0;sum_other<=0;
             sum_scan<=0;sum_dst<=0;sum_after<=S_IDLE;
@@ -846,6 +850,8 @@ module shp_detect #(
                 S_COMMIT: begin
                     fend_mode <= 1'b0;
                     o_cnt     <= frame_fault ? 10'd0 : f_cnt_cur;
+                    o_last_fault <= frame_fault;
+                    o_frame_valid <= 1'b1;
                     f_cnt_cur <= 10'd0;        // 下一帧重新计数
                     state     <= S_IDLE;
                 end

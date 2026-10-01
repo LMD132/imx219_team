@@ -82,6 +82,11 @@ module alg_top #(
     input  wire [2:0]  cfg_shp_nbox,      // 显示框数上限 1..6    默认 4
     input  wire [6:0]  cfg_shp_area,      // 最大面积(占全屏%)   默认 50
 
+    output wire [9:0]  diag_cnt,
+    output wire [15:0] diag_ovf,
+    output wire        diag_last_fault,
+    output wire        diag_frame_valid,
+
     output wire        out_vs,
     output wire        out_hs,
     output wire        out_de,
@@ -284,6 +289,12 @@ wire [6*3-1:0]  shp_bcls;
 wire [5:0]      shp_bval;
 wire [9:0]      shp_cnt;
 wire [15:0]     shp_ovf;
+wire            shp_last_fault, shp_frame_valid;
+
+assign diag_cnt = shp_cnt;
+assign diag_ovf = shp_ovf;
+assign diag_last_fault = shp_last_fault;
+assign diag_frame_valid = shp_frame_valid;
 
 shp_detect #(.W(W), .H(H), .NB(8), .NBX(6)) u_shp (
     .clk(clk), .rst_n(rst_n),
@@ -295,7 +306,8 @@ shp_detect #(.W(W), .H(H), .NB(8), .NBX(6)) u_shp (
     .o_bx0(shp_bx0), .o_bx1(shp_bx1),
     .o_by0(shp_by0), .o_by1(shp_by1),
     .o_bcls(shp_bcls), .o_bval(shp_bval),
-    .o_cnt(shp_cnt), .o_ovf(shp_ovf)
+    .o_cnt(shp_cnt), .o_ovf(shp_ovf),
+    .o_last_fault(shp_last_fault), .o_frame_valid(shp_frame_valid)
 );
 
 //--------------------------------------------------------------------------
