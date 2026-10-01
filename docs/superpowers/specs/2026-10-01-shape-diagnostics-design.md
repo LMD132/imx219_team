@@ -1,6 +1,6 @@
 # 形状识别串口诊断设计
 
-日期：2026-10-01。状态：待板子持有人审阅的设计稿；不是实现、编译通过或上板通过的证据。
+日期：2026-10-01。状态：板子持有人已确认设计；不是实现、编译通过或上板通过的证据。
 
 ## 1. 问题与边界
 
@@ -44,4 +44,4 @@
 
 ## 6. 保护与审阅
 
-修改本设计稿前已为候选版 `shape-detect@5f9cab5` 创建并验证快照 `D:\FPGA_Project\_backups\20261001_162916_pre-shape-diagnostics-spec`，结果为 `BACKUP VERIFIED RESTORABLE`。此文档经用户确认后才编写实施计划；实施计划再经用户选择执行方式后才修改 RTL、调参界面和测试。
+修改本设计稿前已为候选版 `shape-detect@5f9cab5` 创建并验证快照 `D:\FPGA_Project\_backups\20261001_162916_pre-shape-diagnostics-spec`，结果为 `BACKUP VERIFIED RESTORABLE`。用户已于2026-10-01确认本设计；实施计划另待用户审阅后才修改 RTL、调参界面和测试。
