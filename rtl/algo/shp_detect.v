@@ -193,7 +193,10 @@ module shp_detect #(
                S_PUSH   = 5'd10,    // 写 top 列表
                S_CLR    = 5'd11,    // 释放槽位
                S_FEND   = 5'd12,    // 帧末逐个退休
-               S_COMMIT = 5'd13;    // 提交输出 + hold
+               S_COMMIT = 5'd13,    // 提交输出 + hold
+               S_SUM_INIT=5'd14,S_SUM_SCAN=5'd15,S_SUM_SPAN=5'd16,
+               S_SUM_ACCEPT=5'd17,S_SUM_FINISH=5'd18,
+               S_QMATCH=5'd19,S_QWAIT=5'd20;
 
     reg  [4:0]  state;
     reg         fend_req;
@@ -201,12 +204,39 @@ module shp_detect #(
     reg  [3:0]  ret_slot;
     reg  [NB-1:0] alloc_oh;
     reg  [NB-1:0] m_mask;                // 本段命中的槽(寄存)
+    reg  [NB-1:0] qm_mask;
     reg  [NB-1:0] c_free;                // 空闲槽掩码
     reg  [NB-1:0] c_exp;                 // 过期槽掩码
     reg  [3:0]  m0;                      // 命中槽里最小的一个
     reg  [11:0] s_x0, s_x1;
     reg  [12:0] s_y;
     reg  [12:0] s_len;
+
+    reg sum_valid;
+    reg [1:0] sum_op;
+    reg [2:0] sum_slot,sum_other;
+    reg [3:0] sum_scan,sum_dst;
+    reg [4:0] sum_after;
+    wire summary_ready,recent_ready,recent_query_ready,recent_query_done;
+    wire sum_ready=summary_ready&&recent_ready;
+    wire [NB-1:0] summary_bad,recent_bad;
+    wire [NB-1:0] recent_matches;
+    // The future geometry reader uses these ports; they stay idle in Task 3.
+    wire summary_rd_ready,summary_rd_valid;
+    wire [25:0] summary_rd_data;
+    wire clr_all;
+    wire summary_rst_n=rst_n&&cfg_en&&!clr_all;
+    shp_summary #(.W(W),.H(H),.NB(NB)) summaries(
+     .clk(clk),.rst_n(summary_rst_n),.cmd_valid(sum_valid&&recent_ready),.cmd_ready(summary_ready),
+     .cmd_op(sum_op),.cmd_slot(sum_slot),.cmd_other(sum_other),.cmd_x0(s_x0),.cmd_x1(s_x1),.cmd_y(s_y),
+     .rd_req(1'b0),.rd_ready(summary_rd_ready),.rd_slot(3'd0),.rd_index(8'd0),
+     .rd_valid(summary_rd_valid),.rd_data(summary_rd_data),.bad(summary_bad));
+    shp_recent #(.W(W),.H(H),.NB(NB),.GAPX(GAPX),.GAPY(GAPY)) connections(
+     .clk(clk),.rst_n(summary_rst_n),.cmd_valid(sum_valid&&summary_ready),.cmd_ready(recent_ready),
+     .cmd_op(sum_op),.cmd_slot(sum_slot),.cmd_other(sum_other),.cmd_x0(s_x0),.cmd_x1(s_x1),.cmd_y(s_y),
+     .query_start(state==S_QMATCH),.query_ready(recent_query_ready),
+     .query_x0(s_x0),.query_x1(s_x1),.query_y(s_y),
+     .query_done(recent_query_done),.o_matches(recent_matches),.bad(recent_bad));
 
     // 合并结果(组合算出, S_MPRI 拍寄存)
     reg  [11:0] mg_x0, mg_x1;
@@ -246,18 +276,10 @@ module shp_detect #(
         if (!rst_n) en_r <= 1'b0;
         else        en_r <= cfg_en;
     end
-    wire clr_all = cfg_en & ~en_r;      // en 刚打开: 清干净
+    assign clr_all = cfg_en & ~en_r;      // en 刚打开: 清干净
 
     // ------------------------------------------------- 匹配/优先级(组合)
-    reg  [NB-1:0] c_match;
-    always @* begin
-        for (i = 0; i < NB; i = i + 1) begin
-            c_match[i] = b_act[i]
-                       & (s_y >= b_lr[i]) & ((s_y - b_lr[i]) <= GAPY)
-                       & (s_x0 <= (b_x1[i] + GAPX))
-                       & ((s_x1 + GAPX) >= b_x0[i]);
-        end
-    end
+    wire [NB-1:0] c_match=qm_mask;
 
     // ---- 最宽行记录(合并值): 打包 {span[11:0], my0[12:0], my1[12:0]} = 38bit ----
     //   mx2     : 合并两份记录 —— 取跨度大的; 跨度相等时行号区间取并集。
@@ -493,7 +515,8 @@ module shp_detect #(
     wire c_circle = (fill1000 >= area750) & (fill1000 < r_a_th) & aspect_round & ~flat_hi;
     wire c_tri    = c_low_all & ~rect_tilt_low & (tri_end | tri_full);
     wire c_cross  = c_low_all & ~rect_tilt_low & ~(tri_end | tri_full);
-    wire qualified = ok_size & ok_area & (c_circle | c_rect | c_tri | c_cross);
+    wire qualified = ok_size & ok_area & (c_circle | c_rect | c_tri | c_cross)
+                    & ~summary_bad[ret_slot] & ~recent_bad[ret_slot];
     wire [2:0] cls_now = c_circle ? 3'd1 : c_rect ? 3'd2 :
                          c_tri ? 3'd3 : c_cross ? 3'd4 : 3'd0;
 
@@ -579,6 +602,7 @@ module shp_detect #(
             ret_slot <= 4'd0;
             alloc_oh <= {NB{1'b0}};
             m_mask   <= {NB{1'b0}};
+            qm_mask  <= {NB{1'b0}};
             c_free   <= {NB{1'b0}};
             c_exp    <= {NB{1'b0}};
             m0       <= 4'd0;
@@ -593,16 +617,20 @@ module shp_detect #(
             m_a <= 32'd0; m_b <= 11'd0;
             o_cnt <= 10'd0;
             f_cnt_cur <= 10'd0;
+            sum_valid<=0;sum_op<=0;sum_slot<=0;sum_other<=0;
+            sum_scan<=0;sum_dst<=0;sum_after<=S_IDLE;
         end else begin
             f_pop    <= 1'b0;
             mul_start <= 1'b0;
 
             if (!cfg_en) begin
                 state <= S_IDLE;
+                sum_valid<=0;
             end else if (clr_all) begin
                 // 计数与 enable 打开时同步清零(原在输出块里做, 挪到本块避免多驱动)
                 f_cnt_cur <= 10'd0;
                 o_cnt     <= 10'd0;
+                sum_valid<=0;state<=S_IDLE;
             end else case (state)
                 // ---- 取一段: 优先把 FIFO 排空, 空完再处理帧末 ----
                 S_IDLE: begin
@@ -612,11 +640,19 @@ module shp_detect #(
                         s_y   <= f_dout[36:24];
                         s_len <= f_dout[23:12] - f_dout[11:0] + 13'd1;
                         f_pop <= 1'b1;
-                        state <= S_MATCH;
+                        qm_mask <= {NB{1'b0}};
+                        state <= S_QMATCH;
                     end else if (fend_req) begin
                         fend_mode <= 1'b1;
                         state     <= S_FEND;
                     end
+                end
+
+                // RAM scan returns the eight-slot match mask after NB*NR reads.
+                S_QMATCH: if(recent_query_ready) state<=S_QWAIT;
+                S_QWAIT: if(recent_query_done) begin
+                    for(i=0;i<NB;i=i+1)qm_mask[i]<=b_act[i]&recent_matches[i];
+                    state<=S_MATCH;
                 end
 
                 // ---- 组合匹配: 寄存命中/空闲/过期掩码 ----
@@ -638,10 +674,10 @@ module shp_detect #(
                     if (|m_mask) begin
                         m0       <= low_idx(m_mask);
                         alloc_oh <= {NB{1'b0}};
-                        state    <= S_APPLY;
+                        state    <= S_SUM_INIT;
                     end else if (|c_free) begin
                         alloc_oh <= ({{(NB-1){1'b0}}, 1'b1} << low_idx(c_free));
-                        state    <= S_APPLY;
+                        state    <= S_SUM_INIT;
                     end else if (|c_exp) begin
                         ret_slot  <= low_idx(c_exp);
                         fend_mode <= 1'b0;
@@ -650,6 +686,33 @@ module shp_detect #(
                         state <= S_IDLE;                 // 无可用槽, 丢弃本段
                     end
                 end
+
+                // Accumulate/merge all geometry before the blob table can
+                // release any source slot. Commands complete before readout.
+                S_SUM_INIT:begin
+                    sum_dst<=(|alloc_oh)?low_idx(alloc_oh):m0;
+                    sum_scan<=0;
+                    if(|alloc_oh)begin
+                        sum_op<=0;sum_slot<=low_idx(alloc_oh);sum_other<=0;
+                        sum_valid<=1;sum_after<=S_SUM_SCAN;state<=S_SUM_ACCEPT;
+                    end else state<=S_SUM_SCAN;
+                end
+                S_SUM_SCAN:begin
+                    if(sum_scan==NB)state<=S_SUM_SPAN;
+                    else begin
+                        sum_scan<=sum_scan+1'b1;
+                        if(m_mask[sum_scan]&&sum_scan!=sum_dst)begin
+                            sum_op<=2;sum_slot<=sum_dst[2:0];sum_other<=sum_scan[2:0];
+                            sum_valid<=1;sum_after<=S_SUM_SCAN;state<=S_SUM_ACCEPT;
+                        end
+                    end
+                end
+                S_SUM_SPAN:begin
+                    sum_op<=1;sum_slot<=sum_dst[2:0];sum_other<=0;
+                    sum_valid<=1;sum_after<=S_APPLY;state<=S_SUM_ACCEPT;
+                end
+                S_SUM_ACCEPT:if(sum_ready)begin sum_valid<=0;state<=S_SUM_FINISH;end
+                S_SUM_FINISH:if(sum_ready)state<=sum_after;
 
                 // ---- 写回 ----
                 S_APPLY: begin
@@ -727,7 +790,7 @@ module shp_detect #(
                         state <= S_FEND;
                     end else begin
                         alloc_oh <= ({{(NB-1){1'b0}}, 1'b1} << ret_slot);
-                        state    <= S_APPLY;         // 复用它开新 blob
+                        state    <= S_SUM_INIT;      // 清摘要后复用它开新 blob
                     end
                 end
 
@@ -801,4 +864,114 @@ module shp_detect #(
         end
     end
 
+endmodule
+
+// Bounded actual recent runs, NOT a historical bounding-box span. One RAM
+// read per cycle; scan all slots for a query. Overwrite of a still-recent
+// interval makes the destination uncertain rather than guessing a class.
+module shp_recent #(
+ parameter integer W=1280,H=720,NB=8,GAPX=6,GAPY=4,NR=16
+)(
+ input wire clk,rst_n,
+ input wire cmd_valid,output wire cmd_ready,input wire [1:0] cmd_op,
+ input wire [2:0] cmd_slot,cmd_other,input wire [11:0] cmd_x0,cmd_x1,
+ input wire [12:0] cmd_y,
+ input wire query_start,output wire query_ready,
+ input wire [11:0] query_x0,query_x1,input wire [12:0] query_y,
+ output reg query_done,output reg [NB-1:0] o_matches,
+ output reg [NB-1:0] bad
+);
+ localparam IDLE=0,Q_READ=1,Q_CHECK=2,M_READ=3,M_CHECK=4,
+            A_READ=5,A_CHECK=6;
+ localparam integer DEPTH=NB*NR,AW=$clog2(DEPTH),PW=$clog2(NR);
+ reg [2:0] state;
+ reg [36:0] memory[0:DEPTH-1]; // {row[12:0],left[11:0],right[11:0]}
+ reg [36:0] read_data;
+ reg [DEPTH-1:0] valid;
+ reg [PW-1:0] next_index[0:NB-1];
+ reg [AW-1:0] scan_index;
+ reg [PW-1:0] merge_index;
+ reg [2:0] dest,source;
+ reg [12:0] merge_y,append_y,qy;
+ reg [11:0] append_x0,append_x1,qx0,qx1;
+ reg merging;
+ wire [AW-1:0] append_addr=dest*NR+next_index[dest];
+ wire [AW-1:0] merge_addr=source*NR+merge_index;
+ wire [AW-1:0] read_addr=(state==Q_READ)?scan_index:
+                         (state==M_READ)?merge_addr:append_addr;
+ assign cmd_ready=(state==IDLE);
+ assign query_ready=(state==IDLE)&&!cmd_valid;
+ integer si;
+ always @(posedge clk)begin
+  read_data<=memory[read_addr];
+  if(state==A_CHECK&&rst_n)memory[append_addr]<={append_y,append_x0,append_x1};
+ end
+ always @(posedge clk or negedge rst_n)begin
+  if(!rst_n)begin
+   state<=IDLE;valid<=0;bad<=0;query_done<=0;o_matches<=0;
+   scan_index<=0;merge_index<=0;dest<=0;source<=0;merge_y<=0;
+   append_y<=0;append_x0<=0;append_x1<=0;qy<=0;qx0<=0;qx1<=0;merging<=0;
+   for(si=0;si<NB;si=si+1)next_index[si]<=0;
+  end else begin
+   query_done<=0;
+   case(state)
+    IDLE:begin
+     if(cmd_valid)begin
+      if(cmd_slot<NB)case(cmd_op)
+       0:begin
+        valid[cmd_slot*NR +: NR]<=0;next_index[cmd_slot]<=0;bad[cmd_slot]<=0;
+       end
+       1:begin
+        dest<=cmd_slot;append_y<=cmd_y;append_x0<=cmd_x0;append_x1<=cmd_x1;
+        merging<=0;
+        if(cmd_y>=H||cmd_x0>cmd_x1||cmd_x1>=W)bad[cmd_slot]<=1;
+        else state<=A_READ;
+       end
+       2:begin
+        if(cmd_other>=NB||cmd_other==cmd_slot)bad[cmd_slot]<=1;
+        else begin
+         dest<=cmd_slot;source<=cmd_other;merge_y<=cmd_y;merge_index<=0;
+         merging<=1;bad[cmd_slot]<=bad[cmd_slot]|bad[cmd_other];state<=M_READ;
+        end
+       end
+       default:bad[cmd_slot]<=1;
+      endcase
+     end else if(query_start)begin
+      qx0<=query_x0;qx1<=query_x1;qy<=query_y;scan_index<=0;
+      o_matches<=0;state<=Q_READ;
+     end
+    end
+    Q_READ:state<=Q_CHECK;
+    Q_CHECK:begin
+     if(valid[scan_index]&&qy>=read_data[36:24]&&
+        (qy-read_data[36:24])<=GAPY&&
+        {1'b0,qx0}<={1'b0,read_data[11:0]}+GAPX&&
+        {1'b0,qx1}+GAPX>={1'b0,read_data[23:12]})
+      o_matches[scan_index/NR]<=1;
+     if(scan_index==DEPTH-1)begin state<=IDLE;query_done<=1;end
+     else begin scan_index<=scan_index+1'b1;state<=Q_READ;end
+    end
+    M_READ:state<=M_CHECK;
+    M_CHECK:begin
+     if(valid[merge_addr]&&merge_y>=read_data[36:24]&&
+        (merge_y-read_data[36:24])<=GAPY)begin
+      append_y<=read_data[36:24];append_x0<=read_data[23:12];
+      append_x1<=read_data[11:0];state<=A_READ;
+     end else if(merge_index==NR-1)state<=IDLE;
+     else begin merge_index<=merge_index+1'b1;state<=M_READ;end
+    end
+    A_READ:state<=A_CHECK;
+    A_CHECK:begin
+     if(valid[append_addr]&&append_y>=read_data[36:24]&&
+        (append_y-read_data[36:24])<=GAPY)bad[dest]<=1;
+     valid[append_addr]<=1;
+     next_index[dest]<=(next_index[dest]==NR-1)?0:next_index[dest]+1'b1;
+     if(merging&&merge_index!=NR-1)begin
+      merge_index<=merge_index+1'b1;state<=M_READ;
+     end else state<=IDLE;
+    end
+    default:state<=IDLE;
+   endcase
+  end
+ end
 endmodule

@@ -10,6 +10,39 @@ ROOT = Path(__file__).resolve().parents[3]
 RUN = ROOT / 'outflow/diagnostics'
 
 
+def prepare_summary_vectors():
+    sys.path.insert(0, str(ROOT / 'sim/algo'))
+    from model.shape_cases import make_case
+    from model.shape_fixed import summarize_runs
+    a = make_case('triangle', 35, 48, 1, (240, 180), (0.5, 0.5)).runs
+    b = make_case('ring', 0, 80, 1, (640, 360), (0, 0)).runs
+    span = lambda slot, runs: [(1, slot, 0, y, left, right) for y, left, right in runs]
+    phases = [[], [(0, 0, 0, 0, 0, 0)] + span(0, [(3,20,25),(4,22,27),(5,21,26),(719,0,1279)]),
+              [(0,1,0,0,0,0)] + span(1,a), [(2,0,1,0,0,0)],
+              [(0,2,0,0,0,0)] + span(2,list(reversed(a))),
+              [(0,0,0,0,0,0)] + span(0,b), [(2,2,0,0,0,0)],
+              [(0,0,0,0,0,0),(2,0,2,0,0,0)],
+              [(0,3,0,0,0,0),(1,3,0,4,1279,1280),(2,0,3,0,0,0),(0,3,0,0,0,0)],
+              [(3,0,0,200,10,20)], [(0,0,0,0,0,0)] + span(0,a)]
+    slots = [[] for _ in range(8)]
+    lines = [str(len(phases))]
+    for commands in phases:
+        for op, slot, other, y, left, right in commands:
+            if op == 0: slots[slot] = []
+            elif op == 1: slots[slot].append((y,left,right))
+            elif op == 2: slots[slot] += slots[other]
+            elif op == 3: slots = [[] for _ in range(8)]
+        summaries = [summarize_runs(runs) for runs in slots]
+        lines.append(f'{len(commands)} {sum(int(s.bad) << i for i,s in enumerate(summaries))}')
+        lines += [' '.join(map(str, command)) for command in commands]
+        for summary in summaries:
+            words = [(int(v) << 25) | (y << 12) | x for v,x,y in summary.support]
+            words += [(int(v) << 24) | (left << 12) | right for v,left,right in summary.strips]
+            lines += [f'{word:07x}' for word in words]
+    RUN.mkdir(parents=True, exist_ok=True)
+    (RUN / 'shape_summary_vectors.txt').write_text('\n'.join(lines) + '\n', encoding='ascii')
+
+
 def _invoke(command: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
@@ -40,6 +73,8 @@ def run_tb(name: str, extra_sources: list[str] = []) -> subprocess.CompletedProc
         return subprocess.CompletedProcess([name], 2, '', 'invalid test timeout\n')
     bin_dir = Path(os.environ.get('ALG_OSS_BIN', r'C:\iverilog\bin'))
     RUN.mkdir(parents=True, exist_ok=True)
+    if path.stem == 'tb_shp_summary':
+        prepare_summary_vectors()
     output = RUN / (path.stem + '.vvp')
     sources = [path, *sorted((ROOT / 'rtl/algo').glob('*.v')),
                ROOT / 'rtl/simple_dual_port_ram.v', ROOT / 'rtl/true_dual_port_ram.v']
