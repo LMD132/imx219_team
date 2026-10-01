@@ -6,27 +6,30 @@
   的抗平面旋转分类RTL、流式摘要/连接、三类叠加显示及十字拒识；
   OCR未实现。软件标准矩阵每模型7776个正样本和1296个负样本通过，
   RTL几何10369例黄金向量及多目标/吞吐/生命周期测试通过。
-  当前正在跑最终整套回归与最终资源/时序构建；最终候选位流尚未归档，
-  **没有在开发板上JTAG下载或肉眼验证**。具体证据与限制见
+  最终整套门禁及Efinity四阶段构建已通过；候选位流为
+  `candidate_bitstreams/shape_rotation_e74ced2_20261001.bit`，SHA-256
+  `CC906672CC24907D5F87E121DF214B527AE53F54A0F5570E5FAF4D7CA00461DB`。
+  RAM251/256、DSP154/160，余量较紧。**没有在开发板上JTAG下载或肉眼验证**。
+  不能晋升最佳回退版。具体证据与限制见
   `docs/shape_rotation_validation.md`。下方“尚未改产品RTL”是早期历史状态。
 - 最新范围：用户明确不识别十字／加号，也不做OCR；保留三类图形及类别文字标注。
   用户已确认轻量轮廓几何、先软件验证后RTL的方向。具体设计位于
   `docs/superpowers/specs/2026-10-01-three-shape-rotation-design.md`，用户已确认。
   实施计划位于 `docs/superpowers/plans/2026-10-01-three-shape-rotation.md`，用户已选择本对话内实施。
-  已建立有真实退出码的测试驱动并修正旋转测试预期；7项驱动检查通过，
-  旧RTL旋转测试按正确预期失败4项（40°/45°矩形仍为十字，FIFO溢出0）。
+  已建立有真实退出码的测试驱动并修正旋转测试预期；旧RTL旋转测试曾按
+  正确预期失败4项（40°/45°矩形仍为十字，FIFO溢出0），用于红灯基线。
   软件完整轮廓及整数摘要模型均通过7776个旋转正样本、1296个负样本；
   9项模型测试及 `--model` 门禁通过，断边/噪声/透视实测限制见验证记录。
-  **尚未改产品RTL、删除现有十字输出或生成新位流**；下一步移植摘要及连接管理。
+  产品RTL、十字拒识及新候选位流现已完成；下一步由板主安排JTAG和实拍验收。
   可复跑命令及每项证据见 `docs/shape_rotation_validation.md`。
-- 继续修改：`D:\FPGA_Project\imx219_shape` / `shape-detect`；当前算法源码提交 `2cb0932`。
+- 继续修改：`D:\FPGA_Project\imx219_shape` / `shape-detect`；本次构建输入提交 `e74ced2`。
   用户指定继续在本候选目录工作，且**实际效果好、得到用户确认后才可升级为最佳回退版**。
 - 最佳回退版仍为 `D:\FPGA_Project\imx219_notemp` / `no-temp` / `a390a99`；
   冻结实验版 `D:\FPGA_Project\imx219_smooth` / `canny-smooth` / `c1add67` 不动。
-- 当前缺陷：用户反馈纸张未端正摆放会识别错误；本日复跑 `tb_shp_rot.v`，
+- 历史缺陷（旧 `2cb0932` 版）：用户反馈纸张未端正摆放会识别错误；本日复跑 `tb_shp_rot.v`，
   40°和45°方形均输出 `cls=4`（十字），FIFO 溢出为0。测试的 `errors=0` 只是匹配了
   原测试接受这些错误分类的预期，**不是达到旋转识别要求**。下一步先评估分类算法结构。
-- 已将当前现存构建位流归档为 `candidate_bitstreams/shape_detect_2cb0932_20261001.bit`；
+- 旧版曾将现存构建位流归档为 `candidate_bitstreams/shape_detect_2cb0932_20261001.bit`；
   来源、SHA-256、证据等级见该目录 README。未升级为最佳版，本轮未重编译、未烧录。
 - 改前快照：`D:\FPGA_Project\_backups\20261001_094722_shape-candidate-review-20261001`，
   已验证290个清单文件、34个refs，输出 `RESULT: BACKUP VERIFIED RESTORABLE`。

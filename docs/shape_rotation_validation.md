@@ -8,7 +8,8 @@
 最佳回退版及冻结实验版不动；不自动JTAG、不写Flash、不自行晋升最佳版。
 
 当前已完成测试驱动、软件模型门禁、摘要与三类定点分类器接入；
-完整10369例RTL几何对拍通过。产品构建及板测仍分别记录，**尚未上板验证**。
+完整10369例RTL几何对拍及最终产品构建通过。已归档可供板主测试的
+候选位流，**尚未JTAG或上板肉眼验证**。
 任务1的功能红灯是旧RTL基线，不是现行版本的测试结论。
 
 ## 任务1：失败基线与真实退出码
@@ -218,5 +219,29 @@ Z现在明确为新几何分类不使用的旧版参数。内部 `o_ovf` 是饱�
 `check_ebridge.py` 在设置 `ALG_OSS_BIN=C:\iverilog\bin` 后逐位对拍通过，
 无不匹配；首次未设置该环境变量的启动失败不是RTL失败。
 
-最终完整回归、构建资源/时序及候选位流归档仍在进行。**尚未JTAG，
-尚未获板主肉眼验收，不可晋升最佳回退版。**
+最终 `check_shape.py --all` 退出0：23项Python形状测试通过，软件门禁
+打印 `MODEL GATE PASS`，12个形状RTL台全部打印 `SHAPE_TEST_PASS`，
+最后才打印 `ALL PASS`。`tb_shp_geometry` 使用全量10369例；多目标、
+间距扫描、吞吐和叠加测试均在本次整套门禁中重新通过。单项
+`tb_alg_tel_shp` 17项、`tb_alg_cfg_uart` 68项经统一驱动通过。
+
+构建输入固定为干净的 `e74ced23e9cc758366dd5edbc09d947636c983c1`
+（`shape-detect`）。随后运行 `tools/compile.bat`，命令退出0；
+`outflow/compile.log` 中 map/interface/pnr/pgm 四阶段全PASS。
+Efinity 2026.1.132.4.5 仍打印 `cannot find correct IV value` 警告，
+但未阻止最终位流生成。最终 `place.rpt`：XLR 54819/60800，
+RAM 251/256，DSP 154/160；RAM和DSP只剩5/6块，后续扩展必须重做
+资源预算。`timing.rpt` 的15组时钟关系setup/hold均非负，
+最小setup +0.222ns、最小hold +0.026ns；未见unconstrained条目。
+
+`outflow/ti60f225_oob.bit` 于2026-10-01 14:01:16生成，逐字节复制到
+`candidate_bitstreams/shape_rotation_e74ced2_20261001.bit`，大小3114330字节，
+双方SHA-256均为
+`CC906672CC24907D5F87E121DF214B527AE53F54A0F5570E5FAF4D7CA00461DB`。
+`candidate_bitstreams/README.md` 记载来源及验证级别。该位流是**候选**：
+尚未JTAG、尚未写Flash、尚未获板主肉眼验收，不可晋升最佳回退版。
+
+板测建议依次看干净圆环、等边三角、正方形和长方形的0/15/30/45/90°
+旋转，三类多目标间距变化、十字拒识、移开纸张后两帧内清框，并记录
+类别/框位置/时延/溢出。透视倾斜、遮挡、断边和噪声属于诊断边界，
+若失败需保存照片及角度/距离，不用本次干净旋转成绩代替实拍验收。

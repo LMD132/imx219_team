@@ -1,6 +1,20 @@
 # 候选位流归档记录
 
-## 2026-10-01 当前形状识别候选（未通过旋转/倾斜识别验收）
+## 2026-10-01 三类抗旋转候选（未上板验收）
+
+| 项 | 值 |
+| --- | --- |
+| 文件 | `shape_rotation_e74ced2_20261001.bit`，3114330字节 |
+| 构建输入 | `D:\FPGA_Project\imx219_shape` 的 `shape-detect` 分支，源码/测试/文档提交 `e74ced23e9cc758366dd5edbc09d947636c983c1`；构建启动时工作区干净 |
+| 来源 | 2026-10-01 14:01:16本目录最终 `outflow/ti60f225_oob.bit` 逐字节副本；新执行 `tools/compile.bat`，不是旧位流改名 |
+| SHA-256 | `CC906672CC24907D5F87E121DF214B527AE53F54A0F5570E5FAF4D7CA00461DB`，复制后与outflow原件相同 |
+| 编译 | Efinity 2026.1.132.4.5，map/interface/pnr/pgm四阶段PASS，命令退出0；日志有非致命 `cannot find correct IV value` 警告 |
+| 资源与时序 | XLR 54819/60800，RAM 251/256，DSP 154/160；15组时钟关系setup/hold均非负，最小分别+0.222/+0.026 ns；余量较紧 |
+| 验证 | Python形状测试23项PASS；`check_shape.py --all`模型门禁及12个RTL台PASS，包括10369例几何黄金对拍、间距2/4/8/16/32和吞吐拒识；既有`check_chain.py`/`check_ebridge.py`逐位对拍PASS，`tb_alg_tel_shp`17项、`tb_alg_cfg_uart`68项PASS |
+| 范围与限制 | 圆形/圆环、三角形、矩形，十字拒识，无OCR；干净平面旋转标准集通过。不能由仿真推断任意透视、断边、噪声、遮挡或实拍均正确，实测详见 `docs/shape_rotation_validation.md` |
+| 上板状态 | **尚未JTAG、未写Flash、未获肉眼验收**；不得视为最佳回退版或覆盖`known_good/`。上板测试需板主另行安排，并记录类别、框、空帧清框与异常行为 |
+
+## 2026-10-01 旧形状识别候选（未通过旋转/倾斜识别验收，历史记录）
 
 | 项 | 值 |
 | --- | --- |
