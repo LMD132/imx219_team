@@ -1,5 +1,22 @@
 # 给队友及其 AI 助手的交接说明
 
+## 2026-10-01 当前入口（下方其他状态均为历史记录）
+
+- 继续修改：`D:\FPGA_Project\imx219_shape` / `shape-detect`；当前算法源码提交 `2cb0932`。
+  用户指定继续在本候选目录工作，且**实际效果好、得到用户确认后才可升级为最佳回退版**。
+- 最佳回退版仍为 `D:\FPGA_Project\imx219_notemp` / `no-temp` / `a390a99`；
+  冻结实验版 `D:\FPGA_Project\imx219_smooth` / `canny-smooth` / `c1add67` 不动。
+- 当前缺陷：用户反馈纸张未端正摆放会识别错误；本日复跑 `tb_shp_rot.v`，
+  40°和45°方形均输出 `cls=4`（十字），FIFO 溢出为0。测试的 `errors=0` 只是匹配了
+  原测试接受这些错误分类的预期，**不是达到旋转识别要求**。下一步先评估分类算法结构。
+- 已将当前现存构建位流归档为 `candidate_bitstreams/shape_detect_2cb0932_20261001.bit`；
+  来源、SHA-256、证据等级见该目录 README。未升级为最佳版，本轮未重编译、未烧录。
+- 改前快照：`D:\FPGA_Project\_backups\20261001_094722_shape-candidate-review-20261001`，
+  已验证290个清单文件、34个refs，输出 `RESULT: BACKUP VERIFIED RESTORABLE`。
+  本快照源目录是 `imx219_shape`；若恢复，须按 `STATUS.txt` 选择目标，
+  不要照抄旧 `RESTORE.txt` 内固定写成 `imx219_pyrtl` 的示例目标。
+- 最新问题排查与开源参考见 `docs/形状识别_20261001.md` 顶部。
+
 请先读本目录的 `README.md`、`AGENTS.md` 和赛题 PDF 第 23–26 页，再修改 RTL。不要只凭聊天记录推测当前硬件状态。
 
 ## 一句话状态
