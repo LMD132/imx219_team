@@ -5,8 +5,11 @@
 - 最新范围：用户明确不识别十字／加号，也不做OCR；保留三类图形及类别文字标注。
   用户已确认轻量轮廓几何、先软件验证后RTL的方向。具体设计位于
   `docs/superpowers/specs/2026-10-01-three-shape-rotation-design.md`，用户已确认。
-  实施计划位于 `docs/superpowers/plans/2026-10-01-three-shape-rotation.md`，待审阅及选择执行方式。
-  本轮仅新增设计、计划和范围约束，**尚未改RTL、删除现有十字输出或生成新位流**。
+  实施计划位于 `docs/superpowers/plans/2026-10-01-three-shape-rotation.md`，用户已选择本对话内实施。
+  已建立有真实退出码的测试驱动并修正旋转测试预期；7项驱动检查通过，
+  旧RTL旋转测试按正确预期失败4项（40°/45°矩形仍为十字，FIFO溢出0）。
+  **尚未改产品RTL、删除现有十字输出或生成新位流**；继续先完成软件模型门禁。
+  可复跑命令及每项证据见 `docs/shape_rotation_validation.md`。
 - 继续修改：`D:\FPGA_Project\imx219_shape` / `shape-detect`；当前算法源码提交 `2cb0932`。
   用户指定继续在本候选目录工作，且**实际效果好、得到用户确认后才可升级为最佳回退版**。
 - 最佳回退版仍为 `D:\FPGA_Project\imx219_notemp` / `no-temp` / `a390a99`；

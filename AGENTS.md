@@ -17,7 +17,8 @@
   或兜底归到三类之一。当前这项是待实现需求，不能把文档更新说成RTL已完成删除。
   抗旋转方向已获确认，具体设计见 `docs/superpowers/specs/2026-10-01-three-shape-rotation-design.md`，
   用户已确认具体设计；实施计划见 `docs/superpowers/plans/2026-10-01-three-shape-rotation.md`。
-  需用户审阅实施计划并选择执行方式后才开始算法实现；当前尚未修改RTL。
+  用户已选择第一个执行方式（本对话内按计划逐项实施）。先完成软件门禁再改RTL；
+  当前仅建立测试驱动及失败基线，产品RTL尚未修改。进度见 `docs/shape_rotation_validation.md`。
 
 
 - 以赛题 PDF 第 23–26 页为需求来源；先满足基础要求，再做进阶项。对未完成项如实标注，不因编译通过就宣称上板成功。

@@ -10,6 +10,8 @@
 
 **Spec:** `D:\FPGA_Project\imx219_shape\docs\superpowers\specs\2026-10-01-three-shape-rotation-design.md`（用户已于2026-10-01确认）。
 
+**Execution:** 用户已选择第一个方式：在当前对话中按 executing-plans 连续实施；任务进度与实测证据见 `docs/shape_rotation_validation.md`。
+
 ## Global Constraints
 
 - 继续在 `D:\FPGA_Project\imx219_shape` / `shape-detect` 修改候选版；每轮编辑前备份并取得 `RESULT: BACKUP VERIFIED RESTORABLE`。

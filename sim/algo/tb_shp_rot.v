@@ -20,7 +20,8 @@
 // 修复v1(精确平台率 40%): 0~22 度=矩形, 30/45 度=十字; 圆仍=圆。
 // 修复v2(20261001, fill 分段救援): fill>=600 走平台率, [520,600) 且非三角
 //   判矩形 -> 30 度(526)也救回矩形; 45 度(500)几何上已接近菱形, 仍=十字。
-//   fill=508 的 40 度方框(帧2)同样 <520, 仍=十字。本 tb 按修复v2期望断言。
+//   fill=508 的 40 度方框(帧2)同样 <520, 仍=十字。这是误分类，不是验收通过。
+// 20261001: 预期修正为所有旋转方形均是矩形；失败用非零退出码。
 //
 // 跑法(工作目录=仓库根):
 //   C:\iverilog\bin\iverilog.exe -g2005 -o sim\algo\run\tb_rot.vvp sim\algo\tb_shp_rot.v rtl\algo\shp_detect.v
@@ -60,22 +61,6 @@ module tb_shp_rot;
         .o_bx0(b_x0), .o_bx1(b_x1), .o_by0(b_y0), .o_by1(b_y1),
         .o_bcls(b_cls), .o_bval(b_val), .o_cnt(b_cnt), .o_ovf(b_ovf)
     );
-
-    //---------------------------------------------- 退休(S_CLS)诊断打印
-    reg [4:0] st_d;
-    integer   dbg_f1000;
-    always @(posedge clk) begin
-        if ((dut.state == 5'd9) && (st_d != 5'd9)) begin
-            dbg_f1000 = (dut.ret_area > 0) ? (dut.ret_fill * 1000) / dut.ret_area : -1;
-            $display("    [RET] bbox=(%0d,%0d)-(%0d,%0d) w=%0d h=%0d fill=%0d area=%0d fill1000=%0d a_th=%0d lsp=%0d my0=%0d my1=%0d ytop=%0d ybot=%0d cls=%0d",
-                     dut.b_x0[dut.ret_slot], dut.b_y0[dut.ret_slot],
-                     dut.b_x1[dut.ret_slot], dut.b_y1[dut.ret_slot],
-                     dut.ret_w, dut.ret_h, dut.ret_fill, dut.ret_area, dbg_f1000,
-                     dut.r_a_th, dut.ret_lsp, dut.ret_my0, dut.ret_my1,
-                     dut.ret_ytop, dut.ret_ybot, dut.cls_now);
-        end
-        st_d <= dut.state;
-    end
 
     //---------------------------------------------- 画图工具
     function integer abi(input integer v); begin abi = (v<0)? -v : v; end endfunction
@@ -212,19 +197,22 @@ module tb_shp_rot;
         repeat (10) @(posedge clk);
 
         // 帧1: 空心方框 0/8/15/22/30/45 度 (6 个, 用满 NBX=6)
-        //   修复v2: 0/8/15/22 度 = 矩形(平台率), 30 度 = 矩形(fill 526>=520),
-        //   45 度 = 十字(500, 遗留)
+        //   方形旋转后仍须归为矩形，45度不是十字。
         run_frame(1);
-        check_frame(1, 0, 5, 0, 1);
+        check_frame(1, 0, 6, 0, 0);
 
         // 帧2: 40度方框 + 圆r40 + 圆r30 + 实心矩形120x80
-        //   修复v2: 圆x2(758/765 仍 >=750), 实心矩=矩形, 40 度方框=十字(508<520)
+        //   圆x2、矩形x2，40度方框同样不能接受误分类。
         run_frame(2);
-        check_frame(2, 2, 1, 0, 1);
+        check_frame(2, 2, 2, 0, 0);
 
-        if (errors == 0) $display("DIAG DONE (errors=0)");
-        else             $display("DIAG DONE (%0d errors)", errors);
-        $finish;
+        if (errors == 0) begin
+            $display("SHAPE_TEST_PASS tb_shp_rot");
+            $finish_and_return(0);
+        end else begin
+            $display("FAIL tb_shp_rot: %0d errors", errors);
+            $finish_and_return(1);
+        end
     end
 
 endmodule
