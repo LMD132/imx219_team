@@ -1,5 +1,17 @@
 # 候选位流归档记录
 
+## 2026-10-01 故障来源细分候选（未 JTAG，待实板诊断）
+
+| 项 | 值 |
+| --- | --- |
+| 文件 | `shape_fault_reason_2508960_20261001.bit`，3,115,293 字节 |
+| 源码 | `shape-detect` 提交 `2508960071741f87f682c8119c4e245fbcc3bb10`。完整构建在提交前启动；提交前后 RTL、SDC 和工程输入未变，后来仅修正独立测试台、文档和由 Efinity 改动的 XML 文件尾换行（恢复原样） |
+| 来源 | 20:40:54 完整编译产生的 `outflow/ti60f225_oob.bit` 逐字节副本；SHA-256 与输出原件一致 |
+| SHA-256 | `72D6A4F04CD760A04200DFFCCCBF1B36377D2F0C91198ED5B3A6F6CCE3DC6885` |
+| 编译/时序 | Efinity 2026.1.132.4.5 的 map/interface/pnr/pgm 均 PASS，命令退出 0；报告列出的 setup/hold 最小余量 `+0.294/+0.026 ns`，XLR `54797/60800`、RAM `251/256`、DSP `154/160`。有 IV 与组合环计时警告，不能据此宣称全设计无条件签核 |
+| 离线验证 | `check_shape.py --all` 为 `ALL PASS`（23 项 Python、10381 几何样本、16 个形状 RTL 台）；另 `tb_shp_diag`、`tb_shape_diag_cdc`、`tb_alg_tel_shp` 20 项和 `tb_alg_cfg_uart` 68 项通过，主流水、桥接逐位对拍通过，调参界面冒烟通过 |
+| 功能与状态 | 只增加最近提交帧的 `R` 故障来源码及 GUI 解析；**未修复或证明修复实拍漏检**。纯白纸 `F0`、图案纸 `F1` 是旧位流实测；本位流**尚未 JTAG、未写 Flash、未进行摄像头/屏幕或真实串口验收**。细节见 `docs/shape_overload_diagnosis_20261001.md`；不覆盖 `known_good/` 或最佳回退版 |
+
 ## 2026-10-01 形状诊断候选（已JTAG，待画面与串口验收）
 
 | 项 | 值 |
