@@ -39,7 +39,7 @@ module shp_detect #(
     parameter integer GAPX = 6,      // 水平合并容差(px)
     parameter integer GAPY = 4,      // 垂直容忍(行): 断线不超过 4 行仍算同一形状
     parameter integer FQ   = 24,     // 游程 FIFO 深度
-    parameter integer HOLD = 2       // 临时漏检最多保持两帧
+    parameter integer HOLD = 6       // 临时漏检/瞬断最多保持六帧(见 HOLD5)
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -78,7 +78,11 @@ module shp_detect #(
     // FQ/HOLD 是 integer 参数, 转定宽 localparam 再比较/做下标,
     // 避免个别综合器对 integer 位选支持不好
     localparam [4:0] FQ5   = FQ;
-    localparam [4:0] HOLD5 = (HOLD > 2) ? 5'd2 : HOLD;
+    // HOLD5 = 保持预算. 检出帧重置为 HOLD5-1, 每个空/故障帧消耗 1,
+    // 预算为 0 后再来一个空/故障帧才清屏 => 最多容忍连续 HOLD5 个空帧.
+    // HOLD=2 时 HOLD5=1, 与旧版 "第二个空帧清屏" 语义一致;
+    // 位宽 5 位, 上限截到 16.
+    localparam [4:0] HOLD5 = (HOLD > 16) ? 5'd16 : HOLD;
 
     // ---------------------------------------------------------------- 限幅
     wire [7:0]  min_sz  = (cfg_min_size  <  8'd8)   ?  8'd8   : cfg_min_size;
@@ -938,11 +942,15 @@ module shp_detect #(
                         o_bval[i]          <= l_val[i] & (i[2:0] < nbox);
                     end
                 end
-                // A nonempty commit itself is not an extra hold frame.
-                if (frame_fault) begin o_bval <= {NBX{1'b0}}; hold_cnt <= 5'd0; end
-                else if (any_l)     hold_cnt <= (HOLD5==0)?5'd0:HOLD5-5'd1;
+                // 抖动抑制(滞回): 空帧与整帧故障帧都只消耗一帧保持预算,
+                // 预算耗尽才清屏; 检出帧把预算重置回 HOLD5-1.
+                // 旧版只在非故障空帧时保持, 且 F 帧立即清屏 + 预算归零;
+                // 结果偶发单帧抖动/故障就会让屏幕上的框闪没一下.
+                // 现在 F 帧不再单帧清屏: 它在预算内保持上一帧的框,
+                // 连续 HOLD5 个空/故障帧都撑不到新检出时才最终清屏.
+                if (any_l && !frame_fault) hold_cnt <= (HOLD5==0) ? 5'd0 : (HOLD5 - 5'd1);
                 else if (hold_cnt != 5'd0) hold_cnt <= hold_cnt - 5'd1;
-                else                o_bval <= {NBX{1'b0}};
+                else                       o_bval  <= {NBX{1'b0}};
             end
         end
     end
