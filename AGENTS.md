@@ -4,8 +4,9 @@
 
 - 2026-10-01 下午实施状态：本候选分支已实现三类抗平面旋转识别和十字拒识，
   软件矩阵、RTL几何及多目标仿真已有通过证据；最终整套回归和最终构建
-  已通过，候选位流及哈希见 `candidate_bitstreams/README.md`，但
-  **未JTAG、未肉眼验收**。下方“当前仅建立测试驱动”是
+  已通过，候选位流及哈希见 `candidate_bitstreams/README.md`；2026-10-01已
+  通过JTAG临时下载（器件ID `0x10660A79`），**仍未肉眼验收、未写Flash**。
+  下方“当前仅建立测试驱动”是
   早期历史状态，不应据此删改现有实现；以 `docs/shape_rotation_validation.md`
   的逐任务证据和当前Git提交为准。
 - 后续形状识别改动就在 `D:\FPGA_Project\imx219_shape`（分支 `shape-detect`）继续。

@@ -9,7 +9,7 @@
 
 当前已完成测试驱动、软件模型门禁、摘要与三类定点分类器接入；
 审查修复后完整10381例RTL几何对拍及最终产品构建通过。已归档可供板主测试的
-`shape_rotation_34e5d39_20261001.bit`，**尚未JTAG或上板肉眼验证**。
+`shape_rotation_34e5d39_20261001.bit`，已JTAG临时下载，**尚未屏幕肉眼验证**。
 旧 `shape_rotation_e74ced2_20261001.bit` 已失效，不得用于本轮验收。
 任务1的功能红灯是旧RTL基线，不是现行版本的测试结论。
 
@@ -279,7 +279,7 @@ RAM 251/256，DSP 154/160；RAM和DSP只剩5/6块，后续扩展必须重做
 重新运行 `check_shape.py --all` 已退出0：23项Python、10381例
 几何黄金对拍、15个RTL台均通过，最终输出 `ALL PASS`。
 
-### 审查修复版最终构建（当前待上板候选）
+### 审查修复版最终构建与JTAG下载（当前待画面验收）
 
 从干净的 `shape-detect` 提交
 `34e5d39b75654e2a8bb8d1149b2c9cd284750974` 执行 `tools/compile.bat`，
@@ -288,7 +288,26 @@ RAM 251/256，DSP 154/160；RAM和DSP只剩5/6块，后续扩展必须重做
 复制至 `candidate_bitstreams/shape_rotation_34e5d39_20261001.bit` 后，
 原件和副本的SHA-256相同：
 `EC1799C6DAE0B4D554A7E9184905328A833152B44F928220AEFBCB0D4AA8B32F`。
-归档仅供板主安排JTAG实测，不覆盖 `known_good/`，未写Flash。
+归档仍仅是候选，不覆盖 `known_good/`，未写Flash。
+
+2026-10-01使用 `tools/flash_candidate.bat` 将该归档位流经板载FT4232H
+以6 MHz JTAG下载；程序日志显示USB `0403:6011`、器件ID
+`0x10660A79`、`finished with JTAG programming`，脚本退出0。
+本次关键原始输出：
+
+```text
+=== flashing: candidate_bitstreams\shape_rotation_34e5d39_20261001.bit ===
+Connecting to JTAG_TAP: efx_ti
+jtag programming started!
+JTAG Programming on ftdi://0x0403:0x6011:2:15/2
+Programming 'candidate_bitstreams\shape_rotation_34e5d39_20261001.bit' via JTAG at freq 6.0 MHz
+Device ID read from JTAG: 0x10660A79
+... finished with JTAG programming
+FLASH_SCRIPT_EXIT=0
+```
+
+这是易失性配置，不是Flash持久烧写；断电或重新配置可能恢复旧程序。
+目前**只有下载证据，没有屏幕画面、类别、框位置或实时性验收证据**。
 
 `place.rpt` 报XLR 54488/60800、RAM 251/256、DSP 154/160；
 `timing.rpt` 报告的15组时钟关系setup/hold全部非负，最小分别为
