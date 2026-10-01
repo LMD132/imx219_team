@@ -13,7 +13,7 @@ module tb_shp_lifecycle;
   .o_bcls(bcls),.o_bval(bval),.o_cnt(cnt),.o_ovf(ovf));
  integer x,y,i,n,frame_id;
  reg pixel_edge;
- task frame;
+ task stream_frame;
  input integer shape;
  begin
   for(y=0;y<135;y=y+1)begin
@@ -28,6 +28,11 @@ module tb_shp_lifecycle;
   end
   @(negedge clk);in_de=0;in_d=0;in_vs=1;
   @(negedge clk);in_vs=0;
+ end endtask
+ task frame;
+ input integer shape;
+ begin
+  stream_frame(shape);
   repeat(10000)@(negedge clk);
  end endtask
  function integer count_boxes;
@@ -58,6 +63,19 @@ module tb_shp_lifecycle;
   @(negedge clk);cfg_en=1;
   frame(0);
   if(count_boxes(bval)!=0)$fatal(1,"FAIL stale state after enable");
+  // Interrupt the short interval after a frame retirement has filled l_val
+  // but before its S_COMMIT. Empty input after re-enable must not replay it.
+  stream_frame(1);
+  i=0;
+  while(!dut.l_val[0] && i<100000)begin @(negedge clk);i=i+1;end
+  if(!dut.l_val[0])$fatal(1,"FAIL pending result was not reached");
+  @(negedge clk);cfg_en=0;
+  repeat(3)@(negedge clk);
+  if(count_boxes(bval)!=0)$fatal(1,"FAIL disable did not blank public label");
+  @(negedge clk);cfg_en=1;
+  frame(0);
+  if(count_boxes(bval)!=0||cnt!=0)
+   $fatal(1,"FAIL pending label survived disable bval%h cnt%0d",bval,cnt);
   $display("SHAPE_TEST_PASS tb_shp_lifecycle bounded hold disable reject reset");
   $finish_and_return(0);
  end

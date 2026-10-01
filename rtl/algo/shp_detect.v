@@ -108,41 +108,76 @@ module shp_detect #(
     wire span_end = ~pix & pix_r;    // 结束于 (x_r,y_r), 起点 = sx0
 
     // ------------------------------------------------------------ 游程 FIFO
-    reg  [36:0] fifo [0:FQ-1];
-    localparam [4:0] S_COMMIT=5'd13;
+    // {late_frame, frame_boundary, row, right, left}.  A boundary travels
+    // through the same queue as spans, so busy processing cannot move runs
+    // from the next frame into the previous one.
+    reg  [38:0] fifo [0:FQ-1];
+    localparam [4:0] S_IDLE=5'd0, S_COMMIT=5'd13;
     reg [4:0] state;
     wire no_slot_drop;
     wire malformed_retire;
     reg  [4:0]  f_wp, f_rp, f_cnt;
+    reg  [4:0]  pending_edges, lost_edges;
+    reg         sync_lost;
+    reg         vs_r;
     reg         frame_fault;
     wire        f_empty = (f_cnt == 5'd0);
     wire        f_full  = (f_cnt == FQ5);
     reg         f_pop;                       // 主状态机 1 拍脉冲
-    wire [36:0] f_dout  = fifo[f_rp];
+    wire [38:0] f_dout  = fifo[f_rp];
+    wire vs_edge = in_vs && !vs_r;
+    wire synthetic_boundary = (state==S_IDLE) && f_empty &&
+                              (lost_edges!=0) && cfg_en;
+    wire marker_read = (state==S_IDLE) && !f_empty && f_dout[37];
+    wire push_req = vs_edge || span_end;
+    wire push_ok = push_req && !f_full && !sync_lost;
+    wire lost_boundary = vs_edge && (f_full || sync_lost);
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             f_wp <= 5'd0; f_rp <= 5'd0; f_cnt <= 5'd0; o_ovf <= 16'd0;
+            pending_edges <= 5'd0; lost_edges <= 5'd0; sync_lost <= 1'b0;
             frame_fault <= 1'b0;
         end else if (!cfg_en) begin
             f_wp <= 5'd0; f_rp <= 5'd0; f_cnt <= 5'd0;   // 关闭时清空
+            pending_edges <= 5'd0; lost_edges <= 5'd0; sync_lost <= 1'b0;
             frame_fault <= 1'b0;
         end else begin
             if (state==S_COMMIT) frame_fault <= 1'b0;
-            if ((span_end && f_full) || no_slot_drop) frame_fault <= 1'b1;
-            if (span_end) begin
-                if (!f_full) begin
-                    fifo[f_wp] <= {y_r, x_r, sx0};
-                    f_wp <= (f_wp == (FQ5 - 5'd1)) ? 5'd0 : (f_wp + 5'd1);
-                end
+            if ((span_end && !push_ok) || no_slot_drop ||
+                (vs_edge && pending_edges!=0) || lost_boundary ||
+                (marker_read && f_dout[38]) || synthetic_boundary)
+                frame_fault <= 1'b1;
+            if (push_ok) begin
+                // The VS marker wins an otherwise simultaneous span-end;
+                // that dropped span also invalidates the frame.
+                fifo[f_wp] <= vs_edge ? {1'b0 | (pending_edges!=0),1'b1,37'd0} :
+                                       {2'b00,y_r,x_r,sx0};
+                f_wp <= (f_wp == (FQ5 - 5'd1)) ? 5'd0 : (f_wp + 5'd1);
             end
+            if (vs_edge && span_end) frame_fault <= 1'b1;
+            if (lost_boundary) sync_lost <= 1'b1;
+            else if (state==S_COMMIT && lost_edges==0 && f_empty)
+                sync_lost <= 1'b0;
+            case ({vs_edge, state==S_COMMIT})
+                2'b10: if (pending_edges!=5'h1f) pending_edges<=pending_edges+5'd1;
+                2'b01: if (pending_edges!=0) pending_edges<=pending_edges-5'd1;
+                default: ;
+            endcase
+            case ({lost_boundary,synthetic_boundary})
+                2'b10: if (lost_edges!=5'h1f) lost_edges<=lost_edges+5'd1;
+                2'b01: lost_edges<=lost_edges-5'd1;
+                default: ;
+            endcase
             // Count bad geometry storage as well as dropped input work. If
             // two anomalies coincide, this diagnostic counts the cycle once.
-            if (((span_end && f_full) || no_slot_drop || malformed_retire) &&
+            if (((span_end && (!push_ok || vs_edge)) || no_slot_drop ||
+                 malformed_retire || (vs_edge && pending_edges!=0) ||
+                 lost_boundary) &&
                 o_ovf != 16'hFFFF)
                 o_ovf <= o_ovf + 16'd1;
             if (f_pop) f_rp <= (f_rp == (FQ5 - 5'd1)) ? 5'd0 : (f_rp + 5'd1);
-            case ({span_end & ~f_full, f_pop})
+            case ({push_ok, f_pop})
                 2'b10:   f_cnt <= f_cnt + 5'd1;
                 2'b01:   f_cnt <= f_cnt - 5'd1;
                 default: ;
@@ -177,8 +212,7 @@ module shp_detect #(
     reg  [19:0]    l_sc  [0:NBX-1];
 
     // ------------------------------------------------------------ 主状态机
-    localparam S_IDLE   = 5'd0,
-               S_MATCH  = 5'd1,     // 组合匹配 -> 寄存掩码
+    localparam S_MATCH  = 5'd1,     // 组合匹配 -> 寄存掩码
                S_MPRI   = 5'd2,     // 优先级 + 合并值
                S_APPLY  = 5'd3,     // 写回 blob 表
                S_PREP   = 5'd4,     // 退休准备(冲行 + 装乘法器)
@@ -195,7 +229,6 @@ module shp_detect #(
                S_QMATCH=5'd19,S_QWAIT=5'd20,
                S_GEOM_START=5'd21,S_GEOM_WAIT=5'd22;
 
-    reg         fend_req;
     reg         fend_mode;
     reg  [3:0]  ret_slot;
     reg  [NB-1:0] alloc_oh;
@@ -275,17 +308,10 @@ module shp_detect #(
     reg        t_found;
     reg [19:0] t_min;
 
-    // vs 上升沿 -> 帧末请求(锁存, 等 FIFO 排空后处理)
-    reg vs_r;
+    // VS 边沿入队为帧边界；其相对游程的顺序由同一 FIFO 保证。
     always @(posedge clk or negedge rst_n) begin
-        if (!rst_n) begin
-            vs_r <= 1'b0; fend_req <= 1'b0;
-        end else begin
-            vs_r <= in_vs;
-            if (in_vs & ~vs_r) fend_req <= 1'b1;
-            else if ((state == S_IDLE) && fend_req && f_empty && cfg_en)
-                fend_req <= 1'b0;
-        end
+        if (!rst_n) vs_r <= 1'b0;
+        else vs_r <= in_vs;
     end
 
     // en 关闭时清表(en 上升沿重新开始)
@@ -626,14 +652,19 @@ module shp_detect #(
                 // ---- 取一段: 优先把 FIFO 排空, 空完再处理帧末 ----
                 S_IDLE: begin
                     if (!f_empty) begin
-                        s_x0  <= f_dout[11:0];
-                        s_x1  <= f_dout[23:12];
-                        s_y   <= f_dout[36:24];
-                        s_len <= f_dout[23:12] - f_dout[11:0] + 13'd1;
                         f_pop <= 1'b1;
-                        qm_mask <= {NB{1'b0}};
-                        state <= S_QMATCH;
-                    end else if (fend_req) begin
+                        if (f_dout[37]) begin
+                            fend_mode <= 1'b1;
+                            state <= S_FEND;
+                        end else begin
+                            s_x0  <= f_dout[11:0];
+                            s_x1  <= f_dout[23:12];
+                            s_y   <= f_dout[36:24];
+                            s_len <= f_dout[23:12] - f_dout[11:0] + 13'd1;
+                            qm_mask <= {NB{1'b0}};
+                            state <= S_QMATCH;
+                        end
+                    end else if (synthetic_boundary) begin
                         fend_mode <= 1'b1;
                         state     <= S_FEND;
                     end
@@ -768,13 +799,6 @@ module shp_detect #(
                 // ---- 写 top 列表 ----
                 S_PUSH: begin
                     if (ins_en) begin
-                        l_val[ins_idx] <= 1'b1;
-                        l_x0 [ins_idx] <= b_x0[ret_slot];
-                        l_x1 [ins_idx] <= b_x1[ret_slot];
-                        l_y0 [ins_idx] <= b_y0[ret_slot];
-                        l_y1 [ins_idx] <= b_y1[ret_slot];
-                        l_cls[ins_idx] <= cls_now;
-                        l_sc [ins_idx] <= ret_fill;
                         if (!ring_dup && f_cnt_cur != 10'd999)
                             f_cnt_cur <= f_cnt_cur + 10'd1;
                     end
@@ -841,8 +865,18 @@ module shp_detect #(
             if (clr_all || !cfg_en) begin
                 o_bval <= {NBX{1'b0}};
                 hold_cnt <= 5'd0;
-            end
-            if ((state == S_COMMIT) && ~clr_all) begin
+                for (i = 0; i < NBX; i = i + 1) l_val[i] <= 1'b0;
+            end else if (state == S_PUSH && ins_en) begin
+                // Keep the pending list in one sequential block, including
+                // disable/commit, so a partial frame cannot outlive cfg_en.
+                l_val[ins_idx] <= 1'b1;
+                l_x0 [ins_idx] <= b_x0[ret_slot];
+                l_x1 [ins_idx] <= b_x1[ret_slot];
+                l_y0 [ins_idx] <= b_y0[ret_slot];
+                l_y1 [ins_idx] <= b_y1[ret_slot];
+                l_cls[ins_idx] <= cls_now;
+                l_sc [ins_idx] <= ret_fill;
+            end else if (state == S_COMMIT) begin
                 for (i = 0; i < NBX; i = i + 1) begin
                     l_val[i] <= 1'b0;              // 列表每帧重建
                     if (any_l && !frame_fault) begin
@@ -907,6 +941,10 @@ module shp_recent #(
  wire [AW-1:0] merge_addr=source*NR+merge_index;
  wire [AW-1:0] read_addr=(state==Q_READ)?scan_index:
                          (state==M_READ)?merge_addr:append_addr;
+ wire q_hit=valid[scan_index]&&qy>=read_data[36:24]&&
+        (qy-read_data[36:24])<=GAPY&&
+        {1'b0,qx0}<={1'b0,read_data[11:0]}+GAPX&&
+        {1'b0,qx1}+GAPX>={1'b0,read_data[23:12]};
  assign cmd_ready=(state==IDLE);
  assign query_ready=(state==IDLE)&&!cmd_valid;
  integer qj;
@@ -969,14 +1007,12 @@ module shp_recent #(
     end
     Q_READ:state<=Q_CHECK;
     Q_CHECK:begin
-     if(valid[scan_index]&&qy>=read_data[36:24]&&
-        (qy-read_data[36:24])<=GAPY&&
-        {1'b0,qx0}<={1'b0,read_data[11:0]}+GAPX&&
-        {1'b0,qx1}+GAPX>={1'b0,read_data[23:12]})
+     if(q_hit)
       o_matches[scan_index/NR]<=1;
-     // Newest-first scan: on an unmerged slot, the first stale/empty word
-     // proves every older word stale too. Merged slots retain a full scan.
-     if((ordered[scan_slot]&&
+     // The query needs one boolean per slot: once a run matches, scanning
+     // older runs in this slot cannot change the answer.  This bounds the
+     // cost of several contours at the same raster height.
+     if(q_hit || (ordered[scan_slot]&&
          (!valid[scan_index]||
           (qy>=read_data[36:24]&&qy-read_data[36:24]>GAPY)))||
         scan_offset==next_index[scan_slot])begin

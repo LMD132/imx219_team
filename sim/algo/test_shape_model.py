@@ -62,7 +62,7 @@ class ShapeModelTests(unittest.TestCase):
         self.assertEqual(failures, [], f'{len(failures)} false positives; first: {failures[:12]}')
 
     def test_other_negative_shapes(self):
-        for kind in ('line', 'pentagon', 'star'):
+        for kind in ('line', 'pentagon', 'star', 'parallelogram'):
             for angle in range(0, 360, 5):
                 for size in (48, 80, 160):
                     case = make_case(kind, angle, size, 1, (640, 360), (0, 0))

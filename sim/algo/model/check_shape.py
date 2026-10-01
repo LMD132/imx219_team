@@ -11,8 +11,32 @@ RUN = ROOT / 'outflow/diagnostics'
 ALL_RTL = (
     'tb_shp_summary', 'tb_shp_recent', 'tb_shp_connect', 'tb_shp_geometry',
     'tb_shp_rot', 'tb_shp_detect', 'tb_shp_ring', 'tb_shp_tilt',
-    'tb_shp_spacing', 'tb_shp_lifecycle', 'tb_shp_throughput', 'tb_shp_overlay',
+    'tb_shp_spacing', 'tb_shp_lifecycle', 'tb_shp_frame_epoch',
+    'tb_shp_throughput', 'tb_shp_no_blank', 'tb_shp_stream_matrix',
+    'tb_shp_overlay',
 )
+
+
+def prepare_stream_vectors():
+    """Exercise the full stream detector using model-independent class labels."""
+    sys.path.insert(0, str(ROOT / 'sim/algo'))
+    from model.shape_cases import make_case
+    cases = []
+    for kind, aspect in (('ring', 1), ('triangle', 1),
+                         ('square', 1), ('rectangle', 1.5), ('cross', 0.3)):
+        for angle in (0, 15, 30, 40, 45, 60, 90, 135):
+            for size in (48, 80, 160):
+                cases.append(make_case(kind, angle, size, aspect,
+                                       (640, 360), (0.5, 0.5)))
+    lines = [str(len(cases))]
+    for index, case in enumerate(cases):
+        x0, y0, x1, y1 = case.bounds
+        lines.append(f'{index} {case.expected_cls} {x0} {y0} {x1} {y1} {len(case.runs)}')
+        lines.extend(f'{y} {left} {right}' for y, left, right in case.runs)
+    RUN.mkdir(parents=True, exist_ok=True)
+    vector_path = RUN / 'shape_stream_vectors.txt'
+    vector_path.write_text('\n'.join(lines) + '\n', encoding='ascii')
+    return vector_path
 
 
 def prepare_summary_vectors():
@@ -67,6 +91,9 @@ def prepare_geometry_vectors():
                     for phase in ((0.0, 0.0), (0.5, 0.5)):
                         cases.append((kind, angle, size, aspect, center, phase))
     cases.append(('flat_apex', 0, 0, 1.0, (640, 360), (0.0, 0.0)))
+    for angle in (0, 15, 30, 45, 75, 120):
+        for size in (80, 160):
+            cases.append(('parallelogram', angle, size, 1.0, (640, 360), (0.0, 0.0)))
     lines = [str(len(cases))]
     for kind, angle, size, aspect, center, phase in cases:
         if kind == 'flat_apex':
@@ -127,7 +154,10 @@ def run_tb(name: str, extra_sources: list[str] = []) -> subprocess.CompletedProc
     if not path.is_file():
         return subprocess.CompletedProcess([name], 2, '', f'missing testbench: {path}\n')
     try:
-        timeout = float(os.environ.get('SHAPE_TEST_TIMEOUT', '120'))
+        # The aggregate geometry gate evaluates >10k golden cases in RTL.
+        # Keep the default above its measured runtime; callers can still set
+        # a short timeout explicitly when checking timeout propagation.
+        timeout = float(os.environ.get('SHAPE_TEST_TIMEOUT', '600'))
         if timeout <= 0:
             raise ValueError('non-positive timeout')
     except ValueError:
@@ -137,6 +167,7 @@ def run_tb(name: str, extra_sources: list[str] = []) -> subprocess.CompletedProc
     if path.stem == 'tb_shp_summary':
         prepare_summary_vectors()
     geometry_vectors = prepare_geometry_vectors() if path.stem == 'tb_shp_geometry' else None
+    stream_vectors = prepare_stream_vectors() if path.stem == 'tb_shp_stream_matrix' else None
     output = RUN / (path.stem + '.vvp')
     sources = [path, *sorted((ROOT / 'rtl/algo').glob('*.v')),
                ROOT / 'rtl/simple_dual_port_ram.v', ROOT / 'rtl/true_dual_port_ram.v']
@@ -153,6 +184,8 @@ def run_tb(name: str, extra_sources: list[str] = []) -> subprocess.CompletedProc
     sim_args = [str(bin_dir / 'vvp.exe'), str(output), '-none']
     if geometry_vectors is not None:
         sim_args.append('+VECTORS=' + str(geometry_vectors))
+    if stream_vectors is not None:
+        sim_args.append('+VECTORS=' + str(stream_vectors))
     result = _invoke(sim_args, timeout)
     transcript = result.stdout + result.stderr
     if result.returncode == 0 and re.search(r'\b(?:FAIL|ERROR)\b', transcript, re.I):

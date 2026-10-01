@@ -67,7 +67,9 @@ module shp_geometry(
  wire [5:0] pp=(idx==0)?pn-1'b1:idx-1'b1;
  wire [5:0] pnxt=(idx==pn-1'b1)?0:idx+1'b1;
  wire [5:0] popp=(idx+2>=pn)?idx+2-pn:idx+2;
- wire [5:0] pnext2=(idx+1>=pn)?0:idx+1;
+ // The next edge begins at pnxt and ends two vertices ahead.  Using
+ // idx+1 here makes that edge zero-length and disables the corner test.
+ wire [5:0] pnext2=popp;
 
  // Signed 14-bit deltas cover every valid 1280x720 coordinate difference.
  wire signed [13:0] adx=$signed({2'b0,px[pnxt]})-$signed({2'b0,px[pp]});

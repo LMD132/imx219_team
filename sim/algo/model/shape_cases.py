@@ -46,6 +46,10 @@ def make_case(kind: str, angle_deg: int, size: int, aspect: float,
             half_height = radius / aspect
             points = [(-radius, -half_height), (radius, -half_height),
                       (radius, half_height), (-radius, half_height)]
+        elif kind == 'parallelogram':
+            # Long parallel sides, visibly non-right adjacent sides.
+            points = [(-radius, -radius), (radius * 0.25, -radius),
+                      (radius, radius), (-radius * 0.25, radius)]
         elif kind in ('triangle', 'pentagon', 'star'):
             n = {'triangle': 3, 'pentagon': 5, 'star': 10}[kind]
             points = [(radius * (0.42 if kind == 'star' and i % 2 else 1) * math.cos(-math.pi/2 + i*2*math.pi/n),
