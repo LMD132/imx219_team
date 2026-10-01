@@ -19,6 +19,7 @@ module tb_shape_diag_cdc;
     wire [15:0] ovf;
     wire fault, frame_valid, sample_valid, busy;
     wire [3:0] reason;
+    wire [31:0] slot_total, fifo_total;
     integer errors = 0;
     integer k;
 
@@ -28,8 +29,11 @@ module tb_shape_diag_cdc;
         .i_ovf(phase ? 16'hAAAA : 16'h5555),
         .i_fault(phase), .i_reason(phase ? 4'h8 : 4'h1),
         .i_frame_valid(1'b1),
+        .i_slot_drop_total(phase ? 32'h02468ACE : 32'h13579BDF),
+        .i_fifo_full_total(phase ? 32'hFDB97531 : 32'h2468ACE0),
         .clk_dst(clk_dst), .rst_dst_n(rst_dst_n), .i_req(req),
         .o_cnt(cnt), .o_ovf(ovf), .o_fault(fault), .o_reason(reason),
+        .o_slot_drop_total(slot_total), .o_fifo_full_total(fifo_total),
         .o_frame_valid(frame_valid), .o_sample_valid(sample_valid),
         .o_busy(busy)
     );
@@ -59,9 +63,11 @@ module tb_shape_diag_cdc;
             check(n < 100, "request receives acknowledgement");
             check(sample_valid === 1'b1, "completed snapshot is valid");
             check(frame_valid === 1'b1, "source frame-valid crosses intact");
-            check(((cnt === 10'd155) && (ovf === 16'h5555) && (fault === 1'b0) && (reason === 4'h1)) ||
-                  ((cnt === 10'd844) && (ovf === 16'hAAAA) && (fault === 1'b1) && (reason === 4'h8)),
-                  "counter/fault/reason tuple never tears");
+            check(({cnt,ovf,fault,reason,frame_valid,slot_total,fifo_total} ===
+                   {10'd155,16'h5555,1'b0,4'h1,1'b1,32'h13579BDF,32'h2468ACE0}) ||
+                  ({cnt,ovf,fault,reason,frame_valid,slot_total,fifo_total} ===
+                   {10'd844,16'hAAAA,1'b1,4'h8,1'b1,32'h02468ACE,32'hFDB97531}),
+                  "complete 96-bit tuple never tears");
         end
     endtask
 
@@ -89,6 +95,8 @@ module tb_shape_diag_cdc;
         #1;
         check(sample_valid === 1'b0, "source-only reset invalidates snapshot");
         check(busy === 1'b0, "source-only reset clears pending handshake");
+        check({cnt,ovf,fault,reason,frame_valid,slot_total,fifo_total} === 96'd0,
+              "source reset clears prior 96-bit tuple");
         repeat (3) @(negedge clk_dst);
         rst_src_n = 1'b1;
         repeat (6) @(negedge clk_dst);
@@ -97,6 +105,34 @@ module tb_shape_diag_cdc;
         @(negedge clk_dst); rst_dst_n = 1'b0;
         #1;
         check(sample_valid === 1'b0, "destination-only reset invalidates snapshot");
+        check({cnt,ovf,fault,reason,frame_valid,slot_total,fifo_total} === 96'd0,
+              "destination reset clears prior 96-bit tuple");
+        repeat (3) @(negedge clk_dst);
+        rst_dst_n = 1'b1;
+        repeat (6) @(negedge clk_dst);
+        request_one();
+
+        // Interrupt a pending request from either domain; no old sample may
+        // survive or be delivered after that side comes back from reset.
+        @(negedge clk_dst); req = 1'b1;
+        @(negedge clk_dst); req = 1'b0;
+        check(busy === 1'b1, "source-reset transaction became pending");
+        @(negedge clk_src); rst_src_n = 1'b0;
+        #1;
+        check(sample_valid === 1'b0 && busy === 1'b0,
+              "source in-flight reset invalidates transaction");
+        repeat (3) @(negedge clk_src);
+        rst_src_n = 1'b1;
+        repeat (6) @(negedge clk_dst);
+        request_one();
+
+        @(negedge clk_dst); req = 1'b1;
+        @(negedge clk_dst); req = 1'b0;
+        check(busy === 1'b1, "destination-reset transaction became pending");
+        @(negedge clk_dst); rst_dst_n = 1'b0;
+        #1;
+        check(sample_valid === 1'b0 && busy === 1'b0,
+              "destination in-flight reset invalidates transaction");
         repeat (3) @(negedge clk_dst);
         rst_dst_n = 1'b1;
         repeat (6) @(negedge clk_dst);

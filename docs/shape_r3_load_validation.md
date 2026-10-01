@@ -16,3 +16,10 @@
 - 绿：仅在测试刺激加入 y=100 的密集交替游程后，同一测试连续两次通过。每次监视器均为 `S=199/199 Q=369/369 bad_marker=1/1 lost=0 pending=1 maxQ=24 CNT=0 F=1 R=3 OV=568`；分子为新 RTL 计数，分母为独立逐拍监视器。最终帧边界被成功入队、读出，且无边界丢弃。该台已纳入 `check_shape.py --all`。
 - 总门禁：`python sim/algo/model/check_shape.py --all` 退出码 0，结尾 `ALL PASS`，其中包含 `SHAPE_TEST_PASS tb_shp_r3_pressure exact R3` 与原 `tb_shp_clutter` 的 `R1` 回归。
 - 这只证明 `R3` 路径可离线复现，不证明实板 `R3` 由 FIFO 满引起；实板仍须比较连续 `S/Q` 增量。
+
+## Task 3：96 位跨时钟快照
+
+- 改前快照：`D:\FPGA_Project\_backups\20261001_225643_pre-shape-r3-load-task3`，验证结果为 `RESULT: BACKUP VERIFIED RESTORABLE`。
+- 红：扩展测试接入四个新端口后，旧 CDC 缺少端口，`tb_shape_diag_cdc` elaboration 报 8 处错误，退出码 1。
+- 绿：`tb_shape_diag_cdc` 以 7 ns/11 ns 半周期异相时钟交替输入两组完整 96 位元组；20 次请求、忙时脉冲、两侧空闲及事务中复位均通过，退出码 0、`SHAPE_TEST_PASS`。既有 `tb_shp_load_counts` 与 `tb_shp_r3_pressure` 再跑均通过，后一台仍是 `S=199 Q=369 F1 R3`。
+- 本任务只把两个计数接入顶层的像素域与 25 MHz 域；尚未发送 UART 后缀。

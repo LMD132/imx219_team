@@ -1021,6 +1021,8 @@ end
 // clock. Either domain's reset invalidates the previously sampled tuple.
 wire [9:0]  w_shape_cnt_px, w_shape_cnt_uart;
 wire [15:0] w_shape_ovf_px, w_shape_ovf_uart;
+wire [31:0] w_shape_slot_drop_px, w_shape_slot_drop_uart;
+wire [31:0] w_shape_fifo_full_px, w_shape_fifo_full_uart;
 wire [3:0]  w_shape_reason_px, w_shape_reason_uart;
 wire        w_shape_fault_px, w_shape_frame_valid_px;
 wire        w_shape_fault_uart, w_shape_frame_valid_uart;
@@ -1030,10 +1032,14 @@ alg_shape_diag_cdc u_shape_diag_cdc (
     .i_cnt(w_shape_cnt_px), .i_ovf(w_shape_ovf_px),
     .i_fault(w_shape_fault_px), .i_reason(w_shape_reason_px),
     .i_frame_valid(w_shape_frame_valid_px),
+    .i_slot_drop_total(w_shape_slot_drop_px),
+    .i_fifo_full_total(w_shape_fifo_full_px),
     .clk_dst(CLK_25M), .rst_dst_n(w_arstn), .i_req(w_shape_diag_req),
     .o_cnt(w_shape_cnt_uart), .o_ovf(w_shape_ovf_uart),
     .o_fault(w_shape_fault_uart), .o_reason(w_shape_reason_uart),
     .o_frame_valid(w_shape_frame_valid_uart),
+    .o_slot_drop_total(w_shape_slot_drop_uart),
+    .o_fifo_full_total(w_shape_fifo_full_uart),
     .o_sample_valid(w_shape_sample_valid_uart), .o_busy(w_shape_diag_busy)
 );
 
@@ -1164,6 +1170,8 @@ alg_top #(
     .cfg_shp_nbox(w_px_shp_nbox),         // 同时显示的框数上限
     .cfg_shp_area(w_px_shp_area),         // 最大 bbox 面积(占全屏%)
     .diag_cnt(w_shape_cnt_px), .diag_ovf(w_shape_ovf_px),
+    .diag_slot_drop_total(w_shape_slot_drop_px),
+    .diag_fifo_full_total(w_shape_fifo_full_px),
     .diag_last_fault(w_shape_fault_px),
     .diag_last_reason(w_shape_reason_px),
     .diag_frame_valid(w_shape_frame_valid_px),
