@@ -5,7 +5,7 @@
 // Status line for the runtime edge parameters, the transmit half of the
 // PC tuning channel (alg_cfg_uart.v is the receive half).
 //
-// One 128 byte ASCII line every PERIOD_MS, plus an immediate line after every
+// One 148 byte ASCII line every PERIOD_MS, plus an immediate line after every
 // accepted command, so a slider on the host can be confirmed against what the
 // board actually latched instead of being trusted:
 //
@@ -20,7 +20,8 @@
 //
 // The last field is the answer to the host's X<grp> read-back command:
 // CAM<4 decimal digits of the requested group>=<2 hex digits of the byte the
-// camera returned> (FF until the first read).
+// camera returned> (FF until the first read). The line ends with read-only
+// shape load counters Sxxxxxxxx Qxxxxxxxx in uppercase hexadecimal.
 //
 // EPS<n> between OVC and CAM is the NMS tolerance (0..8, see alg_nms.v).
 // EPF<n> (0..2, pre-filter: off / gaussian3x3 / guided), GF<nnnn>
@@ -75,6 +76,8 @@ module alg_cfg_telemetry #(
     input  wire [15:0] i_diag_ovf,
     input  wire        i_diag_fault,
     input  wire [3:0]  i_diag_reason,
+    input  wire [31:0] i_diag_slot_drop_total,
+    input  wire [31:0] i_diag_fifo_full_total,
     input  wire        i_diag_frame_valid,
     input  wire        i_diag_sample_valid,
     input  wire        i_diag_busy,
@@ -82,9 +85,9 @@ module alg_cfg_telemetry #(
     output wire        o_txd
 );
 
-    // The former 124 visible bytes are unchanged. Append " Rn" before LF.
-    // 128 does not fit in seven bits, although indices 0..127 still do.
-    localparam [7:0] MSG_LEN = 8'd128;
+    // The former 127 visible bytes are unchanged. Append the two hex
+    // counters before the sole LF; indices now need eight bits.
+    localparam [7:0] MSG_LEN = 8'd148;
     localparam integer GAP_CLKS = (CLK_HZ / 1000) * PERIOD_MS;
 
     // ------------------------------------------------------------------ text
@@ -104,7 +107,7 @@ module alg_cfg_telemetry #(
     endfunction
 
     function [7:0] msg_byte;
-        input [6:0]  idx;
+        input [7:0]  idx;
         input [15:0] t_bcd;
         input [15:0] lo_bcd;
         input [15:0] hi_bcd;
@@ -117,6 +120,8 @@ module alg_cfg_telemetry #(
         input [15:0] diag_ovf;
         input        diag_fault;
         input [3:0]  diag_reason;
+        input [31:0] diag_slot_total;
+        input [31:0] diag_fifo_total;
         input        diag_frame_valid;
         input [7:0]  cam_val;
         input [1:0]  mode;
@@ -260,7 +265,28 @@ module alg_cfg_telemetry #(
                 7'd124: msg_byte = " ";
                 7'd125: msg_byte = "R";
                 7'd126: msg_byte = diag_frame_valid ? hex_of(diag_reason) : "?";
-                default: msg_byte = 8'h0A; // LF at 127
+                8'd127: msg_byte = " ";
+                8'd128: msg_byte = "S";
+                8'd129: msg_byte = hex_of(diag_slot_total[31:28]);
+                8'd130: msg_byte = hex_of(diag_slot_total[27:24]);
+                8'd131: msg_byte = hex_of(diag_slot_total[23:20]);
+                8'd132: msg_byte = hex_of(diag_slot_total[19:16]);
+                8'd133: msg_byte = hex_of(diag_slot_total[15:12]);
+                8'd134: msg_byte = hex_of(diag_slot_total[11:8]);
+                8'd135: msg_byte = hex_of(diag_slot_total[7:4]);
+                8'd136: msg_byte = hex_of(diag_slot_total[3:0]);
+                8'd137: msg_byte = " ";
+                8'd138: msg_byte = "Q";
+                8'd139: msg_byte = hex_of(diag_fifo_total[31:28]);
+                8'd140: msg_byte = hex_of(diag_fifo_total[27:24]);
+                8'd141: msg_byte = hex_of(diag_fifo_total[23:20]);
+                8'd142: msg_byte = hex_of(diag_fifo_total[19:16]);
+                8'd143: msg_byte = hex_of(diag_fifo_total[15:12]);
+                8'd144: msg_byte = hex_of(diag_fifo_total[11:8]);
+                8'd145: msg_byte = hex_of(diag_fifo_total[7:4]);
+                8'd146: msg_byte = hex_of(diag_fifo_total[3:0]);
+                8'd147: msg_byte = 8'h0A;
+                default: msg_byte = 8'h00;
             endcase
         end
     endfunction
@@ -276,7 +302,7 @@ module alg_cfg_telemetry #(
 
     reg [2:0]  state;
     reg [31:0] gap_cnt;
-    reg [6:0]  char_idx;        // 128 字节行: 下标 0..127 恰好占 7 位
+    reg [7:0]  char_idx;        // 148 字节行: 下标 0..147
     reg        tx_valid;
     reg [7:0]  tx_byte;
     reg        pending;
@@ -300,6 +326,7 @@ module alg_cfg_telemetry #(
     reg [9:0]  d_diag_cnt;
     reg [15:0] d_diag_ovf;
     reg [3:0]  d_diag_reason;
+    reg [31:0] d_diag_slot_total, d_diag_fifo_total;
     reg        d_diag_fault, d_diag_frame_valid;
     reg [9:0]  d_cam_grp;
     reg [7:0]  d_cam_val;
@@ -336,7 +363,7 @@ module alg_cfg_telemetry #(
         if (!rst_n) begin
             state     <= ST_GAP;
             gap_cnt   <= 32'd0;
-            char_idx  <= 6'd0;
+            char_idx  <= 8'd0;
             tx_valid  <= 1'b0;
             tx_byte   <= 8'h00;
             pending   <= 1'b1;      // push the power-on values straight away
@@ -371,6 +398,8 @@ module alg_cfg_telemetry #(
             d_diag_cnt <= 10'd0;
             d_diag_ovf <= 16'd0;
             d_diag_reason <= 4'd0;
+            d_diag_slot_total <= 32'd0;
+            d_diag_fifo_total <= 32'd0;
             d_diag_fault <= 1'b0;
             d_diag_frame_valid <= 1'b0;
             d_cam_grp <= 10'd0;
@@ -417,6 +446,8 @@ module alg_cfg_telemetry #(
                                           ((i_diag_cnt > 10'd999) ? 10'd999 : i_diag_cnt) : 10'd0;
                             d_diag_ovf <= i_diag_sample_valid ? i_diag_ovf : 16'd0;
                             d_diag_reason <= i_diag_sample_valid ? i_diag_reason : 4'd0;
+                            d_diag_slot_total <= i_diag_sample_valid ? i_diag_slot_drop_total : 32'd0;
+                            d_diag_fifo_total <= i_diag_sample_valid ? i_diag_fifo_full_total : 32'd0;
                             d_diag_fault <= i_diag_fault;
                             d_diag_frame_valid <= i_diag_sample_valid && i_diag_frame_valid;
                             if (!i_diag_busy) o_diag_req <= 1'b1;
@@ -458,7 +489,7 @@ module alg_cfg_telemetry #(
                         default: cnt_bcd <= bcd_reg;
                     endcase
                     if (conv_sel == 4'd8) begin
-                        char_idx <= 7'd0;
+                        char_idx <= 8'd0;
                         state    <= ST_LOAD;
                     end else begin
                         conv_sel <= conv_sel + 4'd1;
@@ -482,7 +513,8 @@ module alg_cfg_telemetry #(
                     tx_byte  <= msg_byte(char_idx, t_bcd, lo_bcd, hi_bcd,
                                          gf_bcd, cam_bcd, sz_bcd, fl_bcd, ar_bcd,
                                          cnt_bcd, d_diag_ovf, d_diag_fault,
-                                         d_diag_reason,
+                                         d_diag_reason, d_diag_slot_total,
+                                         d_diag_fifo_total,
                                          d_diag_frame_valid,
                                          d_cam_val,
                                          d_mode, d_disp, d_med, d_gau, d_iso, d_ovc,
@@ -501,7 +533,7 @@ module alg_cfg_telemetry #(
                         if (char_idx == (MSG_LEN - 8'd1)) begin
                             state <= ST_GAP;
                         end else begin
-                            char_idx <= char_idx + 7'd1;
+                            char_idx <= char_idx + 8'd1;
                             state    <= ST_LOAD;
                         end
                     end

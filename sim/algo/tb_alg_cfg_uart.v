@@ -10,7 +10,7 @@
 //   1. 解码 o_txd 用本文件独立写的采样任务 uart_get_byte, 不复用 DUT 的
 //      uart_rx, 否则收发同源错误会互相抵消, 测试就成了自言自语。
 //      uart_rx 本身另有一段直接喂线的用例(第 2 节起都是走真实串口时序的)。
-//   2. 状态行用现行 128 字节滑窗匹配(含EPF/GF/BRG/SHP/CAM/CNT/OV/F/R),
+//   2. 状态行用现行 148 字节滑窗匹配(含EPF/GF/BRG/SHP/CAM/CNT/OV/F/R/S/Q),
 //      不需要刻意对齐到行首。协议以单个 LF 结尾。
 //=============================================================================
 `timescale 1ns/1ps
@@ -18,7 +18,7 @@
 module tb_alg_cfg_uart;
 
     localparam integer BIT_NS = 8680;   // 115200 baud = 217 x 40 ns
-    localparam integer NB = 128;        // 当前完整状态行(见 alg_cfg_telemetry.v)
+    localparam integer NB = 148;        // 当前完整状态行(见 alg_cfg_telemetry.v)
 
     integer errors = 0;
     integer checks = 0;
@@ -142,6 +142,8 @@ module tb_alg_cfg_uart;
         .i_diag_ovf(16'h000A),
         .i_diag_fault(1'b0),
         .i_diag_reason(4'h0),
+        .i_diag_slot_drop_total(32'd0),
+        .i_diag_fifo_full_total(32'd0),
         .i_diag_frame_valid(1'b1),
         .i_diag_sample_valid(1'b1),
         .i_diag_busy(1'b0),
@@ -285,7 +287,7 @@ module tb_alg_cfg_uart;
         begin
             matched = 1'b0;
             n = 0;
-            // A command can arrive halfway through a 128-byte transfer.
+            // A command can arrive halfway through a 148-byte transfer.
             // Allow that old partial line plus the next complete snapshot.
             while (!matched && (n < 3*NB)) begin
                 uart_get_byte(c);
@@ -321,9 +323,9 @@ module tb_alg_cfg_uart;
 
     initial begin
         exp_default = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0000=FF",
-                       " SHP1 SZ024 FL875 BX4 AR050 CNT005 OV000A F0 R0", 8'h0A};
+                       " SHP1 SZ024 FL875 BX4 AR050 CNT005 OV000A F0 R0 S00000000 Q00000000", 8'h0A};
         exp_after   = {"M2 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0 EPS2 EPF2 GF0400 BRG2 CAM0000=FF",
-                       " SHP1 SZ024 FL875 BX4 AR050 CNT005 OV000A F0 R0", 8'h0A};
+                       " SHP1 SZ024 FL875 BX4 AR050 CNT005 OV000A F0 R0 S00000000 Q00000000", 8'h0A};
 
         rst_n = 1'b0;
         repeat (20) @(posedge clk25);
@@ -449,7 +451,7 @@ module tb_alg_cfg_uart;
         cam_val = 8'hC0;                  // 相当于 piv2_config 把那一个字节读回来了
         @(posedge clk25); cam_upd = 1'b1; @(posedge clk25); cam_upd = 1'b0;
         exp_cam = {"M0 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0 EPS2 EPF2 GF0400 BRG2 CAM0077=C0",
-                   " SHP1 SZ024 FL875 BX4 AR050 CNT005 OV000A F0 R0", 8'h0A};
+                   " SHP1 SZ024 FL875 BX4 AR050 CNT005 OV000A F0 R0 S00000000 Q00000000", 8'h0A};
         expect_line(exp_cam);
 
         send_str("X999");                 // 越界要夹到最后一个真实组合 (78)
@@ -460,7 +462,7 @@ module tb_alg_cfg_uart;
         cam_val = 8'h04;                  // 曝光高字节 0x04
         @(posedge clk25); cam_upd = 1'b1; @(posedge clk25); cam_upd = 1'b0;
         exp_cam = {"M0 T0100 LO0005 HI0900 MED1 GAU1 ISO0 DSP2 OVC0 EPS2 EPF2 GF0400 BRG2 CAM0005=04",
-                   " SHP1 SZ024 FL875 BX4 AR050 CNT005 OV000A F0 R0", 8'h0A};
+                   " SHP1 SZ024 FL875 BX4 AR050 CNT005 OV000A F0 R0 S00000000 Q00000000", 8'h0A};
         expect_line(exp_cam);
 
         if (errors != 0) $fatal(1,"FAIL cfg_uart: %0d errors in %0d checks", errors, checks);

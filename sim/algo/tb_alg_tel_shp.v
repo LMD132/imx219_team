@@ -1,10 +1,10 @@
 `timescale 1ns/1ps
 //=============================================================================
-// tb_alg_tel_shp.v -- 形状识别调参链路自检 (S/Y/Z/W/A 命令 -> 128字节状态行)
+// tb_alg_tel_shp.v -- 形状识别调参链路自检 (S/Y/Z/W/A 命令 -> 148字节状态行)
 //
 // 验证两件事:
 //   1) alg_cfg_uart 对 S/Y/Z/W/A 的解析与限幅(8..255 / 800..990 / 1..6 / 5..100);
-//   2) 128 字节 telemetry 行保留旧前缀并追加 CNT/OV/F/R 诊断
+//   2) 148 字节 telemetry 行保留旧前缀并追加 CNT/OV/F/R/S/Q 诊断
 //      (含 255/990/100 这类三位的进位情况), 用独立采样器解码 o_txd.
 //
 // 跑法(工程根目录):
@@ -16,7 +16,7 @@
 module tb_alg_tel_shp;
 
     localparam integer BIT_NS = 8680;         // 115200 baud (25MHz 下 217 拍)
-    localparam integer LEN    = 128;
+    localparam integer LEN    = 148;
 
     integer errors = 0;
     integer checks = 0;
@@ -47,6 +47,8 @@ module tb_alg_tel_shp;
     reg [15:0] diag_ovf = 16'h000A;
     reg        diag_fault = 1'b1;
     reg [3:0]  diag_reason = 4'h5;
+    reg [31:0] diag_slot_total = 32'h13579BDF;
+    reg [31:0] diag_fifo_total = 32'h2468ACE0;
     reg        diag_frame_valid = 1'b1;
     reg        diag_sample_valid = 1'b1;
     reg        extra_update = 1'b0;
@@ -89,6 +91,8 @@ module tb_alg_tel_shp;
         .i_update(c_commit | extra_update), .o_txd(txd),
         .i_diag_cnt(diag_cnt), .i_diag_ovf(diag_ovf),
         .i_diag_fault(diag_fault), .i_diag_reason(diag_reason),
+        .i_diag_slot_drop_total(diag_slot_total),
+        .i_diag_fifo_full_total(diag_fifo_total),
         .i_diag_frame_valid(diag_frame_valid),
         .i_diag_sample_valid(diag_sample_valid), .i_diag_busy(1'b0),
         .o_diag_req(diag_req)
@@ -135,7 +139,7 @@ module tb_alg_tel_shp;
         end
     endtask
 
-    // 按行扫描: 每收到 LF 就把最近 128 字节和期望整行比对, 最多 6 行
+    // 按行扫描: 每收到 LF 就把最近 148 字节和期望整行比对, 最多 6 行
     reg [7:0] win [0:LEN-1];
     integer kk, nbyt, nline, line_bytes;
     reg [7:0] cc;
@@ -176,19 +180,21 @@ module tb_alg_tel_shp;
         end
     endtask
 
-    reg [8*LEN-1:0] exp_default, exp_final, exp_wait, exp_overload;
+    reg [8*LEN-1:0] exp_default, exp_final, exp_wait, exp_overload, exp_updated;
 
     initial begin
         // 上电默认值整行 (含 5 个形状字段的默认 24/875/4/50)
         exp_default = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0000=FF",
-                       " SHP1 SZ024 FL875 BX4 AR050 CNT005 OV000A F1 R5", 8'h0A};
+                       " SHP1 SZ024 FL875 BX4 AR050 CNT005 OV000A F1 R5 S13579BDF Q2468ACE0", 8'h0A};
         exp_wait    = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0000=FF",
-                       " SHP1 SZ024 FL875 BX4 AR050 CNT000 OVFFFF F? R?", 8'h0A};
+                       " SHP1 SZ024 FL875 BX4 AR050 CNT000 OVFFFF F? R? S13579BDF Q2468ACE0", 8'h0A};
         exp_overload = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0000=FF",
-                        " SHP1 SZ024 FL875 BX4 AR050 CNT000 OVFFFF F1 R1", 8'h0A};
+                        " SHP1 SZ024 FL875 BX4 AR050 CNT000 OVFFFF F1 R1 S13579BDF Q2468ACE0", 8'h0A};
         // 极端值整行: SZ255 FL990 BX6 AR100 (BCD 进位的情况)
         exp_final   = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0000=FF",
-                       " SHP1 SZ255 FL990 BX6 AR100 CNT005 OV000A F1 R5", 8'h0A};
+                       " SHP1 SZ255 FL990 BX6 AR100 CNT005 OV000A F1 R5 S89ABCDEF Q01234567", 8'h0A};
+        exp_updated = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0000=FF",
+                       " SHP1 SZ024 FL875 BX4 AR050 CNT005 OV000A F1 R5 S89ABCDEF Q01234567", 8'h0A};
 
         for (kk = 0; kk < LEN; kk = kk + 1) win[kk] = 8'h00;
 
@@ -233,6 +239,20 @@ module tb_alg_tel_shp;
         repeat (200) @(negedge clk25);
         extra_update = 1'b0;
         expect_line(exp_default);
+
+        // Change both counters during an already active line. Its latched
+        // tuple must stay old; the next complete line must carry both new.
+        wait (u_tel.state == 3'd6 && u_tel.char_idx == 8'd80);
+        @(negedge clk25);
+        diag_slot_total = 32'h89ABCDEF;
+        diag_fifo_total = 32'h01234567;
+        repeat (20) @(negedge clk25);
+        if (u_tel.d_diag_slot_total !== 32'h13579BDF ||
+            u_tel.d_diag_fifo_total !== 32'h2468ACE0)
+            $fatal(1,"FAIL line snapshot changed during UART send");
+        @(negedge clk25); extra_update = 1'b1;
+        @(negedge clk25); extra_update = 1'b0;
+        expect_line(exp_updated);
 
         $display("--- 2. 开关 S0 / S1");
         send_str("S0"); repeat (200) @(posedge clk25);

@@ -1075,6 +1075,8 @@ alg_cfg_telemetry #(
     .i_diag_ovf(w_shape_ovf_uart),
     .i_diag_fault(w_shape_fault_uart),
     .i_diag_reason(w_shape_reason_uart),
+    .i_diag_slot_drop_total(w_shape_slot_drop_uart),
+    .i_diag_fifo_full_total(w_shape_fifo_full_uart),
     .i_diag_frame_valid(w_shape_frame_valid_uart),
     .i_diag_sample_valid(w_shape_sample_valid_uart),
     .i_diag_busy(w_shape_diag_busy),
