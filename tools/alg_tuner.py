@@ -154,7 +154,8 @@ TELEM_RE = re.compile(
 SHAPE_DIAG_RE = re.compile(
     r"^M[^\r\n]*\bAR\d{3} CNT(?P<cnt>\d{3}) "
     r"OV(?P<ov>[0-9A-F]{4}) F(?P<fault>[01?])"
-    r"(?: R(?P<reason>[0-9A-F?]))?$")
+    r"(?: R(?P<reason>[0-9A-F?]))?"
+    r"(?: S(?P<slot>[0-9A-F]{8}) Q(?P<queue>[0-9A-F]{8}))?$")
 
 
 def parse_shape_diag(line: str) -> tuple[int, int, str, int | str | None] | None:
@@ -165,6 +166,14 @@ def parse_shape_diag(line: str) -> tuple[int, int, str, int | str | None] | None
     reason = match["reason"]
     decoded = None if reason is None else ("?" if reason == "?" else int(reason, 16))
     return int(match["cnt"]), int(match["ov"], 16), match["fault"], decoded
+
+
+def parse_shape_load(line: str) -> tuple[int, int] | None:
+    """Return both complete load counters from a new-format status line."""
+    match = SHAPE_DIAG_RE.fullmatch(line)
+    if match is None or match["reason"] is None or match["slot"] is None:
+        return None
+    return int(match["slot"], 16), int(match["queue"], 16)
 
 # 状态行里 CAM 组的已知含义 (见 rtl/cam/piv2_config.v 的寄存器表)
 CAM_HINT = "77=AGAIN 0x0157   75/76=曝光 0x015A/B   71=帧长 0x0160"
@@ -245,6 +254,7 @@ class Tuner:
         self.port_map = {}
         self._connection_epoch = 0
         self._prev_diag_ov = None
+        self._prev_diag_load = None
 
         self.vars = {}            # key -> IntVar: 本机当前值(唯一权威副本)
         self.scales = {}          # key -> tk.Scale: 拖动滑块
@@ -377,6 +387,14 @@ class Tuner:
         for key in ("cnt", "ov", "fault", "reason"):
             label = ttk.Label(diag, text="--", font=("Consolas", 10, "bold"))
             label.pack(side="left", padx=(10, 10))
+            self.diag_labels[key] = label
+
+        load_diag = ttk.Frame(self.root, padding=(10, 0, 10, 6))
+        load_diag.pack(fill="x")
+        ttk.Label(load_diag, text="负载计数（只读）:").pack(side="left")
+        for key in ("slot", "queue"):
+            label = ttk.Label(load_diag, text="--", font=("Consolas", 10, "bold"))
+            label.pack(side="left", padx=(10, 20))
             self.diag_labels[key] = label
 
         box = ttk.Frame(self.root, padding=(10, 0, 10, 10))
@@ -567,14 +585,37 @@ class Tuner:
             self.status.set("已连接, 板端与滑块一致 (%s)" % time.strftime("%H:%M:%S"))
         self.count_lbl.configure(text="最近回读: " + " ".join(
             "%s%s" % (p["cmd"], vals.get(p["key"], "-")) for p in PARAMS))
-        self._render_diag(parse_shape_diag(line))
+        diag = parse_shape_diag(line)
+        self._render_diag(diag)
+        self._render_load(parse_shape_load(line) if diag is not None and diag[2] != "?" else None)
 
     def _reset_diag(self):
         self._prev_diag_ov = None
+        self._prev_diag_load = None
         for key, label in self.diag_labels.items():
             label.configure(text={"cnt": "CNT --", "ov": "OV --", "fault": "F --",
-                                  "reason": "R --"}[key],
+                                  "reason": "R --", "slot": "S --", "queue": "Q --"}[key],
                             foreground="#888")
+
+    def _render_load(self, load):
+        if load is None:
+            self._prev_diag_load = None
+            self.diag_labels["slot"].configure(text="S --", foreground="#888")
+            self.diag_labels["queue"].configure(text="Q --", foreground="#888")
+            return
+        slot, queue_count = load
+        now = time.monotonic()
+        previous = self._prev_diag_load
+        fresh = (previous is not None and 0.0 <= now - previous[0] <= 5.0 and
+                 slot >= previous[1] and queue_count >= previous[2])
+        slot_text = "S %08X" % slot
+        queue_text = "Q %08X" % queue_count
+        if fresh:
+            slot_text += " (+%d)" % (slot - previous[1])
+            queue_text += " (+%d)" % (queue_count - previous[2])
+        self.diag_labels["slot"].configure(text=slot_text, foreground="#555")
+        self.diag_labels["queue"].configure(text=queue_text, foreground="#555")
+        self._prev_diag_load = (now, slot, queue_count)
 
     def _render_diag(self, diag):
         if diag is None:

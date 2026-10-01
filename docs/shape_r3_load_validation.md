@@ -30,3 +30,10 @@
 - 红：`tb_alg_tel_shp` 因旧遥测 RTL 缺少 `i_diag_slot_drop_total/i_diag_fifo_full_total` 等报 7 处 elaboration 错误；`tb_alg_cfg_uart` 同理报 4 处，两者均退出码 1。
 - 绿：`tb_alg_tel_shp` 21 项检查通过，旧可见前缀保持、`F?` 与 `OVFFFF` 行保留新后缀、发送中变动计数不撕裂，后续行整组变为 `S89ABCDEF Q01234567`；`tb_alg_cfg_uart` 68 项检查通过，旧命令回读和 `S00000000 Q00000000` 后缀正常。两台均退出码 0，输出 `SHAPE_TEST_PASS`。
 - 状态行现在固定 148 字节（含索引 147 的唯一 LF）；`0..126` 与旧格式一致，`127..146` 为 ` Sxxxxxxxx Qxxxxxxxx`。
+
+## Task 5：调参界面只读显示
+
+- 改前快照：`D:\FPGA_Project\_backups\20261001_230552_pre-shape-r3-load-task5`，验证结果为 `RESULT: BACKUP VERIFIED RESTORABLE`。
+- 红：`python tools/smoke_alg_tuner.py` 在新行 `S/Q` 解析断言处失败，旧正则尚不接受 148 字节行，退出码 1。
+- 绿：相同冒烟测试退出码 0，结尾 `SMOKE OK`。验证旧四元组接口、新二元组解析、旧/残缺行与 `F?` 隐藏计数、5 秒内差分、超过 5 秒及计数下降不显示虚假增量、断线重连后不沿用旧基准；原滑块与命令检查保持通过。
+- 此项是离线 Tk/假串口测试，**不是** COM5 实机通信或屏幕肉眼验收。

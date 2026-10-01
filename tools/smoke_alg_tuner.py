@@ -19,6 +19,12 @@ LEGACY_SHAPE_LINE = (
     "GF0400 BRG2 CAM0000=FF SHP1 SZ024 FL875 BX4 AR050")
 OLD_SHAPE_LINE = LEGACY_SHAPE_LINE + " CNT005 OV000A F1"
 NEW_SHAPE_LINE = OLD_SHAPE_LINE + " R5"
+LOAD_SHAPE_LINE = NEW_SHAPE_LINE + " S00000010 Q00000020"
+assert m.parse_shape_diag(LOAD_SHAPE_LINE) == (5, 10, "1", 5)
+assert m.parse_shape_load(LOAD_SHAPE_LINE) == (16, 32)
+assert m.parse_shape_load(NEW_SHAPE_LINE) is None
+assert m.parse_shape_load(LOAD_SHAPE_LINE[:-1]) is None
+assert m.parse_shape_load(LOAD_SHAPE_LINE + " extra") is None
 assert m.parse_shape_diag(NEW_SHAPE_LINE) == (5, 10, "1", 5)
 assert m.parse_shape_diag(OLD_SHAPE_LINE) == (5, 10, "1", None)
 assert m.parse_shape_diag(LEGACY_SHAPE_LINE) is None
@@ -29,7 +35,7 @@ assert m.parse_shape_diag(NEW_SHAPE_LINE + " garbage") is None
 root = tk.Tk()
 root.withdraw()
 t = m.Tuner(root)
-assert set(t.diag_labels) == {"cnt", "ov", "fault", "reason"}
+assert set(t.diag_labels) == {"cnt", "ov", "fault", "reason", "slot", "queue"}
 assert all(label.cget("text").endswith("--") for label in t.diag_labels.values())
 
 t._on_line("M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1")
@@ -120,6 +126,42 @@ assert "旧位流" in t.diag_labels["reason"].cget("text")
 t._on_line(LEGACY_SHAPE_LINE)
 assert all(label.cget("text").endswith("--") for label in t.diag_labels.values())
 
+# Read-only cumulative S/Q: deltas require two fresh, monotonic samples in
+# one connection. Old/partial/F? lines must hide both counts and rebase.
+_real_monotonic = m.time.monotonic
+_clock = [100.0]
+m.time.monotonic = lambda: _clock[0]
+try:
+    t._on_line(LOAD_SHAPE_LINE)
+    assert "00000010" in t.diag_labels["slot"].cget("text")
+    assert "00000020" in t.diag_labels["queue"].cget("text")
+    assert "+" not in t.diag_labels["slot"].cget("text")
+    _clock[0] = 101.0
+    t._on_line(NEW_SHAPE_LINE + " S00000013 Q00000022")
+    assert "+3" in t.diag_labels["slot"].cget("text")
+    assert "+2" in t.diag_labels["queue"].cget("text")
+    _clock[0] = 107.0
+    t._on_line(NEW_SHAPE_LINE + " S00000014 Q00000023")
+    assert "+" not in t.diag_labels["slot"].cget("text")
+    assert "+" not in t.diag_labels["queue"].cget("text")
+    _clock[0] = 108.0
+    t._on_line(NEW_SHAPE_LINE + " S00000005 Q00000001")
+    assert "+" not in t.diag_labels["slot"].cget("text")
+    assert "+" not in t.diag_labels["queue"].cget("text")
+    _clock[0] = 109.0
+    t._on_line(NEW_SHAPE_LINE + " S00000006 Q00000002")
+    assert "+1" in t.diag_labels["slot"].cget("text")
+    assert "+1" in t.diag_labels["queue"].cget("text")
+    t._on_line(NEW_SHAPE_LINE.replace("F1 R5", "F? R?") + " S00000007 Q00000003")
+    assert t.diag_labels["slot"].cget("text").endswith("--")
+    assert t.diag_labels["queue"].cget("text").endswith("--")
+    t._on_line(LOAD_SHAPE_LINE[:-1])
+    assert t.diag_labels["slot"].cget("text").endswith("--")
+    t._on_line(NEW_SHAPE_LINE)
+    assert t.diag_labels["slot"].cget("text").endswith("--")
+finally:
+    m.time.monotonic = _real_monotonic
+
 # 命令下发: 记录写进假串口, 确认滑块拖出来的就是 "P2" / "F400"
 class _FakeSer(object):
     def __init__(self):
@@ -200,7 +242,7 @@ print("cmds after edit ->", t.ser.written)
 assert "T1001" in t.ser.written and "H230" in t.ser.written, t.ser.written
 assert "L255" in t.ser.written and "M1" in t.ser.written, t.ser.written
 t.ser = None
-t._on_line(NEW_SHAPE_LINE)
+t._on_line(LOAD_SHAPE_LINE)
 old_epoch = t._connection_epoch
 t.disconnect()
 assert all(label.cget("text").endswith("--") for label in t.diag_labels.values())
@@ -214,8 +256,9 @@ t._read_loop = lambda *args: None
 t.connect()
 t._poll()
 assert all(label.cget("text").endswith("--") for label in t.diag_labels.values())
-t._on_line(NEW_SHAPE_LINE)
+t._on_line(LOAD_SHAPE_LINE)
 assert "005" in t.diag_labels["cnt"].cget("text")
+assert "+" not in t.diag_labels["slot"].cget("text")
 failed_epoch = t._connection_epoch
 t.rx_queue.put(("ERR", "unplugged", failed_epoch))
 t.rx_queue.put(("LINE", NEW_SHAPE_LINE, failed_epoch))
