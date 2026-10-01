@@ -25,6 +25,8 @@ module shp_summary #(
  reg [25:0] memory_data;
  reg [10:0] ra,wa;reg re,we;reg [25:0] wd;
  reg visible_read;
+ wire [7:0] span_strip_index=8'd32+(y>>2);
+ wire [7:0] span_next_index=(index==8'd31)?span_strip_index:index+8'd1;
  wire [25:0] old_word=(op==2)?destination:memory_data;
  assign cmd_ready=(state==IDLE);
  assign rd_ready=(state==IDLE)&&!cmd_valid;
@@ -60,6 +62,12 @@ module shp_summary #(
    we=1;
    if(index<32)wd=take_point?candidate:old_word;
    else wd=strip_source[24]?{1'b0,1'b1,strip_left,strip_right}:old_word;
+   // For a span, the next record is independent of the current write.
+   // Prefetch it on the existing read port while committing this record.
+   // The first DST_READ primes memory_data; merge keeps its two-read path.
+   if(op==1 && index!=span_strip_index)begin
+    re=1;ra=slot*ENTRIES+span_next_index;
+   end
   end
  end
  // No asynchronous reset on RAM, so the array remains inferable as BRAM.
@@ -94,8 +102,8 @@ module shp_summary #(
     SRC_READ:begin destination<=memory_data;state<=WRITE;end
     WRITE:begin
      if(op==1)begin
-      if(index==32+(y>>2))state<=IDLE;
-      else begin index<=(index==31)?32+(y>>2):index+1'b1;state<=DST_READ;end
+      if(index==span_strip_index)state<=IDLE;
+      else begin index<=span_next_index;state<=WRITE;end
      end else if(index==ENTRIES-1)state<=IDLE;
      else begin index<=index+1'b1;state<=DST_READ;end
     end

@@ -12,6 +12,7 @@ module tb_shp_summary;
   .cmd_op(cmd_op),.cmd_slot(cmd_slot),.cmd_other(cmd_other),.cmd_x0(cmd_x0),.cmd_x1(cmd_x1),.cmd_y(cmd_y),
   .rd_req(rd_req),.rd_ready(rd_ready),.rd_slot(rd_slot),.rd_index(rd_index),.rd_valid(rd_valid),.rd_data(rd_data),.bad(bad));
  integer fd,n,phase,nops,bmask,op,slot,other,y,x0,x1,rc,i,j,errors=0,waited;
+ integer span_commands=0,max_span_cycles=0;
  reg [25:0] expected;
  task wait_idle;
  begin
@@ -35,6 +36,14 @@ module tb_shp_summary;
      repeat(2)@(negedge clk);rst_n=0;repeat(2)@(negedge clk);rst_n=1;
     end
     wait_idle();
+    // A normal span must release the command interface within 34 clocks:
+    // one initial synchronous read, then 32 extrema and one strip update.
+    // Golden-word checks below independently catch stale/wrong prefetch data.
+    if(op==1 && waited>0)begin
+     span_commands=span_commands+1;
+     if(waited>max_span_cycles)max_span_cycles=waited;
+     if(waited>34)$fatal(1,"FAIL summary span throughput: phase%0d slot%0d y%0d busy=%0d clocks, budget=34",phase,slot,y,waited);
+    end
    end
    if(bad!==bmask[7:0])begin $display("FAIL phase %0d bad %h expected %h",phase,bad,bmask);errors=errors+1;end
    for(i=0;i<8;i=i+1)for(j=0;j<212;j=j+1)begin
@@ -51,7 +60,8 @@ module tb_shp_summary;
   end
   $fclose(fd);
   if(errors)$fatal(1,"FAIL summary %0d errors",errors);
-  $display("SHAPE_TEST_PASS tb_shp_summary %0d phases",n);$finish_and_return(0);
+  if(span_commands==0)$fatal(1,"FAIL no normal span timing checked");
+  $display("SHAPE_TEST_PASS tb_shp_summary %0d phases %0d spans max_busy=%0d",n,span_commands,max_span_cycles);$finish_and_return(0);
  end
  initial begin #20000000;$fatal(1,"FAIL summary global timeout");end
 endmodule
