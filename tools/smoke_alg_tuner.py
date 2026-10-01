@@ -207,6 +207,21 @@ t._read_loop = lambda *args: None
 t.connect()
 t._poll()
 assert all(label.cget("text").endswith("--") for label in t.diag_labels.values())
+t._on_line(NEW_SHAPE_LINE)
+assert "005" in t.diag_labels["cnt"].cget("text")
+failed_epoch = t._connection_epoch
+t.rx_queue.put(("ERR", "unplugged", failed_epoch))
+t.rx_queue.put(("LINE", NEW_SHAPE_LINE, failed_epoch))
+t._poll()
+assert t.ser is None and t._connection_epoch > failed_epoch
+assert all(label.cget("text").endswith("--") for label in t.diag_labels.values())
+t.connect()
+t._on_line(NEW_SHAPE_LINE)
+closed_epoch = t._connection_epoch
+t.rx_queue.put(("CLOSED", "", closed_epoch))
+t._poll()
+assert t.ser is None and t._connection_epoch > closed_epoch
+assert all(label.cget("text").endswith("--") for label in t.diag_labels.values())
 t.disconnect()
 root.destroy()
 print("SMOKE OK")

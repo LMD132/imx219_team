@@ -173,7 +173,8 @@ def run_tb(name: str, extra_sources: list[str] = []) -> subprocess.CompletedProc
                ROOT / 'rtl/simple_dual_port_ram.v', ROOT / 'rtl/true_dual_port_ram.v']
     sources += [ROOT / 'rtl' / filename for filename in
                 ('uart_rx.v', 'uart_tx.v', 'alg_cfg_uart.v',
-                 'alg_cfg_sync.v', 'alg_cfg_telemetry.v')]
+                 'alg_cfg_sync.v', 'alg_cfg_telemetry.v',
+                 'alg_shape_diag_cdc.v')]
     sources += [Path(filename) for filename in extra_sources]
     compile_result = _invoke([str(bin_dir / 'iverilog.exe'), '-g2012', '-s', path.stem,
                               '-o', str(output), *map(str, dict.fromkeys(sources))], timeout)

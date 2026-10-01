@@ -505,8 +505,12 @@ class Tuner:
                     self._on_line(payload)
                 elif kind == "ERR":
                     self._log("读串口出错: %s" % payload)
+                    self.disconnect()
+                    self.status.set("串口读取失败: %s" % payload)
                 elif kind == "CLOSED":
                     self._log("串口读线程结束")
+                    self.disconnect()
+                    self.status.set("串口连接已断开")
         except queue.Empty:
             pass
 

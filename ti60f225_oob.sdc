@@ -83,7 +83,20 @@ set_input_delay -clock_fall -clock jtag_inst2_autodbg_TCK__ -min 0.620 [get_port
 
 # HSIO GPIO Constraints
 #########################
-create_clock -period <USER_PERIOD> [get_ports {CLK_25M}]
+create_clock -period 40.000 -name CLK_25M [get_ports {CLK_25M}]
+# CLK_25M is asynchronous to HDMI/video. Bound paths launched by only the
+# named handshake, held-payload and reset registers to 5 ns, rather than
+# cutting entire clock domains. Efinity also applies these source-pin rules
+# to same-domain fanout; that extra tightening passes in the timing report.
+# Other launch registers retain normal timing analysis.
+set_max_delay -from [get_pins {u_shape_diag_cdc/held_tuple[*]~FF|CLK}] -to [get_clocks {CLK_25M}] 5.000
+set_max_delay -from [get_pins {u_shape_diag_cdc/ack_toggle~FF|CLK}] -to [get_clocks {CLK_25M}] 5.000
+set_max_delay -from [get_pins {u_shape_diag_cdc/req_toggle~FF|CLK}] -to [get_clocks {hdmi_tx_slow_clk}] 5.000
+set_max_delay -from [get_pins {u_alg_cfg_sync/snap_bus[*]~FF|CLK}] -to [get_clocks {hdmi_tx_slow_clk}] 5.000
+set_max_delay -from [get_pins {u_alg_cfg_sync/snap_flg[*]~FF|CLK}] -to [get_clocks {hdmi_tx_slow_clk}] 5.000
+set_max_delay -from [get_pins {u_alg_cfg_sync/tog~FF|CLK}] -to [get_clocks {hdmi_tx_slow_clk}] 5.000
+# dly_cnt[26] supplies the existing asynchronous video reset to CLK_25M.
+set_max_delay -from [get_pins {dly_cnt[26]~FF|CLK}] -to [get_clocks {CLK_25M}] 5.000
 set_output_delay -clock sdram_clk -reference_pin [get_ports {sdram_clk~CLKOUT~218~95}] -max 0.302 [get_ports {ddr_addr[0]}]
 set_output_delay -clock sdram_clk -reference_pin [get_ports {sdram_clk~CLKOUT~218~95}] -min -0.140 [get_ports {ddr_addr[0]}]
 set_output_delay -clock sdram_clk -reference_pin [get_ports {sdram_clk~CLKOUT~218~36}] -max 0.302 [get_ports {ddr_addr[1]}]
