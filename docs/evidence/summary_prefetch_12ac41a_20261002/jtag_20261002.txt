@@ -1,0 +1,18 @@
+Date: 2026-10-02 (Asia/Shanghai)
+User instruction: program the delivered candidate over JTAG.
+Bitstream SHA-256 checked before download:
+6F49DD8542A26D7AC068294716254892DDA939A72F601FE19F82D41A2336BBE7
+Command: tools\flash_candidate.bat candidate_bitstreams\shape_summary_prefetch_12ac41a_20261002.bit
+Exit code: 0
+
+=== flashing: candidate_bitstreams\shape_summary_prefetch_12ac41a_20261002.bit ===
+=== board profile: Generic Board Profile Using FT4232H, JTAG @ 6 MHz ===
+Using board profile: 'Generic Board Profile Using FT4232H' for pinout connection
+Connecting to JTAG_TAP: efx_ti
+jtag programming started!
+JTAG Programming on ftdi://0x0403:0x6011:2:21/2
+Programming 'candidate_bitstreams\shape_summary_prefetch_12ac41a_20261002.bit' via JTAG at freq 6.0 MHz
+Device ID read from JTAG: 0x10660A79
+... finished with JTAG programming
+
+No Flash write, tuning-GUI control, COM-port sampling, or visual acceptance was performed.

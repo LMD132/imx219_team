@@ -87,7 +87,7 @@
 
 审查没有替代实板证据：真实摄像头 `R3` 的成因、漏检改善、HDMI 画面、Flash 和最佳回退版升级，均需相应后续测试或板主决定；JTAG 临时下载与 COM5 读数见上节。现有 IV 与组合环计时警告也使最终时序报告不能被称作全设计无条件签核。
 
-## 2026-10-02 局部吞吐优化：摘要记录预取（候选，未烧录）
+## 2026-10-02 局部吞吐优化：摘要记录预取（已 JTAG，待实板效果验收）
 
 ### 用户证据与本轮范围
 
@@ -114,10 +114,17 @@
 - 资源为 XLR `55188/60800`（较上一候选增加 390）、RAM `251/256`、DSP `154/160`。存储和 DSP 数量未增，均未超容量。
 - 00:50:54 生成的位流归档为 `candidate_bitstreams/shape_summary_prefetch_12ac41a_20261002.bit`，3,131,484 字节；原输出和归档 SHA-256 均为 `6F49DD8542A26D7AC068294716254892DDA939A72F601FE19F82D41A2336BBE7`。
 - [原始构建证据](evidence/summary_prefetch_12ac41a_20261002/)包含 `compile.txt`、`place.rpt`、`place.txt`、`route.txt` 和最终 `timing.rpt`，保留警告上下文，不依赖下次编译会覆盖的 `outflow/`。
-- `check_chain.py`、`check_ebridge.py` 均退出 0、`RESULT: PASS`，主视频流水与六组桥接对拍无像素差异。本轮没有运行或控制真实调参界面、COM 口、JTAG 或 Flash，也未晋升最佳回退版。
+- `check_chain.py`、`check_ebridge.py` 均退出 0、`RESULT: PASS`，主视频流水与六组桥接对拍无像素差异。编译归档阶段没有运行或控制真实调参界面、COM 口、JTAG 或 Flash，也未晋升最佳回退版；后续经授权的 JTAG 下载见下节。
 
 ### 完整形状回归结论
 
 `ALG_OSS_BIN=C:\iverilog\bin` 下执行 `python sim/algo/model/check_shape.py --all`，退出码 0，最终 `ALL PASS`：23 项 Python 测试、10,381 组几何黄金对拍、18 个形状 RTL 测试台全部通过，其中含 120 个流式旋转/尺寸样本、间距 2/4/8/16/32、连续/丢失帧边界、生命周期、无消隐、多目标和覆盖层回归。[最终 stdout 分块](evidence/summary_prefetch_12ac41a_20261002/regression_final_stdout.txt)已归档。
 
 原 `tb_shp_clutter` 与 `tb_shp_r3_pressure` 的过载拒识断言保持不变并通过；后者仍验证刻意过载时 F1/R3，**不是要求过载变成正常帧**。仿真、编译和独立代码审查通过，只说明此候选可进入下一步板测；不能宣称实拍 F1/R3、漏检、纸张透视或复杂背景已修复。
+
+### 2026-10-02 摘要预取候选 JTAG 下载
+
+- 板主在候选交付后明确要求“烧录”。下载前再次核验归档 SHA-256 为 `6F49DD8542A26D7AC068294716254892DDA939A72F601FE19F82D41A2336BBE7`，与本节构建记录一致；使用的是归档位流，不是可被后续编译覆盖的 `outflow/` 文件。
+- 运行 `tools\flash_candidate.bat candidate_bitstreams\shape_summary_prefetch_12ac41a_20261002.bit`，退出码 0；板载 FT4232H、6.0 MHz JTAG，器件 ID `0x10660A79`，日志以 `... finished with JTAG programming` 结束。[下载日志](evidence/summary_prefetch_12ac41a_20261002/jtag_20261002.txt)已保存。
+- **未写 Flash，未关闭/操作调参界面，未发送参数或读取 COM5，未做画面和形状识别验收。** 烧录会重新配置 FPGA；如板端参数回到默认值，由板主持有的界面手动恢复先前测试参数，再比较同一场景下的 F/R 与 S/Q 增量。尚不能认定实拍 R3 已修复，不晋升最佳回退版。
+- 更新本下载记录前，已创建并验证快照 `D:\FPGA_Project\_backups\20261002_005645_pre-prefetch-jtag-record`，592 个文件、35 个引用，未覆盖项 0，结果 `BACKUP VERIFIED RESTORABLE`。
