@@ -1,10 +1,10 @@
 `timescale 1ns/1ps
 //=============================================================================
-// tb_alg_tel_shp.v -- 形状识别调参链路自检 (S/Y/Z/W/A 命令 -> 108字节状态行)
+// tb_alg_tel_shp.v -- 形状识别调参链路自检 (S/Y/Z/W/A 命令 -> 125字节状态行)
 //
 // 验证两件事:
 //   1) alg_cfg_uart 对 S/Y/Z/W/A 的解析与限幅(8..255 / 800..990 / 1..6 / 5..100);
-//   2) 108 字节 telemetry 行里 SHP/SZ/FL/BX/AR 五个新字段的 BCD 数字
+//   2) 125 字节 telemetry 行保留旧前缀并追加 CNT/OV/F 诊断
 //      (含 255/990/100 这类三位的进位情况), 用独立采样器解码 o_txd.
 //
 // 跑法(工程根目录):
@@ -16,7 +16,7 @@
 module tb_alg_tel_shp;
 
     localparam integer BIT_NS = 8680;         // 115200 baud (25MHz 下 217 拍)
-    localparam integer LEN    = 108;
+    localparam integer LEN    = 125;
 
     integer errors = 0;
     integer checks = 0;
@@ -43,6 +43,15 @@ module tb_alg_tel_shp;
     wire [9:0]  c_cam_grp;
     wire        c_cam_rd;
     wire        txd;
+    reg [9:0]  diag_cnt = 10'd5;
+    reg [15:0] diag_ovf = 16'h000A;
+    reg        diag_fault = 1'b1;
+    reg        diag_frame_valid = 1'b1;
+    reg        diag_sample_valid = 1'b1;
+    reg        extra_update = 1'b0;
+    wire       diag_req;
+    integer    diag_req_count = 0;
+    always @(posedge clk25) if (diag_req) diag_req_count = diag_req_count + 1;
 
     uart_rx #(.CLK_HZ(25000000), .BAUD(115200)) u_rx (
         .clk(clk25), .rst_n(rst_n), .i_rxd(rx_line),
@@ -76,7 +85,11 @@ module tb_alg_tel_shp;
         .i_shp_en(c_shp_en), .i_shp_min(c_shp_min), .i_shp_fill(c_shp_fill),
         .i_shp_nbox(c_shp_nbox), .i_shp_area(c_shp_area),
         .i_cam_grp(c_cam_grp), .i_cam_val(8'hFF),
-        .i_update(c_commit), .o_txd(txd)
+        .i_update(c_commit | extra_update), .o_txd(txd),
+        .i_diag_cnt(diag_cnt), .i_diag_ovf(diag_ovf),
+        .i_diag_fault(diag_fault), .i_diag_frame_valid(diag_frame_valid),
+        .i_diag_sample_valid(diag_sample_valid), .i_diag_busy(1'b0),
+        .o_diag_req(diag_req)
     );
 
     //--------------------------------------------------------------- 激励
@@ -120,25 +133,27 @@ module tb_alg_tel_shp;
         end
     endtask
 
-    // 按行扫描: 每收到 LF 就把最近 108 字节和期望整行比对, 最多 6 行
+    // 按行扫描: 每收到 LF 就把最近 125 字节和期望整行比对, 最多 6 行
     reg [7:0] win [0:LEN-1];
-    integer kk, nbyt, nline;
+    integer kk, nbyt, nline, line_bytes;
     reg [7:0] cc;
     reg matched;
     task expect_line; input [8*LEN-1:0] exp;
         begin
             matched = 1'b0;
-            nbyt = 0; nline = 0;
+            nbyt = 0; nline = 0; line_bytes = 0;
             while (!matched && (nline < 6)) begin
                 uart_get_byte(cc);
                 for (kk = 0; kk < LEN-1; kk = kk + 1) win[kk] = win[kk+1];
                 win[LEN-1] = cc;
                 nbyt = nbyt + 1;
+                line_bytes = line_bytes + 1;
                 if (cc == 8'h0A) begin
                     nline = nline + 1;
-                    matched = 1'b1;
+                    matched = (line_bytes == LEN);
                     for (kk = 0; kk < LEN; kk = kk + 1)
                         if (win[kk] !== exp[8*(LEN-1-kk) +: 8]) matched = 1'b0;
+                    line_bytes = 0;
                 end
             end
             checks = checks + 1;
@@ -159,15 +174,17 @@ module tb_alg_tel_shp;
         end
     endtask
 
-    reg [8*LEN-1:0] exp_default, exp_final;
+    reg [8*LEN-1:0] exp_default, exp_final, exp_wait;
 
     initial begin
         // 上电默认值整行 (含 5 个形状字段的默认 24/875/4/50)
         exp_default = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0000=FF",
-                       " SHP1 SZ024 FL875 BX4 AR050", 8'h0A};
+                       " SHP1 SZ024 FL875 BX4 AR050 CNT005 OV000A F1", 8'h0A};
+        exp_wait    = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0000=FF",
+                       " SHP1 SZ024 FL875 BX4 AR050 CNT000 OVFFFF F?", 8'h0A};
         // 极端值整行: SZ255 FL990 BX6 AR100 (BCD 进位的情况)
         exp_final   = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0000=FF",
-                       " SHP1 SZ255 FL990 BX6 AR100", 8'h0A};
+                       " SHP1 SZ255 FL990 BX6 AR100 CNT005 OV000A F1", 8'h0A};
 
         for (kk = 0; kk < LEN; kk = kk + 1) win[kk] = 8'h00;
 
@@ -182,6 +199,28 @@ module tb_alg_tel_shp;
         chk12("shp_fill_def", {2'b0,  c_shp_fill}, 12'd875);
         chk12("shp_nbox_def", {9'b0,  c_shp_nbox}, 12'd4);
         chk12("shp_area_def", {5'b0,  c_shp_area}, 12'd50);
+        expect_line(exp_default);
+        if (diag_req_count < 1) begin
+            errors = errors + 1;
+            $display("FAIL telemetry never requests the next diagnostic snapshot");
+        end
+
+        // A valid CDC sample with no committed video frame must say F?,
+        // without losing the independently sampled cumulative OV value.
+        diag_cnt = 10'd0;
+        diag_ovf = 16'hFFFF;
+        diag_fault = 1'b0;
+        diag_frame_valid = 1'b0;
+        expect_line(exp_wait);
+        diag_cnt = 10'd5;
+        diag_ovf = 16'h000A;
+        diag_fault = 1'b1;
+        diag_frame_valid = 1'b1;
+        // Back-to-back command events while UART is still sending may
+        // request a later line, but must not duplicate bytes within a line.
+        @(negedge clk25); extra_update = 1'b1;
+        repeat (200) @(negedge clk25);
+        extra_update = 1'b0;
         expect_line(exp_default);
 
         $display("--- 2. 开关 S0 / S1");

@@ -71,12 +71,19 @@ module alg_cfg_telemetry #(
     input  wire [9:0]  i_cam_grp,  // X<grp> read-back address (decimal)
     input  wire [7:0]  i_cam_val,  // byte returned by that read-back (hex)
     input  wire        i_update,    // push a fresh line as soon as one is free
+    input  wire [9:0]  i_diag_cnt,
+    input  wire [15:0] i_diag_ovf,
+    input  wire        i_diag_fault,
+    input  wire        i_diag_frame_valid,
+    input  wire        i_diag_sample_valid,
+    input  wire        i_diag_busy,
+    output reg         o_diag_req,
     output wire        o_txd
 );
 
-    // 108 字节: 前 80 字节与原 82 字节行逐字节相同(80/81 原是两个 LF, 现在只有
-    // 行尾一个 LF, 新增 5 个形状识别字段接在 CAM 后面, 旧上位机正则靠可选组跳过)。
-    localparam [6:0] MSG_LEN = 7'd108;
+    // The former 107 visible bytes are unchanged. Append 17 diagnostic
+    // bytes before the sole LF, retaining the legacy parser's coordinates.
+    localparam [6:0] MSG_LEN = 7'd125;
     localparam integer GAP_CLKS = (CLK_HZ / 1000) * PERIOD_MS;
 
     // ------------------------------------------------------------------ text
@@ -105,6 +112,10 @@ module alg_cfg_telemetry #(
         input [15:0] sz_bcd;
         input [15:0] fl_bcd;
         input [15:0] ar_bcd;
+        input [15:0] cnt_bcd;
+        input [15:0] diag_ovf;
+        input        diag_fault;
+        input        diag_frame_valid;
         input [7:0]  cam_val;
         input [1:0]  mode;
         input [1:0]  disp;
@@ -227,7 +238,24 @@ module alg_cfg_telemetry #(
                 7'd104: msg_byte = digit_of(ar_bcd[11:8]);
                 7'd105: msg_byte = digit_of(ar_bcd[7:4]);
                 7'd106: msg_byte = digit_of(ar_bcd[3:0]);
-                default: msg_byte = 8'h0A; // LF (107 = LF)
+                7'd107: msg_byte = " ";
+                7'd108: msg_byte = "C";
+                7'd109: msg_byte = "N";
+                7'd110: msg_byte = "T";
+                7'd111: msg_byte = digit_of(cnt_bcd[11:8]);
+                7'd112: msg_byte = digit_of(cnt_bcd[7:4]);
+                7'd113: msg_byte = digit_of(cnt_bcd[3:0]);
+                7'd114: msg_byte = " ";
+                7'd115: msg_byte = "O";
+                7'd116: msg_byte = "V";
+                7'd117: msg_byte = hex_of(diag_ovf[15:12]);
+                7'd118: msg_byte = hex_of(diag_ovf[11:8]);
+                7'd119: msg_byte = hex_of(diag_ovf[7:4]);
+                7'd120: msg_byte = hex_of(diag_ovf[3:0]);
+                7'd121: msg_byte = " ";
+                7'd122: msg_byte = "F";
+                7'd123: msg_byte = diag_frame_valid ? digit_of({3'b0, diag_fault}) : "?";
+                default: msg_byte = 8'h0A; // LF at 124
             endcase
         end
     endfunction
@@ -263,16 +291,19 @@ module alg_cfg_telemetry #(
     reg [2:0]  d_shp_nbox;
     reg [6:0]  d_shp_area;
     reg [15:0] t_bcd, lo_bcd, hi_bcd, gf_bcd, cam_bcd;
-    reg [15:0] sz_bcd, fl_bcd, ar_bcd;
+    reg [15:0] sz_bcd, fl_bcd, ar_bcd, cnt_bcd;
+    reg [9:0]  d_diag_cnt;
+    reg [15:0] d_diag_ovf;
+    reg        d_diag_fault, d_diag_frame_valid;
     reg [9:0]  d_cam_grp;
     reg [7:0]  d_cam_val;
 
-    // One double-dabble engine, used eight times per line (t, lo, hi, the
+    // One double-dabble engine, used nine times per line (t, lo, hi, the
     // guided-filter eps, the read-back group index, and the three shape
-    // fields).  conv_sel counts 0..7 (3 bits 刚好装下 8 个值)。
+    // fields, and accepted-shape count).  conv_sel counts 0..8.
     reg [15:0] bcd_reg;
     reg [10:0] bin_reg;
-    reg [2:0]  conv_sel;
+    reg [3:0]  conv_sel;
     reg [3:0]  conv_cnt;
 
     wire [3:0] adj3 = (bcd_reg[15:12] >= 4'd5) ? 4'd3 : 4'd0;
@@ -303,6 +334,7 @@ module alg_cfg_telemetry #(
             tx_valid  <= 1'b0;
             tx_byte   <= 8'h00;
             pending   <= 1'b1;      // push the power-on values straight away
+            o_diag_req <= 1'b0;
             d_mode    <= 2'd0;
             d_disp    <= 2'd0;
             d_t       <= 11'd0;
@@ -329,14 +361,20 @@ module alg_cfg_telemetry #(
             sz_bcd    <= 16'd0;
             fl_bcd    <= 16'd0;
             ar_bcd    <= 16'd0;
+            cnt_bcd   <= 16'd0;
+            d_diag_cnt <= 10'd0;
+            d_diag_ovf <= 16'd0;
+            d_diag_fault <= 1'b0;
+            d_diag_frame_valid <= 1'b0;
             d_cam_grp <= 10'd0;
             d_cam_val <= 8'hFF;   // piv2_config's read register resets to FF
             bcd_reg   <= 16'd0;
             bin_reg   <= 11'd0;
-            conv_sel  <= 3'd0;
+            conv_sel  <= 4'd0;
             conv_cnt  <= 4'd0;
         end else begin
             tx_valid <= 1'b0;       // i_valid is a one-clock pulse
+            o_diag_req <= 1'b0;
 
             if (i_update) pending <= 1'b1;
 
@@ -368,6 +406,12 @@ module alg_cfg_telemetry #(
                             d_shp_area<= i_shp_area;
                             d_cam_grp<= i_cam_grp;
                             d_cam_val<= i_cam_val;
+                            d_diag_cnt <= i_diag_sample_valid ?
+                                          ((i_diag_cnt > 10'd999) ? 10'd999 : i_diag_cnt) : 10'd0;
+                            d_diag_ovf <= i_diag_sample_valid ? i_diag_ovf : 16'd0;
+                            d_diag_fault <= i_diag_fault;
+                            d_diag_frame_valid <= i_diag_sample_valid && i_diag_frame_valid;
+                            if (!i_diag_busy) o_diag_req <= 1'b1;
                             state   <= ST_SNAP;
                         end else begin
                             gap_cnt <= gap_cnt + 32'd1;
@@ -379,7 +423,7 @@ module alg_cfg_telemetry #(
                 ST_SNAP: begin
                     bcd_reg  <= 16'd0;
                     bin_reg  <= d_t;
-                    conv_sel <= 3'd0;
+                    conv_sel <= 4'd0;
                     conv_cnt <= 4'd0;
                     state    <= ST_CONV;
                 end
@@ -395,20 +439,21 @@ module alg_cfg_telemetry #(
                 // bcd_reg settles one clock after the last shift.
                 ST_LATCH: begin
                     case (conv_sel)
-                        3'd0:    t_bcd   <= bcd_reg;
-                        3'd1:    lo_bcd  <= bcd_reg;
-                        3'd2:    hi_bcd  <= bcd_reg;
-                        3'd3:    gf_bcd  <= bcd_reg;
-                        3'd4:    cam_bcd <= bcd_reg;
-                        3'd5:    sz_bcd  <= bcd_reg;
-                        3'd6:    fl_bcd  <= bcd_reg;
-                        default: ar_bcd  <= bcd_reg;
+                        4'd0:    t_bcd   <= bcd_reg;
+                        4'd1:    lo_bcd  <= bcd_reg;
+                        4'd2:    hi_bcd  <= bcd_reg;
+                        4'd3:    gf_bcd  <= bcd_reg;
+                        4'd4:    cam_bcd <= bcd_reg;
+                        4'd5:    sz_bcd  <= bcd_reg;
+                        4'd6:    fl_bcd  <= bcd_reg;
+                        4'd7:    ar_bcd  <= bcd_reg;
+                        default: cnt_bcd <= bcd_reg;
                     endcase
-                    if (conv_sel == 3'd7) begin
+                    if (conv_sel == 4'd8) begin
                         char_idx <= 7'd0;
                         state    <= ST_LOAD;
                     end else begin
-                        conv_sel <= conv_sel + 3'd1;
+                        conv_sel <= conv_sel + 4'd1;
                         bcd_reg  <= 16'd0;
                         bin_reg  <= (conv_sel == 3'd0) ? d_lo :
                                     (conv_sel == 3'd1) ? d_hi :
@@ -416,7 +461,8 @@ module alg_cfg_telemetry #(
                                     (conv_sel == 3'd3) ? {1'b0, d_cam_grp} :
                                     (conv_sel == 3'd4) ? {3'b0,  d_shp_min} :
                                     (conv_sel == 3'd5) ? {1'b0,  d_shp_fill} :
-                                                         {4'b0,  d_shp_area};
+                                    (conv_sel == 3'd6) ? {4'b0,  d_shp_area} :
+                                                         {1'b0,  d_diag_cnt};
                         conv_cnt <= 4'd0;
                         state    <= ST_CONV;
                     end
@@ -427,6 +473,8 @@ module alg_cfg_telemetry #(
                     tx_valid <= 1'b1;
                     tx_byte  <= msg_byte(char_idx, t_bcd, lo_bcd, hi_bcd,
                                          gf_bcd, cam_bcd, sz_bcd, fl_bcd, ar_bcd,
+                                         cnt_bcd, d_diag_ovf, d_diag_fault,
+                                         d_diag_frame_valid,
                                          d_cam_val,
                                          d_mode, d_disp, d_med, d_gau, d_iso, d_ovc,
                                          d_eps, d_epf, d_brg, d_shp, d_shp_nbox);
