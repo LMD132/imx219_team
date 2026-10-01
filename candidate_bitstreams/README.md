@@ -1,6 +1,6 @@
 # 候选位流归档记录
 
-## 2026-10-01 R3 负载计数候选（未上板）
+## 2026-10-01 R3 负载计数候选（已 JTAG 临时下载，待实板验收）
 
 | 项 | 值 |
 | --- | --- |
@@ -11,7 +11,7 @@
 | 构建与时序 | Efinity 2026.1.132.4.5 的 map/interface/pnr/pgm 全 PASS，命令退出 0；最终报告 19 组时钟关系 setup/hold 均非负，最小 `+0.091/+0.028 ns`，342 条报告路径无负 slack；XLR `54798/60800`、RAM `251/256`、DSP `154/160`。保留 IV 和组合环计时警告，不据此宣称全设计无条件签核 |
 | 离线验证 | 23 项 Python 测试、10,381 组几何对拍、17 个形状 RTL 台 `ALL PASS`；CDC 20 元组、遥测 21 项、配置串口 68 项、主视频链与桥接对拍、GUI 冒烟均通过。新 32 位计数及 96 位 CDC 快照在综合网表中存在 |
 | 功能 | 独立累计槽位丢弃 `S` 与 FIFO 满游程丢弃 `Q`，148 字节状态行与界面只读增量；保留旧 `CNT/OV/F/R` 语义。精确 R3 压力仿真通过，**尚未证明实拍 R3 根因或修复漏检** |
-| 状态 | **未上板：未 JTAG 下载、未写 Flash、未做真实串口或屏幕验收**。实板下一步须在同一阈值/场景下采集连续 `S/Q/F/R`。本候选不覆盖 `known_good/` 或最佳回退版，详见 `docs/shape_r3_load_validation.md` |
+| 状态 | **2026-10-02 经板主明确同意，运行 `tools/flash_candidate.bat` 以 6.0 MHz JTAG 临时下载此归档位流**：命令退出码 0，读取器件 ID `0x10660A79`，日志显示 `jtag programming started!`、`Programming 'candidate_bitstreams\shape_r3_load_72380a3_20261001.bit' via JTAG at freq 6.0 MHz` 及 `finished with JTAG programming`。随后 COM5 调参界面已连接，读到 `S0000217C Q0001AAB7`，约 25 秒后两者增量仍为 `+0`，`F0/R0`；当前摄像头场景未知。**未写 Flash、未做屏幕肉眼／形状识别效果验收**；这些读数不证明实拍 R3 根因或漏检已修复。实板下一步须在同一阈值/场景下采集连续 `S/Q/F/R`。本候选不覆盖 `known_good/` 或最佳回退版，详见 `docs/shape_r3_load_validation.md` |
 
 ## 2026-10-01 故障来源细分候选（已 JTAG，待实板诊断）
 

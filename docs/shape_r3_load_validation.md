@@ -1,6 +1,6 @@
 # R3 负载诊断验证记录
 
-本记录属于 `shape-detect` 候选版；代码路径验证不等于实板验收。本轮不烧录 JTAG 或 Flash，不改变 `known_good/`。
+本记录属于 `shape-detect` 候选版；代码路径验证、JTAG 下载和当前 COM5 读数均不等于实板肉眼／识别验收。2026-10-02 已经板主同意完成 JTAG 临时下载；未写 Flash，不改变 `known_good/`。
 
 ## Task 1：事件计数器
 
@@ -60,7 +60,14 @@
 - `outflow/ti60f225_oob.place.rpt` 资源：XLR `54798/60800`（90.13%）、RAM `251/256`（98.05%）、DSP `154/160`（96.25%），均未超容量。
 - 本次 `outflow/ti60f225_oob.map.v` 明确包含像素域及 UART 域两个计数器的 bit 31 寄存器，及 `u_shape_diag_cdc/held_tuple[95:0]`，确认完整新计数链进入综合。
 - 23:37:50 生成位流，归档为 `candidate_bitstreams/shape_r3_load_72380a3_20261001.bit`，3,116,013 字节；归档与原输出 SHA-256 均为 `C671A57EB3E87502DA1C428ED50C416CB3B9C66902854E18B98AA0D0689C3211`。
-- **未上板**：本轮未执行 JTAG/Flash，也未做 COM5 实机或画面验收，`known_good/` 与最佳回退版未修改。
+- **构建归档当时未上板**：2026-10-01 本轮构建归档未执行 JTAG/Flash，也未做 COM5 实机或画面验收，`known_good/` 与最佳回退版未修改。后续 JTAG 下载记录见下节。
+
+## 2026-10-02 JTAG 临时下载
+
+- 板主明确同意下载 `candidate_bitstreams/shape_r3_load_72380a3_20261001.bit`；归档位流的 SHA-256 核对为 `C671A57EB3E87502DA1C428ED50C416CB3B9C66902854E18B98AA0D0689C3211`。
+- 实际运行 `tools/flash_candidate.bat`，命令退出码 0。日志显示 `jtag programming started!`、`Programming 'candidate_bitstreams\shape_r3_load_72380a3_20261001.bit' via JTAG at freq 6.0 MHz`、`Device ID read from JTAG: 0x10660A79`，并以 `finished with JTAG programming` 结束。
+- JTAG 后调参界面重新连接 COM5，显示“已连接，板端与滑块一致”。板端读数为负载计数 `S 0000217C (+0)`、`Q 0001AAB7 (+0)`，形状诊断 `CNT 000`、`OV FFFF`、`F0`、`R0`；约 25 秒后复查，`S/Q` 仍为 `+0`，`F0/R0` 未变。该次界面记录的参数为 `M2 T24 L21 H58 E0 P2 F400 N1 G0 I1 B2 D0 C1 S1 Y24 Z875 W4 A50`。
+- **未写 Flash，未做屏幕肉眼或形状识别效果验收**。当前摄像头场景未知；这组 COM5 读数不能判定 A4 图形识别，也不能据此认定实拍 `R3` 根因或漏检已修复，或把此候选提升为最佳回退版。
 
 ## 后续实板读数的解释
 
@@ -78,4 +85,4 @@
 
 有两项非阻断的后续改进：`sim/algo/tb_alg_tel_shp.v` 的 `expect_line` 可允许六次尝试内出现不匹配的完整中间行，今后应逐条验证完整状态行；`tools/alg_tuner.py` 的新行只写 `S/Q`，今后可直接标明它们分别是槽位丢弃和 FIFO 满游程丢弃，`(+n)` 是样本间增量。本轮只记录，不在已完成门禁的候选上追加功能改动。
 
-审查没有替代实板证据：真实摄像头 `R3` 的成因、漏检改善、物理串口、HDMI、JTAG/Flash 和最佳回退版升级，均需相应后续测试或板主决定。现有 IV 与组合环计时警告也使最终时序报告不能被称作全设计无条件签核。
+审查没有替代实板证据：真实摄像头 `R3` 的成因、漏检改善、HDMI 画面、Flash 和最佳回退版升级，均需相应后续测试或板主决定；JTAG 临时下载与 COM5 读数见上节。现有 IV 与组合环计时警告也使最终时序报告不能被称作全设计无条件签核。
