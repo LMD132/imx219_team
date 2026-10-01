@@ -8,3 +8,11 @@
 - 红：`python sim/algo/model/check_shape.py --rtl tb_shp_load_counts` 与 `--rtl tb_shp_clutter` 均退出 1；旧 `shp_detect` 缺少 `o_slot_drop_total` 和 `o_fifo_full_total`，Icarus 对每台报告 4 个 elaboration errors。
 - 绿：两台在新增端口与逐事件计数后均返回 `SHAPE_TEST_PASS`。`tb_shp_load_counts` 包含 VS/游程同拍但 FIFO 不满、FIFO 满、形状开关与硬件复位；记录 `S=1 Q=45 VS_NONFULL=1 OV=47`，复位后两计数为零。`tb_shp_clutter` 保留原 `R1` 识别断言，记录 `slot_drops=199 fifo_drops=0 reason=1 ovf=199`，并确认新计数相符。
 - 当前仅覆盖离线 RTL 仿真；尚未跨时钟、串口、GUI、综合或实板验证。
+
+## Task 2：完整 720p R3 压力场景
+
+- 改前快照：`D:\FPGA_Project\_backups\20261001_222244_pre-shape-r3-load-task2`，已显示 `RESULT: BACKUP VERIFIED RESTORABLE`。
+- 红：生产参数 `NB=8,FQ=24`、1280×720 有效区/1650×750 总时序，沿用八噪声场景；监视器给出 `S=199/199 Q=0/0 bad_marker=0/0 lost=0 pending=1 maxQ=23 CNT=0 F=1 R=1 OV=199`，精确 `R3` 门禁报错，退出码 1。
+- 绿：仅在测试刺激加入 y=100 的密集交替游程后，同一测试连续两次通过。每次监视器均为 `S=199/199 Q=369/369 bad_marker=1/1 lost=0 pending=1 maxQ=24 CNT=0 F=1 R=3 OV=568`；分子为新 RTL 计数，分母为独立逐拍监视器。最终帧边界被成功入队、读出，且无边界丢弃。该台已纳入 `check_shape.py --all`。
+- 总门禁：`python sim/algo/model/check_shape.py --all` 退出码 0，结尾 `ALL PASS`，其中包含 `SHAPE_TEST_PASS tb_shp_r3_pressure exact R3` 与原 `tb_shp_clutter` 的 `R1` 回归。
+- 这只证明 `R3` 路径可离线复现，不证明实板 `R3` 由 FIFO 满引起；实板仍须比较连续 `S/Q` 增量。
