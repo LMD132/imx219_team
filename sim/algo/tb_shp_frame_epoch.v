@@ -6,13 +6,20 @@ module tb_shp_frame_epoch;
  always #5 clk=~clk;
  wire [71:0] bx0,bx1;wire [77:0] by0,by1;
  wire [17:0] bcls;wire [5:0] bval;wire [9:0] cnt;wire [15:0] ovf;
+ wire [3:0] last_reason;
  shp_detect #(.W(256),.H(128)) dut(.clk(clk),.rst_n(rst_n),.cfg_en(1'b1),
   .cfg_min_size(8'd24),.cfg_max_boxes(3'd6),.cfg_fill_th(10'd875),
   .cfg_max_area(7'd50),.in_vs(in_vs),.in_de(in_de),.in_x(in_x),.in_y(in_y),.in_d(in_d),
   .o_bx0(bx0),.o_bx1(bx1),.o_by0(by0),.o_by1(by1),
-  .o_bcls(bcls),.o_bval(bval),.o_cnt(cnt),.o_ovf(ovf));
+  .o_bcls(bcls),.o_bval(bval),.o_cnt(cnt),.o_ovf(ovf),
+  .o_last_reason(last_reason));
  integer commits=0,cycles,k;
- always @(posedge clk) if(rst_n && dut.state==13) commits=commits+1;
+ reg [3:0] reason_at_commit[0:3];
+ always @(posedge clk) if(rst_n && dut.state==13)begin
+  commits=commits+1;
+  #1;
+  if(commits<=4)reason_at_commit[commits-1]=last_reason;
+ end
  task frame_edge;
  begin
   @(negedge clk);in_vs=1;
@@ -33,6 +40,9 @@ module tb_shp_frame_epoch;
   if(commits!=2)$fatal(1,"FAIL frame edges coalesced: commits=%0d",commits);
   if(ovf==0)$fatal(1,"FAIL missed-boundary deadline not reported");
   if(bval!=0||cnt!=0)$fatal(1,"FAIL late frame published labels");
+  $display("EPOCH queued-edge reasons=%h,%h",reason_at_commit[0],reason_at_commit[1]);
+  if(reason_at_commit[0]!==4'h4 || reason_at_commit[1]!==4'h2)
+   $fatal(1,"FAIL deadline/marked-frame source bits changed");
   // A boundary arriving while the queue is full must still cause an invalid
   // commit after queued spans drain, rather than vanishing entirely.
   @(negedge clk);rst_n=0;in_de=0;in_vs=0;in_d=0;
@@ -50,6 +60,8 @@ module tb_shp_frame_epoch;
    $fatal(1,"FAIL full-queue frame not invalidated ovf=%0d bval=%0h cnt=%0d",ovf,bval,cnt);
   if(dut.sync_lost!==1'b1)
    $fatal(1,"FAIL capture resumed without a real recovery boundary");
+  $display("EPOCH lost-boundary reason=%h",last_reason);
+  if(last_reason!==4'h8)$fatal(1,"FAIL lost-boundary source bit changed");
   for(k=0;k<8;k=k+1)begin
    @(negedge clk);in_x=20+k*2;in_y=70;in_de=1;in_d=8'hff;
    @(negedge clk);in_x=21+k*2;in_d=0;
@@ -92,6 +104,8 @@ module tb_shp_frame_epoch;
   cycles=0;
   while(commits<2 && cycles<100000)begin @(negedge clk);cycles=cycles+1;end
   if(commits!=2||bval!=0||cnt!=0)$fatal(1,"FAIL B partial frame published");
+  $display("EPOCH bad-marker reason=%h",last_reason);
+  if(last_reason!==4'h2)$fatal(1,"FAIL bad-marker source bit changed");
   $display("SHAPE_TEST_PASS tb_shp_frame_epoch boundaries and deadline");
   $finish_and_return(0);
  end

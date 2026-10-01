@@ -13,6 +13,7 @@ ALL_RTL = (
     'tb_shp_rot', 'tb_shp_detect', 'tb_shp_ring', 'tb_shp_tilt',
     'tb_shp_spacing', 'tb_shp_lifecycle', 'tb_shp_frame_epoch',
     'tb_shp_throughput', 'tb_shp_no_blank', 'tb_shp_stream_matrix',
+    'tb_shp_clutter',
     'tb_shp_overlay',
 )
 

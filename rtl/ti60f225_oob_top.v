@@ -1021,16 +1021,19 @@ end
 // clock. Either domain's reset invalidates the previously sampled tuple.
 wire [9:0]  w_shape_cnt_px, w_shape_cnt_uart;
 wire [15:0] w_shape_ovf_px, w_shape_ovf_uart;
+wire [3:0]  w_shape_reason_px, w_shape_reason_uart;
 wire        w_shape_fault_px, w_shape_frame_valid_px;
 wire        w_shape_fault_uart, w_shape_frame_valid_uart;
 wire        w_shape_sample_valid_uart, w_shape_diag_busy, w_shape_diag_req;
 alg_shape_diag_cdc u_shape_diag_cdc (
     .clk_src(hdmi_tx_slow_clk), .rst_src_n(vid_rst_n),
     .i_cnt(w_shape_cnt_px), .i_ovf(w_shape_ovf_px),
-    .i_fault(w_shape_fault_px), .i_frame_valid(w_shape_frame_valid_px),
+    .i_fault(w_shape_fault_px), .i_reason(w_shape_reason_px),
+    .i_frame_valid(w_shape_frame_valid_px),
     .clk_dst(CLK_25M), .rst_dst_n(w_arstn), .i_req(w_shape_diag_req),
     .o_cnt(w_shape_cnt_uart), .o_ovf(w_shape_ovf_uart),
-    .o_fault(w_shape_fault_uart), .o_frame_valid(w_shape_frame_valid_uart),
+    .o_fault(w_shape_fault_uart), .o_reason(w_shape_reason_uart),
+    .o_frame_valid(w_shape_frame_valid_uart),
     .o_sample_valid(w_shape_sample_valid_uart), .o_busy(w_shape_diag_busy)
 );
 
@@ -1065,6 +1068,7 @@ alg_cfg_telemetry #(
     .i_diag_cnt(w_shape_cnt_uart),
     .i_diag_ovf(w_shape_ovf_uart),
     .i_diag_fault(w_shape_fault_uart),
+    .i_diag_reason(w_shape_reason_uart),
     .i_diag_frame_valid(w_shape_frame_valid_uart),
     .i_diag_sample_valid(w_shape_sample_valid_uart),
     .i_diag_busy(w_shape_diag_busy),
@@ -1161,6 +1165,7 @@ alg_top #(
     .cfg_shp_area(w_px_shp_area),         // 最大 bbox 面积(占全屏%)
     .diag_cnt(w_shape_cnt_px), .diag_ovf(w_shape_ovf_px),
     .diag_last_fault(w_shape_fault_px),
+    .diag_last_reason(w_shape_reason_px),
     .diag_frame_valid(w_shape_frame_valid_px),
     .out_vs(edge_vs), .out_hs(edge_hs), .out_de(edge_de),
     .out_x(edge_x), .out_y(edge_y),

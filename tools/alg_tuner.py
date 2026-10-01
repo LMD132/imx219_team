@@ -64,6 +64,7 @@
            bbox 面积超过全屏该比例就丢弃(滤掉整片背景大块)。
 
 内部 o_ovf 已是饱和的识别处理异常计数（包括游程/FIFO和坏摘要），
+新128字节状态行增加最近帧来源码 R；旧125字节行仍可读但没有来源码。
 旧108字节串口状态行没有 OVF 字段；本调参台不虚构一个板端回读值。
 
 用法:  python tools/alg_tuner.py
@@ -152,15 +153,18 @@ TELEM_RE = re.compile(
 
 SHAPE_DIAG_RE = re.compile(
     r"^M[^\r\n]*\bAR\d{3} CNT(?P<cnt>\d{3}) "
-    r"OV(?P<ov>[0-9A-F]{4}) F(?P<fault>[01?])$")
+    r"OV(?P<ov>[0-9A-F]{4}) F(?P<fault>[01?])"
+    r"(?: R(?P<reason>[0-9A-F?]))?$")
 
 
-def parse_shape_diag(line: str) -> tuple[int, int, str] | None:
+def parse_shape_diag(line: str) -> tuple[int, int, str, int | str | None] | None:
     """Return a complete optional diagnostic suffix; legacy lines lack it."""
     match = SHAPE_DIAG_RE.fullmatch(line)
     if match is None:
         return None
-    return int(match["cnt"]), int(match["ov"], 16), match["fault"]
+    reason = match["reason"]
+    decoded = None if reason is None else ("?" if reason == "?" else int(reason, 16))
+    return int(match["cnt"]), int(match["ov"], 16), match["fault"], decoded
 
 # 状态行里 CAM 组的已知含义 (见 rtl/cam/piv2_config.v 的寄存器表)
 CAM_HINT = "77=AGAIN 0x0157   75/76=曝光 0x015A/B   71=帧长 0x0160"
@@ -370,7 +374,7 @@ class Tuner:
         diag.pack(fill="x")
         ttk.Label(diag, text="形状诊断（只读）:").pack(side="left")
         self.diag_labels = {}
-        for key in ("cnt", "ov", "fault"):
+        for key in ("cnt", "ov", "fault", "reason"):
             label = ttk.Label(diag, text="--", font=("Consolas", 10, "bold"))
             label.pack(side="left", padx=(10, 10))
             self.diag_labels[key] = label
@@ -568,14 +572,15 @@ class Tuner:
     def _reset_diag(self):
         self._prev_diag_ov = None
         for key, label in self.diag_labels.items():
-            label.configure(text={"cnt": "CNT --", "ov": "OV --", "fault": "F --"}[key],
+            label.configure(text={"cnt": "CNT --", "ov": "OV --", "fault": "F --",
+                                  "reason": "R --"}[key],
                             foreground="#888")
 
     def _render_diag(self, diag):
         if diag is None:
             self._reset_diag()
             return
-        cnt, ov, fault = diag
+        cnt, ov, fault, reason = diag
         cnt_text = "CNT %03d" % cnt
         if fault == "?":
             cnt_text += " (等待完整帧)"
@@ -597,6 +602,19 @@ class Tuner:
         fault_text = {"?": "F? 等待完整帧", "0": "F0 本帧正常", "1": "F1 整帧故障"}[fault]
         self.diag_labels["fault"].configure(
             text=fault_text, foreground="#c00" if fault == "1" else "#555")
+        if reason is None:
+            reason_text = "R -- (旧位流无来源码)"
+        elif reason == "?":
+            reason_text = "R? 等待完整帧"
+        elif reason == 0:
+            reason_text = "R0 无故障来源"
+        else:
+            causes = ((1, "识别槽位不足"), (2, "输入帧已标坏"),
+                      (4, "帧处理追不上"), (8, "帧边界丢失/重同步"))
+            reason_text = "R%X " % reason + "+".join(
+                name for bit, name in causes if reason & bit)
+        self.diag_labels["reason"].configure(
+            text=reason_text, foreground="#c00" if isinstance(reason, int) and reason else "#555")
 
     # -------------------------------------------------------------- 下发命令
     @staticmethod

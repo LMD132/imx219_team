@@ -69,6 +69,7 @@ module shp_detect #(
     output reg  [9:0]  o_cnt,            // 本帧提交的合格图形数(0..999)
     output reg  [15:0] o_ovf,            // 饱和的处理异常计数(含游程溢出/无空槽)
     output reg         o_last_fault,     // 最近提交帧是否整体丢弃
+    output reg  [3:0]  o_last_reason,    // 最近提交帧故障来源位图
     output reg         o_frame_valid     // 复位后是否已有完整提交帧
 );
 
@@ -124,6 +125,7 @@ module shp_detect #(
     reg         capture_fault;
     reg         vs_r;
     reg         frame_fault;
+    reg [3:0]   frame_reason;
     wire        f_empty = (f_cnt == 5'd0);
     wire        f_full  = (f_cnt == FQ5);
     reg         f_pop;                       // 主状态机 1 拍脉冲
@@ -148,17 +150,29 @@ module shp_detect #(
             pending_edges <= 5'd0; lost_edges <= 5'd0; sync_lost <= 1'b0;
             capture_fault <= 1'b0;
             frame_fault <= 1'b0;
+            frame_reason <= 4'b0;
         end else if (!cfg_en) begin
             f_wp <= 5'd0; f_rp <= 5'd0; f_cnt <= 5'd0;   // 关闭时清空
             pending_edges <= 5'd0; lost_edges <= 5'd0; sync_lost <= 1'b0;
             capture_fault <= 1'b0;
             frame_fault <= 1'b0;
+            frame_reason <= 4'b0;
         end else begin
-            if (state==S_COMMIT) frame_fault <= 1'b0;
+            if (state==S_COMMIT) begin
+                frame_fault <= 1'b0;
+                frame_reason <= 4'b0;
+            end
             if (no_slot_drop ||
                 (vs_edge && pending_edges!=0) || lost_boundary ||
                 (marker_read && f_dout[38]) || synthetic_boundary)
                 frame_fault <= 1'b1;
+            // Match the fault latch's event and commit boundaries.  The
+            // source bits are sticky within one committed frame, unlike
+            // o_ovf which saturates across the entire power-on lifetime.
+            if (no_slot_drop) frame_reason[0] <= 1'b1;
+            if (marker_read && f_dout[38]) frame_reason[1] <= 1'b1;
+            if (vs_edge && pending_edges!=0) frame_reason[2] <= 1'b1;
+            if (lost_boundary || synthetic_boundary) frame_reason[3] <= 1'b1;
             // Dropped input belongs to the CAPTURE frame, which can be one
             // or more frames ahead of the blob currently being retired.
             if (vs_edge) capture_fault <= 1'b0;
@@ -650,6 +664,7 @@ module shp_detect #(
             m_a <= 32'd0; m_b <= 11'd0;
             o_cnt <= 10'd0;
             o_last_fault <= 1'b0;
+            o_last_reason <= 4'b0;
             o_frame_valid <= 1'b0;
             f_cnt_cur <= 10'd0;
             sum_valid<=0;sum_op<=0;sum_slot<=0;sum_other<=0;
@@ -851,6 +866,7 @@ module shp_detect #(
                     fend_mode <= 1'b0;
                     o_cnt     <= frame_fault ? 10'd0 : f_cnt_cur;
                     o_last_fault <= frame_fault;
+                    o_last_reason <= frame_reason;
                     o_frame_valid <= 1'b1;
                     f_cnt_cur <= 10'd0;        // 下一帧重新计数
                     state     <= S_IDLE;

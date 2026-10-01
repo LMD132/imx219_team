@@ -1,10 +1,10 @@
 `timescale 1ns/1ps
 //=============================================================================
-// tb_alg_tel_shp.v -- 形状识别调参链路自检 (S/Y/Z/W/A 命令 -> 125字节状态行)
+// tb_alg_tel_shp.v -- 形状识别调参链路自检 (S/Y/Z/W/A 命令 -> 128字节状态行)
 //
 // 验证两件事:
 //   1) alg_cfg_uart 对 S/Y/Z/W/A 的解析与限幅(8..255 / 800..990 / 1..6 / 5..100);
-//   2) 125 字节 telemetry 行保留旧前缀并追加 CNT/OV/F 诊断
+//   2) 128 字节 telemetry 行保留旧前缀并追加 CNT/OV/F/R 诊断
 //      (含 255/990/100 这类三位的进位情况), 用独立采样器解码 o_txd.
 //
 // 跑法(工程根目录):
@@ -16,7 +16,7 @@
 module tb_alg_tel_shp;
 
     localparam integer BIT_NS = 8680;         // 115200 baud (25MHz 下 217 拍)
-    localparam integer LEN    = 125;
+    localparam integer LEN    = 128;
 
     integer errors = 0;
     integer checks = 0;
@@ -46,6 +46,7 @@ module tb_alg_tel_shp;
     reg [9:0]  diag_cnt = 10'd5;
     reg [15:0] diag_ovf = 16'h000A;
     reg        diag_fault = 1'b1;
+    reg [3:0]  diag_reason = 4'h5;
     reg        diag_frame_valid = 1'b1;
     reg        diag_sample_valid = 1'b1;
     reg        extra_update = 1'b0;
@@ -87,7 +88,8 @@ module tb_alg_tel_shp;
         .i_cam_grp(c_cam_grp), .i_cam_val(8'hFF),
         .i_update(c_commit | extra_update), .o_txd(txd),
         .i_diag_cnt(diag_cnt), .i_diag_ovf(diag_ovf),
-        .i_diag_fault(diag_fault), .i_diag_frame_valid(diag_frame_valid),
+        .i_diag_fault(diag_fault), .i_diag_reason(diag_reason),
+        .i_diag_frame_valid(diag_frame_valid),
         .i_diag_sample_valid(diag_sample_valid), .i_diag_busy(1'b0),
         .o_diag_req(diag_req)
     );
@@ -133,7 +135,7 @@ module tb_alg_tel_shp;
         end
     endtask
 
-    // 按行扫描: 每收到 LF 就把最近 125 字节和期望整行比对, 最多 6 行
+    // 按行扫描: 每收到 LF 就把最近 128 字节和期望整行比对, 最多 6 行
     reg [7:0] win [0:LEN-1];
     integer kk, nbyt, nline, line_bytes;
     reg [7:0] cc;
@@ -174,17 +176,19 @@ module tb_alg_tel_shp;
         end
     endtask
 
-    reg [8*LEN-1:0] exp_default, exp_final, exp_wait;
+    reg [8*LEN-1:0] exp_default, exp_final, exp_wait, exp_overload;
 
     initial begin
         // 上电默认值整行 (含 5 个形状字段的默认 24/875/4/50)
         exp_default = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0000=FF",
-                       " SHP1 SZ024 FL875 BX4 AR050 CNT005 OV000A F1", 8'h0A};
+                       " SHP1 SZ024 FL875 BX4 AR050 CNT005 OV000A F1 R5", 8'h0A};
         exp_wait    = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0000=FF",
-                       " SHP1 SZ024 FL875 BX4 AR050 CNT000 OVFFFF F?", 8'h0A};
+                       " SHP1 SZ024 FL875 BX4 AR050 CNT000 OVFFFF F? R?", 8'h0A};
+        exp_overload = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0000=FF",
+                        " SHP1 SZ024 FL875 BX4 AR050 CNT000 OVFFFF F1 R1", 8'h0A};
         // 极端值整行: SZ255 FL990 BX6 AR100 (BCD 进位的情况)
         exp_final   = {"M2 T0024 LO0021 HI0058 MED1 GAU0 ISO1 DSP0 OVC1 EPS0 EPF2 GF0400 BRG2 CAM0000=FF",
-                       " SHP1 SZ255 FL990 BX6 AR100 CNT005 OV000A F1", 8'h0A};
+                       " SHP1 SZ255 FL990 BX6 AR100 CNT005 OV000A F1 R5", 8'h0A};
 
         for (kk = 0; kk < LEN; kk = kk + 1) win[kk] = 8'h00;
 
@@ -212,9 +216,16 @@ module tb_alg_tel_shp;
         diag_fault = 1'b0;
         diag_frame_valid = 1'b0;
         expect_line(exp_wait);
+        // The board holder's current symptom, now with a source code: OV
+        // can stay saturated, but F/R must still describe the latest frame.
+        diag_fault = 1'b1;
+        diag_reason = 4'h1;
+        diag_frame_valid = 1'b1;
+        expect_line(exp_overload);
         diag_cnt = 10'd5;
         diag_ovf = 16'h000A;
         diag_fault = 1'b1;
+        diag_reason = 4'h5;
         diag_frame_valid = 1'b1;
         // Back-to-back command events while UART is still sending may
         // request a later line, but must not duplicate bytes within a line.

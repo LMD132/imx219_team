@@ -5,7 +5,7 @@
 // Status line for the runtime edge parameters, the transmit half of the
 // PC tuning channel (alg_cfg_uart.v is the receive half).
 //
-// One 82 byte ASCII line every PERIOD_MS, plus an immediate line after every
+// One 128 byte ASCII line every PERIOD_MS, plus an immediate line after every
 // accepted command, so a slider on the host can be confirmed against what the
 // board actually latched instead of being trusted:
 //
@@ -74,6 +74,7 @@ module alg_cfg_telemetry #(
     input  wire [9:0]  i_diag_cnt,
     input  wire [15:0] i_diag_ovf,
     input  wire        i_diag_fault,
+    input  wire [3:0]  i_diag_reason,
     input  wire        i_diag_frame_valid,
     input  wire        i_diag_sample_valid,
     input  wire        i_diag_busy,
@@ -81,9 +82,9 @@ module alg_cfg_telemetry #(
     output wire        o_txd
 );
 
-    // The former 107 visible bytes are unchanged. Append 17 diagnostic
-    // bytes before the sole LF, retaining the legacy parser's coordinates.
-    localparam [6:0] MSG_LEN = 7'd125;
+    // The former 124 visible bytes are unchanged. Append " Rn" before LF.
+    // 128 does not fit in seven bits, although indices 0..127 still do.
+    localparam [7:0] MSG_LEN = 8'd128;
     localparam integer GAP_CLKS = (CLK_HZ / 1000) * PERIOD_MS;
 
     // ------------------------------------------------------------------ text
@@ -115,6 +116,7 @@ module alg_cfg_telemetry #(
         input [15:0] cnt_bcd;
         input [15:0] diag_ovf;
         input        diag_fault;
+        input [3:0]  diag_reason;
         input        diag_frame_valid;
         input [7:0]  cam_val;
         input [1:0]  mode;
@@ -255,7 +257,10 @@ module alg_cfg_telemetry #(
                 7'd121: msg_byte = " ";
                 7'd122: msg_byte = "F";
                 7'd123: msg_byte = diag_frame_valid ? digit_of({3'b0, diag_fault}) : "?";
-                default: msg_byte = 8'h0A; // LF at 124
+                7'd124: msg_byte = " ";
+                7'd125: msg_byte = "R";
+                7'd126: msg_byte = diag_frame_valid ? hex_of(diag_reason) : "?";
+                default: msg_byte = 8'h0A; // LF at 127
             endcase
         end
     endfunction
@@ -271,7 +276,7 @@ module alg_cfg_telemetry #(
 
     reg [2:0]  state;
     reg [31:0] gap_cnt;
-    reg [6:0]  char_idx;        // 65 字节行: 下标要 7 位, 6 位装不下 64 会回卷
+    reg [6:0]  char_idx;        // 128 字节行: 下标 0..127 恰好占 7 位
     reg        tx_valid;
     reg [7:0]  tx_byte;
     reg        pending;
@@ -294,6 +299,7 @@ module alg_cfg_telemetry #(
     reg [15:0] sz_bcd, fl_bcd, ar_bcd, cnt_bcd;
     reg [9:0]  d_diag_cnt;
     reg [15:0] d_diag_ovf;
+    reg [3:0]  d_diag_reason;
     reg        d_diag_fault, d_diag_frame_valid;
     reg [9:0]  d_cam_grp;
     reg [7:0]  d_cam_val;
@@ -364,6 +370,7 @@ module alg_cfg_telemetry #(
             cnt_bcd   <= 16'd0;
             d_diag_cnt <= 10'd0;
             d_diag_ovf <= 16'd0;
+            d_diag_reason <= 4'd0;
             d_diag_fault <= 1'b0;
             d_diag_frame_valid <= 1'b0;
             d_cam_grp <= 10'd0;
@@ -409,6 +416,7 @@ module alg_cfg_telemetry #(
                             d_diag_cnt <= i_diag_sample_valid ?
                                           ((i_diag_cnt > 10'd999) ? 10'd999 : i_diag_cnt) : 10'd0;
                             d_diag_ovf <= i_diag_sample_valid ? i_diag_ovf : 16'd0;
+                            d_diag_reason <= i_diag_sample_valid ? i_diag_reason : 4'd0;
                             d_diag_fault <= i_diag_fault;
                             d_diag_frame_valid <= i_diag_sample_valid && i_diag_frame_valid;
                             if (!i_diag_busy) o_diag_req <= 1'b1;
@@ -474,6 +482,7 @@ module alg_cfg_telemetry #(
                     tx_byte  <= msg_byte(char_idx, t_bcd, lo_bcd, hi_bcd,
                                          gf_bcd, cam_bcd, sz_bcd, fl_bcd, ar_bcd,
                                          cnt_bcd, d_diag_ovf, d_diag_fault,
+                                         d_diag_reason,
                                          d_diag_frame_valid,
                                          d_cam_val,
                                          d_mode, d_disp, d_med, d_gau, d_iso, d_ovc,
@@ -489,7 +498,7 @@ module alg_cfg_telemetry #(
                 // Frame is on the wire; wait for it to finish, then advance.
                 ST_SEND: begin
                     if (!tx_busy) begin
-                        if (char_idx == (MSG_LEN - 7'd1)) begin
+                        if (char_idx == (MSG_LEN - 8'd1)) begin
                             state <= ST_GAP;
                         end else begin
                             char_idx <= char_idx + 7'd1;

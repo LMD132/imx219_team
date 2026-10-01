@@ -18,6 +18,7 @@ module tb_shape_diag_cdc;
     wire [9:0] cnt;
     wire [15:0] ovf;
     wire fault, frame_valid, sample_valid, busy;
+    wire [3:0] reason;
     integer errors = 0;
     integer k;
 
@@ -25,9 +26,10 @@ module tb_shape_diag_cdc;
         .clk_src(clk_src), .rst_src_n(rst_src_n),
         .i_cnt(phase ? 10'd844 : 10'd155),
         .i_ovf(phase ? 16'hAAAA : 16'h5555),
-        .i_fault(phase), .i_frame_valid(1'b1),
+        .i_fault(phase), .i_reason(phase ? 4'h8 : 4'h1),
+        .i_frame_valid(1'b1),
         .clk_dst(clk_dst), .rst_dst_n(rst_dst_n), .i_req(req),
-        .o_cnt(cnt), .o_ovf(ovf), .o_fault(fault),
+        .o_cnt(cnt), .o_ovf(ovf), .o_fault(fault), .o_reason(reason),
         .o_frame_valid(frame_valid), .o_sample_valid(sample_valid),
         .o_busy(busy)
     );
@@ -57,9 +59,9 @@ module tb_shape_diag_cdc;
             check(n < 100, "request receives acknowledgement");
             check(sample_valid === 1'b1, "completed snapshot is valid");
             check(frame_valid === 1'b1, "source frame-valid crosses intact");
-            check(((cnt === 10'd155) && (ovf === 16'h5555) && (fault === 1'b0)) ||
-                  ((cnt === 10'd844) && (ovf === 16'hAAAA) && (fault === 1'b1)),
-                  "counter/fault tuple never tears");
+            check(((cnt === 10'd155) && (ovf === 16'h5555) && (fault === 1'b0) && (reason === 4'h1)) ||
+                  ((cnt === 10'd844) && (ovf === 16'hAAAA) && (fault === 1'b1) && (reason === 4'h8)),
+                  "counter/fault/reason tuple never tears");
         end
     endtask
 
