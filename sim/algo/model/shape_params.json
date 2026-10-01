@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "width": 1280,
+  "height": 720,
+  "directions_q8": [[256,0],[251,50],[237,98],[213,142],[181,181],[142,213],[98,237],[50,251],[0,256],[-50,251],[-98,237],[-142,213],[-181,181],[-213,142],[-237,98],[-251,50],[-256,0],[-251,-50],[-237,-98],[-213,-142],[-181,-181],[-142,-213],[-98,-237],[-50,-251],[0,-256],[50,-251],[98,-237],[142,-213],[181,-181],[213,-142],[237,-98],[251,-50]],
+  "word_bits": {"direction_signed":10,"x_unsigned":12,"y_unsigned":13,"projection_signed":24,"geometry_unsigned":64},
+  "rounding": "support tie: lexicographic (y,x); divisions floor; comparisons cross-multiplied",
+  "strip_height": 4,
+  "corner_epsilon_pct": 2,
+  "line_error_pct": 3,
+  "profile_error_pct": 2,
+  "profile_error_pixels": 2,
+  "perpendicular_cos2_per_10000": 400,
+  "parallel_sin2_per_10000": 400,
+  "min_side_pixels": 8,
+  "min_aspect_per_100": 20,
+  "max_ellipse_aspect_per_100": 135,
+  "radial_error_pct": 14,
+  "oracle_solidity_per_1000": 940
+}

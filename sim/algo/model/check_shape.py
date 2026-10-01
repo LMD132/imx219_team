@@ -66,8 +66,24 @@ def run_tb(name: str, extra_sources: list[str] = []) -> subprocess.CompletedProc
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--rtl', required=True, help='Testbench name or .v path')
+    modes = parser.add_mutually_exclusive_group(required=True)
+    modes.add_argument('--rtl', help='Testbench name or .v path')
+    modes.add_argument('--model', action='store_true', help='Run the complete software acceptance gate')
     args = parser.parse_args(argv)
+    if args.model:
+        import unittest
+        sys.path.insert(0, str(ROOT / 'sim/algo'))
+        suite = unittest.defaultTestLoader.discover(str(ROOT / 'sim/algo'), pattern='test_shape_model.py')
+        result = unittest.TextTestRunner(verbosity=2).run(suite)
+        if not result.wasSuccessful():
+            print('MODEL GATE FAIL')
+            return 1
+        from model.shape_cases import diagnostic_report
+        import json
+        params = json.loads((Path(__file__).parent / 'shape_params.json').read_text(encoding='utf-8'))
+        diagnostic_report(params)
+        print('MODEL GATE PASS')
+        return 0
     result = run_tb(args.rtl)
     print(result.stdout, end='')
     print(result.stderr, end='', file=sys.stderr)
