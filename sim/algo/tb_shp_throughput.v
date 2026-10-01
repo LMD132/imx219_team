@@ -1,6 +1,10 @@
 `timescale 1ns/1ps
 // Six independent 80-pixel squares on a standard 1650x750 720p raster.
 // Twelve vertical edge runs per active row must not overflow the run queue.
+// A deliberately dense-texture frame overloads the queue: 2026-10-02 fault
+// grading makes that a local fault, so the frame reports no targets of its
+// own while the display keeps holding the previous six boxes -- it must
+// neither blank them nor publish partially assembled geometry.
 module tb_shp_throughput;
  reg clk=0,rst_n=0,in_vs=0,in_de=0;
  reg [11:0] in_x=0;reg [12:0] in_y=0;reg [7:0] in_d=0;
@@ -14,6 +18,8 @@ module tb_shp_throughput;
   .o_bcls(bcls),.o_bval(bval),.o_cnt(cnt),.o_ovf(ovf));
  integer x,y,i,n,dx;
  reg pixel_edge;
+ reg [71:0] p_bx0,p_bx1;reg [77:0] p_by0,p_by1;
+ reg [17:0] p_bcls;reg [5:0] p_bval;
  initial begin
   repeat(5)@(negedge clk);rst_n=1;
   for(y=0;y<750;y=y+1)begin
@@ -39,8 +45,8 @@ module tb_shp_throughput;
   end
   if(ovf!=0)$fatal(1,"FAIL standard raster overflow %0d",ovf);
   if(n!=6||cnt!=6)$fatal(1,"FAIL six targets n%0d cnt%0d",n,cnt);
-  // Deliberately overrun the 24-run queue. A damaged frame must blank the
-  // previous detections rather than publish partially assembled geometry.
+  p_bx0=bx0;p_bx1=bx1;p_by0=by0;p_by1=by1;p_bcls=bcls;p_bval=bval;
+  // Deliberately overrun the 24-run queue.
   for(y=0;y<750;y=y+1)begin
    for(x=0;x<1650;x=x+1)begin
     pixel_edge=(y>=100&&y<140&&x<1280&&x%2==0);
@@ -51,8 +57,10 @@ module tb_shp_throughput;
   @(negedge clk);in_vs=0;
   repeat(100000)@(negedge clk);
   if(ovf==0)$fatal(1,"FAIL dense texture did not report overload");
-  if(bval!=0||cnt!=0)$fatal(1,"FAIL damaged frame published result bval%h cnt%0d",bval,cnt);
-  $display("SHAPE_TEST_PASS tb_shp_throughput six targets and overload reject");
+  if(cnt!=0)$fatal(1,"FAIL overloaded frame reported targets cnt%0d",cnt);
+  if(bval!=p_bval||bcls!=p_bcls||bx0!=p_bx0||bx1!=p_bx1||by0!=p_by0||by1!=p_by1)
+   $fatal(1,"FAIL overloaded frame must hold previous boxes bval%h",bval);
+  $display("SHAPE_TEST_PASS tb_shp_throughput six targets and overload hold");
   $finish_and_return(0);
  end
 endmodule

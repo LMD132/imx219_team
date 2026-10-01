@@ -170,9 +170,15 @@ module shp_detect #(
                 frame_fault <= 1'b0;
                 frame_reason <= 4'b0;
             end
-            if (no_slot_drop ||
-                (vs_edge && pending_edges!=0) || lost_boundary ||
-                (marker_read && f_dout[38]) || synthetic_boundary)
+            // 2026-10-02 故障分级(fault grading): 只有"整帧都不可信"的原因
+            //   才作废整帧。原来 no_slot_drop(槽位不足) 和 marker 坏(捕获期丢
+            //   一条游程) 也会把整帧结果清零, 于是一帧几万条游程里丢一条,
+            //   屏幕就一个框都不显示 —— 实拍"放上去根本不识别"的主因。
+            //   这两类现在只记录来源码/计数, 帧照常提交其余合格目标:
+            //     no_slot_drop 只影响当次那一个候选目标;
+            //     marker 坏只伤丢游程附近的局部轮廓。
+            if ((vs_edge && pending_edges!=0) || lost_boundary ||
+                synthetic_boundary)
                 frame_fault <= 1'b1;
             // Match the fault latch's event and commit boundaries.  The
             // source bits are sticky within one committed frame, unlike

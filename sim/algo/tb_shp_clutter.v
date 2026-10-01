@@ -1,7 +1,11 @@
 `timescale 1ns/1ps
 // Characterize the existing eight-slot limit with full-size 720p frames.
-// Clean and six-noise cases must recognize; eight-noise cases currently
-// discard the frame. +EXPECT_DETECT is the deliberately red future gate.
+// Clean and six-noise cases must recognize exactly. 2026-10-02 fault grading:
+// with eight simultaneous junk contours the target's first spans can lose the
+// slot race, but the frame must still commit (fault=0), keep the R1 source
+// record and report the target -- at most with its top edge clipped by the
+// spans that lost the race. A blank frame is no longer accepted for this
+// limit.
 module tb_shp_clutter;
  reg clk=0,rst_n=0,in_vs=0,in_de=0;
  reg [11:0] in_x=0;reg [12:0] in_y=0;reg [7:0] in_d=0;
@@ -19,6 +23,7 @@ module tb_shp_clutter;
   .o_last_fault(fault),.o_last_reason(reason),.o_frame_valid(frame_valid),
   .o_slot_drop_total(slot_total),.o_fifo_full_total(fifo_total));
  integer x,y,i,dx,dy,n,scene=2,shape_class=2,no_clutter=0,noise_count;
+ integer clipped_ok;
  integer drops=0,slots=0,late=0,bad=0,max_queue=0,spans=0;
  reg edge_pixel;
  always @(posedge clk)if(rst_n)begin
@@ -64,23 +69,33 @@ module tb_shp_clutter;
   @(negedge clk);in_vs=0;
   repeat(100000)@(negedge clk);
   n=0;
+  clipped_ok=(scene>=2 && !no_clutter && noise_count>=8);
+  $display("CLUTTER_BOXES cnt=%0d fault=%0d reason=%h ovf=%0d slots=%0d drops=%0d max_queue=%0d",
+           cnt,fault,reason,ovf,slots,drops,max_queue);
+  for(i=0;i<6;i=i+1)if(bval[i])
+   $display("CLUTTER_BOX slot=%0d cls=%0d bx=%0d..%0d by=%0d..%0d",
+            i,bcls[i*3+:3],bx0[i*12+:12],bx1[i*12+:12],by0[i*13+:13],by1[i*13+:13]);
   for(i=0;i<6;i=i+1)if(bval[i])begin
    n=n+1;
    if(bcls[i*3+:3]!=shape_class || bx0[i*12+:12]!=520 || bx1[i*12+:12]!=680 ||
-      by0[i*13+:13]!=200 || by1[i*13+:13]!=360)
-    $fatal(1,"unexpected detected object slot %0d",i);
+      by1[i*13+:13]!=360 ||
+      (clipped_ok ? (by0[i*13+:13]<200 || by0[i*13+:13]>=360)
+                  : (by0[i*13+:13]!=200)))
+    $fatal(1,"unexpected detected object slot %0d cls=%0d bx=%0d..%0d by=%0d..%0d",
+           i,bcls[i*3+:3],bx0[i*12+:12],bx1[i*12+:12],
+           by0[i*13+:13],by1[i*13+:13]);
   end
   $display("CLUTTER scene=%0d spans=%0d fifo_drops=%0d slot_drops=%0d late=%0d bad=%0d max_queue=%0d cnt=%0d fault=%0d reason=%h ovf=%0d",
            scene,spans,drops,slots,late,bad,max_queue,cnt,fault,reason,ovf);
   if(!frame_valid||drops!=0||late!=0||bad!=0)
    $fatal(1,"FAIL unrelated stream or retirement fault in clutter test");
   if(scene>=2 && !no_clutter && noise_count>=8)begin
-   if(!fault||cnt!=0||reason!=4'h1||slots==0||
+   // 故障分级：槽位耗尽只作局部损失。R1 来源与独立计数必须一致，
+   // 真目标必须仍然提交；顶边允许因丢掉的首批游程而裁短。
+   if(fault||cnt!=1||n!=1||reason!=4'h1||slots==0||
       slot_total!==slots||fifo_total!==32'd0)
-    $fatal(1,"FAIL slot exhaustion source must be R1 on a discarded frame");
-   if($test$plusargs("EXPECT_DETECT"))
-    $fatal(1,"KNOWN LIMITATION: valid shape not recognized under dense clutter");
-   $display("SHAPE_TEST_PASS tb_shp_clutter overload diagnosed (not recognition acceptance)");
+    $fatal(1,"FAIL slot-exhaustion frame must commit the target and keep the R1 record");
+   $display("SHAPE_TEST_PASS tb_shp_clutter eight-slot overload committed with R1 record");
   end else begin
    if(fault||reason!=0||n!=1||cnt!=1||ovf!=0)
     $fatal(1,"FAIL isolated target lost with light or no clutter");

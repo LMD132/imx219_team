@@ -1,6 +1,9 @@
 `timescale 1ns/1ps
 // A full 720p source frame must contain both slot exhaustion and a bad
 // captured input span while still delivering its real VS marker intact.
+// 2026-10-02 fault grading: those two local faults must no longer void the
+// whole frame; the R3 rectangle still commits while reason=3 records both
+// sources, so the test keeps the independent S/Q markers and requires CNT=1.
 module tb_shp_r3_pressure;
  reg clk=0,rst_n=0,in_vs=0,in_de=0;
  reg [11:0] in_x=0;
@@ -79,13 +82,22 @@ module tb_shp_r3_pressure;
            pressure,slot_total,slot_events,fifo_total,full_events,
            bad_marker_in,bad_marker_out,lost_markers,max_pending,max_queue,
            cnt,fault,reason,ovf);
-  if(!frame_valid || !fault || reason!==4'h3 || cnt!==10'd0 ||
+  for(i=0;i<6;i=i+1)if(bval[i])
+   $display("R3_BOX slot=%0d cls=%0d bx=%0d..%0d by=%0d..%0d",
+            i,bcls[i*3+:3],bx0[i*12+:12],bx1[i*12+:12],by0[i*13+:13],by1[i*13+:13]);
+  // The committed frame must contain exactly the real R3 rectangle; its top
+  // edge may be clipped by the dropped first spans, never stretched.
+  if(bcls[2:0]!=3'd2 || bx0[11:0]!=12'd520 || bx1[11:0]!=12'd680 ||
+     by1[12:0]!=13'd360 || by0[12:0]<13'd200 || by0[12:0]>=13'd360 ||
+     bval[5:1]!=5'd0 || !bval[0])
+   $fatal(1,"FAIL committed R3 box must be the single clipped rectangle");
+  if(!frame_valid || fault || reason!==4'h3 || cnt!==10'd1 ||
      slot_total===32'd0 || fifo_total===32'd0 ||
      slot_total!==slot_events || fifo_total!==full_events ||
      bad_marker_in!=1 || bad_marker_out!=1 || lost_markers!=0 ||
      dut.pending_edges!=0)
-   $fatal(1,"FAIL exact R3 with independent S/Q and intact VS marker required");
-  $display("SHAPE_TEST_PASS tb_shp_r3_pressure exact R3");
+   $fatal(1,"FAIL exact R3 must record both sources and still commit the rectangle");
+  $display("SHAPE_TEST_PASS tb_shp_r3_pressure exact R3 without whole-frame void");
   $finish_and_return(0);
  end
 endmodule
