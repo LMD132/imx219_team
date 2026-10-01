@@ -20,7 +20,7 @@
 //    源像素列(左半 2x, 右半 2(x-640)); 标签画在半幅屏幕空间(不跟着横向压缩);
 //    其余模式(mode 1/2/3)是 1:1, 屏幕列 = 源列, 直接用。
 //
-//  颜色: 圆=黄 矩=青 三角=品红 十字=绿 未知=白(框线和文字同色)。
+//  颜色: 圆=黄 矩=青 三角=品红 未知=白(框线和文字同色)。
 //
 //  资源: 字库 ROM 1 块 BRAM(shp_font), 其余全寄存器逻辑, 无乘法器。
 //  时序: 关键路径 = 框表寄存器 -> 比较/优先级 -> 字库地址(约 2~3ns @74.25MHz);
@@ -47,7 +47,7 @@ module shp_overlay #(
     input  wire [NBX*12-1:0] bx1,
     input  wire [NBX*13-1:0] by0,
     input  wire [NBX*13-1:0] by1,
-    input  wire [NBX*3-1:0]  bcls,   // 1=圆 2=矩 3=三角 4=十字 0=未知
+    input  wire [NBX*3-1:0]  bcls,   // 1=圆 2=矩 3=三角 0=未知; 4..7不显示
     input  wire [NBX-1:0]    bval,
 
     output reg         ov_hit,       // 1 = 本像素用 ov_rgb 覆盖
@@ -91,7 +91,6 @@ module shp_overlay #(
                 3'd1:    cls_rgb = 24'hFFFF00;    // 圆: 黄
                 3'd2:    cls_rgb = 24'h00FFFF;    // 矩: 青
                 3'd3:    cls_rgb = 24'hFF00FF;    // 三角: 品红
-                3'd4:    cls_rgb = 24'h00FF00;    // 十字: 绿
                 default: cls_rgb = 24'hFFFFFF;    // 未知: 白
             endcase
         end
@@ -117,7 +116,7 @@ module shp_overlay #(
         lb_col = 12'd0; fa = 8'd0;
         for (m = 0; m < NBX; m = m + 1) begin
             // ---- 边框: 框内 && 贴 1px 边(源像素坐标空间) ----
-            bd_hit[m] = b_vl[m] & en & de
+            bd_hit[m] = b_vl[m] & en & de & (b_cl[m] <= 3'd3)
                       & (xsrc >= {1'b0, b_x0[m]}) & (xsrc <= {1'b0, b_x1[m]})
                       & (y    >= b_y0[m])         & (y    <= b_y1[m])
                       & ((xsrc == {1'b0, b_x0[m]}) | (xsrc == {1'b0, b_x1[m]}) |
@@ -126,7 +125,7 @@ module shp_overlay #(
             ly0 = (b_y0[m] >= 13'd20) ? (b_y0[m] - 13'd18) : (b_y1[m] + 13'd2);
             lx0 = (mode == 2'd0) ? {1'b0, b_x0[m][11:1]} : b_x0[m];
             if (lx0 > lxw) lx0 = lxw;                    // 右缘限位
-            lb_hit[m] = b_vl[m] & en & de
+            lb_hit[m] = b_vl[m] & en & de & (b_cl[m] <= 3'd3)
                       & (xh >= {1'b0, lx0}) & (xh <= ({1'b0, lx0} + 13'd31))
                       & (y  >= ly0)         & (y  <= (ly0 + 13'd15));
             // ---- 优先级: 下标小的框赢 ----
@@ -142,7 +141,6 @@ module shp_overlay #(
                 ch = (b_cl[m] == 3'd1) ? (gl ? 4'd1 : 4'd0) :   // 圆形
                      (b_cl[m] == 3'd2) ? (gl ? 4'd1 : 4'd2) :   // 矩形
                      (b_cl[m] == 3'd3) ? (gl ? 4'd4 : 4'd3) :   // 三角
-                     (b_cl[m] == 3'd4) ? (gl ? 4'd6 : 4'd5) :   // 十字
                                          (gl ? 4'd8 : 4'd7);    // 未知
                 fa = {ch, 4'd0} + {4'd0, lrow[3:0]};
             end

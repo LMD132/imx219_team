@@ -146,9 +146,45 @@ module tb_shp_overlay;
             $display("  ok   标签点数 %0d 在合理区间(60..400)", nhit_r);
         end
 
-        if (errors == 0) $display("PASSED");
-        else             $display("FAILED  (%0d errors)", errors);
-        $finish;
+        // All four display modes retain the original source-coordinate map.
+        mode=1; bcls[0 +: 3]=2; probe(100,200);
+        if(!phit||prgb!==24'h00FFFF)$fatal(1,"FAIL mode1 rectangle color/coordinate");
+        mode=2; bcls[0 +: 3]=3; probe(100,200);
+        if(!phit||prgb!==24'hFF00FF)$fatal(1,"FAIL mode2 triangle color/coordinate");
+        mode=3; bcls[0 +: 3]=1; probe(100,200);
+        if(!phit||prgb!==24'hFFFF00)$fatal(1,"FAIL mode3 circle color/coordinate");
+
+        // Class 4 is no longer supported even when an old producer asserts bval.
+        mode=1; bcls[0 +: 3]=4; probe(100,200);
+        if(phit)$fatal(1,"FAIL legacy cross border rendered");
+        probe(100,82);
+        if(phit)$fatal(1,"FAIL legacy cross label rendered");
+
+        // Class 0's unknown glyph stays at slots 7/8, still white.
+        bcls[0 +: 3]=0; nhit_r=0;
+        for(j=0;j<16;j=j+1)for(i=0;i<32;i=i+1)begin
+            probe(100+i,82+j);
+            if(phit)begin
+                nhit_r=nhit_r+1;
+                if(prgb!==24'hFFFFFF)$fatal(1,"FAIL unknown label color");
+            end
+        end
+        if(nhit_r<30)$fatal(1,"FAIL unknown glyph missing");
+
+        // An isolated edge produces output after exactly two rising edges.
+        bcls[0 +: 3]=1;
+        @(negedge clk);de=0;x=400;y=400;
+        repeat(3)@(negedge clk);
+        de=1;x=100;y=200;
+        @(posedge clk);#1;if(ov_hit)$fatal(1,"FAIL overlay early by one cycle");
+        @(posedge clk);#1;if(!ov_hit||ov_rgb!==24'hFFFF00)$fatal(1,"FAIL two-cycle overlay output");
+        @(negedge clk);de=0;x=400;y=400;
+        @(posedge clk);#1;if(!ov_hit)$fatal(1,"FAIL overlay cleared early");
+        @(posedge clk);#1;if(ov_hit)$fatal(1,"FAIL overlay delayed beyond two cycles");
+
+        if(errors!=0)$fatal(1,"FAIL existing overlay assertions: %0d",errors);
+        $display("SHAPE_TEST_PASS tb_shp_overlay modes colors labels and two-cycle latency");
+        $finish_and_return(0);
     end
 
 endmodule

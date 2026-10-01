@@ -3,8 +3,8 @@
 """生成赛题4 形状识别用的 16x16 点阵字库  shp_font.mem
 
 字库内容 = 屏幕上要显示的中文标签用字(每个标签固定 2 字):
-    0 圆   1 形   2 矩   3 三   4 角   5 十   6 字   7 未   8 知
-    标签组合: 圆形[0,1]  矩形[2,1]  三角[3,4]  十字[5,6]  未知[7,8]
+    0 圆   1 形   2 矩   3 三   4 角   5 空   6 空   7 未   8 知
+    标签组合: 圆形[0,1]  矩形[2,1]  三角[3,4]  未知[7,8]
 字库格式 (给 rtl/algo/shp_font.v 的 $readmemh 用):
     每个字 16 行, 每行 1 个 16bit 字 (MSB = 最左像素), 行序从上到下;
     字模地址 = 字序号*16 + 行号;  文件共 256 行(多余的填 0000)。
@@ -22,7 +22,7 @@ import os
 
 from PIL import Image, ImageDraw, ImageFont
 
-GLYPHS = ["圆", "形", "矩", "三", "角", "十", "字", "未", "知"]
+GLYPHS = ["圆", "形", "矩", "三", "角", None, None, "未", "知"]
 FONT_CANDIDATES = [
     r"C:\Windows\Fonts\simhei.ttf",
     r"C:\Windows\Fonts\msyh.ttc",
@@ -82,6 +82,9 @@ def main():
 
     words = []
     for ch in GLYPHS:
+        if ch is None:
+            words.extend([0] * SIZE)  # keep the unknown glyph at indices 7/8
+            continue
         bits = render_glyph(ch, font_path)
         rows = glyph_to_hex_rows(bits)
         words.extend(rows)
