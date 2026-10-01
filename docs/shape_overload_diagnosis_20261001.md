@@ -31,17 +31,17 @@
 
 `R0` 表示最近提交帧未记录上述来源，`R?` 表示尚无完整提交帧。调参界面兼容旧位流：旧行没有 `R` 时显示“旧位流无来源码”。来源位图与 `CNT/OV/F` 一起做跨时钟完整快照，避免混读相邻时刻。
 
-## 后续实板验证（尚未执行）
+## JTAG 与后续实板验证
 
-1. 经板主明确指示后，才通过 JTAG 临时下载本轮候选位流；不写 Flash。
-2. 重启调参界面以载入新增 `R` 字段，接上原串口。分别对准纯白纸和带图案纸，各记录连续三条完整的 `CNT/OV/F/R` 行。
+1. 2026-10-01 经板主本轮明确同意，已运行 `tools/flash_candidate.bat candidate_bitstreams/shape_fault_reason_2508960_20261001.bit`：板载 FT4232H、JTAG 6 MHz，脚本退出码 0；日志显示 `Device ID read from JTAG: 0x10660A79` 和 `... finished with JTAG programming`。这是易失下载，**未写 Flash**。
+2. **尚待板主实测：**重启调参界面以载入新增 `R` 字段，接上原串口。分别对准纯白纸和带图案纸，各记录连续三条完整的 `CNT/OV/F/R` 行。
 3. 若带图案时稳定 `F1 R1`，再针对并发连通块容量制定不伤三角尖端的策略；若 `R2/R4/R8` 置位，优先检查输入 FIFO、处理期限或帧边界，不按槽位假设改算法。
 
 编译通过、JTAG 成功都不能替代屏幕/摄像头的肉眼验收，也不自动提升为最佳回退版。
 
 ## 本轮离线门禁
 
-- `tools/compile.bat` 完整退出码 0，Efinity 的 map、interface、pnr、pgm 均为 PASS；生成候选 `.bit`，尚未烧录。
+- `tools/compile.bat` 完整退出码 0，Efinity 的 map、interface、pnr、pgm 均为 PASS；生成的候选 `.bit` 后来按上述步骤通过 JTAG 临时下载。
 - `outflow/ti60f225_oob.timing.rpt` 中列出的 setup 最小余量 `+0.294 ns`，hold 最小余量 `+0.026 ns`。资源为 XLR `54797/60800`、RAM `251/256`、DSP `154/160`。日志保留 `cannot find correct IV value` 警告和计时器切断组合环的警告，因此不把这些正余量解读为无条件全设计签核。
 - `check_shape.py --all` 退出码 0、`ALL PASS`：23 项 Python、10381 个几何黄金样本，以及 16 个形状 RTL 台（含本轮拥挤场景）。`tb_shp_diag`、`tb_shape_diag_cdc`、`tb_alg_tel_shp`、`tb_alg_cfg_uart` 另行通过；串口协议测试共 68 项。
 - `check_chain.py` 与 `check_ebridge.py` 本轮最终 RTL 逐位对拍通过（各组 mismatch 0）；调参界面冒烟测试 `SMOKE OK`。真实串口 GUI 和摄像头/屏幕肉眼测试尚未执行。

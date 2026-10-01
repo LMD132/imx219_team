@@ -1,6 +1,6 @@
 # 候选位流归档记录
 
-## 2026-10-01 故障来源细分候选（未 JTAG，待实板诊断）
+## 2026-10-01 故障来源细分候选（已 JTAG，待实板诊断）
 
 | 项 | 值 |
 | --- | --- |
@@ -10,7 +10,7 @@
 | SHA-256 | `72D6A4F04CD760A04200DFFCCCBF1B36377D2F0C91198ED5B3A6F6CCE3DC6885` |
 | 编译/时序 | Efinity 2026.1.132.4.5 的 map/interface/pnr/pgm 均 PASS，命令退出 0；报告列出的 setup/hold 最小余量 `+0.294/+0.026 ns`，XLR `54797/60800`、RAM `251/256`、DSP `154/160`。有 IV 与组合环计时警告，不能据此宣称全设计无条件签核 |
 | 离线验证 | `check_shape.py --all` 为 `ALL PASS`（23 项 Python、10381 几何样本、16 个形状 RTL 台）；另 `tb_shp_diag`、`tb_shape_diag_cdc`、`tb_alg_tel_shp` 20 项和 `tb_alg_cfg_uart` 68 项通过，主流水、桥接逐位对拍通过，调参界面冒烟通过 |
-| 功能与状态 | 只增加最近提交帧的 `R` 故障来源码及 GUI 解析；**未修复或证明修复实拍漏检**。纯白纸 `F0`、图案纸 `F1` 是旧位流实测；本位流**尚未 JTAG、未写 Flash、未进行摄像头/屏幕或真实串口验收**。细节见 `docs/shape_overload_diagnosis_20261001.md`；不覆盖 `known_good/` 或最佳回退版 |
+| 功能与状态 | 只增加最近提交帧的 `R` 故障来源码及 GUI 解析；**未修复或证明修复实拍漏检**。纯白纸 `F0`、图案纸 `F1` 是旧位流实测。2026-10-01 经板主本轮明确同意，运行 `tools/flash_candidate.bat` 以板载 FT4232H、6 MHz **JTAG 临时下载**此归档位流：退出码 0、读取器件 ID `0x10660A79`、日志显示 `... finished with JTAG programming`。**未写 Flash、未进行摄像头/屏幕或真实串口验收**；断电或复位后可能恢复旧程序。细节见 `docs/shape_overload_diagnosis_20261001.md`；不覆盖 `known_good/` 或最佳回退版 |
 
 ## 2026-10-01 形状诊断候选（已JTAG，待画面与串口验收）
 
