@@ -1,0 +1,61 @@
+test_font_slots (test_shape_compat.ShapeCompatibilityTests.test_font_slots) ... ok
+test_generator_keeps_unknown_indices (test_shape_compat.ShapeCompatibilityTests.test_generator_keeps_unknown_indices) ... ok
+test_tuner_preserves_legacy_protocol (test_shape_compat.ShapeCompatibilityTests.test_tuner_preserves_legacy_protocol) ... ok
+test_clean_rotation_matrix (test_shape_model.ShapeModelTests.test_clean_rotation_matrix) ... ok
+MODEL COUNTS ('contour', 'circle', 1.0, 'correct') 1296
+MODEL COUNTS ('contour', 'rectangle', 1.5, 'correct') 1296
+MODEL COUNTS ('contour', 'rectangle', 2.0, 'correct') 1296
+MODEL COUNTS ('contour', 'ring', 1.0, 'correct') 1296
+MODEL COUNTS ('contour', 'square', 1.0, 'correct') 1296
+MODEL COUNTS ('contour', 'triangle', 1.0, 'correct') 1296
+MODEL COUNTS ('fixed', 'circle', 1.0, 'correct') 1296
+MODEL COUNTS ('fixed', 'rectangle', 1.5, 'correct') 1296
+MODEL COUNTS ('fixed', 'rectangle', 2.0, 'correct') 1296
+MODEL COUNTS ('fixed', 'ring', 1.0, 'correct') 1296
+MODEL COUNTS ('fixed', 'square', 1.0, 'correct') 1296
+MODEL COUNTS ('fixed', 'triangle', 1.0, 'correct') 1296
+test_cross_rejected_all_angles (test_shape_model.ShapeModelTests.test_cross_rejected_all_angles) ... ok
+test_diagnostics_are_deterministic_and_cover_boundaries (test_shape_model.ShapeModelTests.test_diagnostics_are_deterministic_and_cover_boundaries) ... ok
+test_empty_and_invalid_runs_rejected (test_shape_model.ShapeModelTests.test_empty_and_invalid_runs_rejected) ... ok
+test_other_negative_shapes (test_shape_model.ShapeModelTests.test_other_negative_shapes) ... ok
+test_q8_directions_match_declared_sampling (test_shape_model.ShapeModelTests.test_q8_directions_match_declared_sampling) ... ok
+test_ring_hole_is_not_concavity (test_shape_model.ShapeModelTests.test_ring_hole_is_not_concavity) ... ok
+test_stroked_triangle_flat_apex (test_shape_model.ShapeModelTests.test_stroked_triangle_flat_apex) ... ok
+test_summary_projection_tie_and_strip_boundaries (test_shape_model.ShapeModelTests.test_summary_projection_tie_and_strip_boundaries) ... ok
+test_translation_and_mirror_equivalence (test_shape_model.ShapeModelTests.test_translation_and_mirror_equivalence) ... ok
+test_all_propagates_each_real_runner_failure (test_shape_runner.RunnerTests.test_all_propagates_each_real_runner_failure) ... ok
+test_all_propagates_model_failure (test_shape_runner.RunnerTests.test_all_propagates_model_failure) ... ok
+test_all_success_requires_real_assertion (test_shape_runner.RunnerTests.test_all_success_requires_real_assertion) ... ok
+test_compile_error_is_failure (test_shape_runner.RunnerTests.test_compile_error_is_failure) ... ok
+test_fatal_simulation_is_failure (test_shape_runner.RunnerTests.test_fatal_simulation_is_failure) ... ok
+test_missing_testbench_is_failure (test_shape_runner.RunnerTests.test_missing_testbench_is_failure) ... ok
+test_printed_failure_with_zero_exit_is_failure (test_shape_runner.RunnerTests.test_printed_failure_with_zero_exit_is_failure) ... ok
+test_silent_zero_exit_is_failure (test_shape_runner.RunnerTests.test_silent_zero_exit_is_failure) ... ok
+test_successful_real_assertions_return_zero (test_shape_runner.RunnerTests.test_successful_real_assertions_return_zero) ... ok
+test_timeout_is_failure (test_shape_runner.RunnerTests.test_timeout_is_failure) ... ok
+
+----------------------------------------------------------------------
+Ran 23 tests in 39.673s
+
+OK
+MODEL DIAGNOSTICS {"count": 66, "counts": [{"case": "clip10pct", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "decorative", "count": 6, "model": "contour", "outcome": "correct"}, {"case": "gap1", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "gap3", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "gap5", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "noise16", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "noise2", "count": 2, "model": "contour", "outcome": "correct"}, {"case": "noise2", "count": 4, "model": "contour", "outcome": "reject"}, {"case": "noise8", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "perspective15pct", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "perspective30pct", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "perspective5pct", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "clip10pct", "count": 6, "model": "fixed", "outcome": "reject"}, {"case": "decorative", "count": 6, "model": "fixed", "outcome": "correct"}, {"case": "gap1", "count": 4, "model": "fixed", "outcome": "correct"}, {"case": "gap1", "count": 2, "model": "fixed", "outcome": "reject"}, {"case": "gap3", "count": 4, "model": "fixed", "outcome": "correct"}, {"case": "gap3", "count": 2, "model": "fixed", "outcome": "reject"}, {"case": "gap5", "count": 4, "model": "fixed", "outcome": "correct"}, {"case": "gap5", "count": 2, "model": "fixed", "outcome": "reject"}, {"case": "noise16", "count": 6, "model": "fixed", "outcome": "reject"}, {"case": "noise2", "count": 2, "model": "fixed", "outcome": "correct"}, {"case": "noise2", "count": 4, "model": "fixed", "outcome": "reject"}, {"case": "noise8", "count": 6, "model": "fixed", "outcome": "reject"}, {"case": "perspective15pct", "count": 3, "model": "fixed", "outcome": "correct"}, {"case": "perspective15pct", "count": 3, "model": "fixed", "outcome": "reject"}, {"case": "perspective30pct", "count": 1, "model": "fixed", "outcome": "correct"}, {"case": "perspective30pct", "count": 5, "model": "fixed", "outcome": "reject"}, {"case": "perspective5pct", "count": 5, "model": "fixed", "outcome": "correct"}, {"case": "perspective5pct", "count": 1, "model": "fixed", "outcome": "reject"}], "params_sha256": "14ee97ae06492d91651db56e3376a5618fad34cf6bdf8d644e859fe28820d6f4", "seed": 20261001, "versions": {"numpy": "2.5.2", "opencv": "5.0.0", "python": "3.12.10"}}
+MODEL GATE PASS
+SHAPE_TEST_PASS tb_shp_summary 11 phases 498 spans max_busy=34
+SHAPE_TEST_PASS tb_shp_recent scan merge gap and capacity
+SHAPE_TEST_PASS tb_shp_connect historical bbox overlap stays separate
+SHAPE_TEST_PASS tb_shp_geometry 10381 golden cases
+SHAPE_TEST_PASS tb_shp_rot
+SHAPE_TEST_PASS tb_shp_detect three classes and cross rejection
+SHAPE_TEST_PASS tb_shp_ring
+SHAPE_TEST_PASS tb_shp_tilt
+SHAPE_TEST_PASS tb_shp_spacing 2/4/8/16/32 pixel gaps
+SHAPE_TEST_PASS tb_shp_lifecycle bounded hold disable reject reset
+SHAPE_TEST_PASS tb_shp_frame_epoch boundaries and deadline
+SHAPE_TEST_PASS tb_shp_throughput six targets and overload hold
+SHAPE_TEST_PASS tb_shp_no_blank boxes=6 ovf=0
+SHAPE_TEST_PASS tb_shp_stream_matrix 120 cases
+SHAPE_TEST_PASS tb_shp_clutter eight-slot overload committed with R1 record
+SHAPE_TEST_PASS tb_shp_r3_pressure exact R3 without whole-frame void
+SHAPE_TEST_PASS tb_shp_summary_load six classified squares without S/Q loss
+SHAPE_TEST_PASS tb_shp_overlay modes colors labels and two-cycle latency
+ALL PASS

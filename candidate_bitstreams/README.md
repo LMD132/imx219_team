@@ -1,5 +1,20 @@
 # 候选位流归档记录
 
+## 2026-10-02 框闪烁滞回候选（已 JTAG 临时下载，待实板效果验收）
+
+| 项 | 值 |
+| --- | --- |
+| 文件 | `shape_hold_hysteresis_41a494a_20261002.bit`，3,132,804 字节 |
+| 源码 | `shape-detect` 提交 `41a494a`（父 `56ef83d`）；构建前工作区干净，构建后恢复 Efinity 删除的工程 XML 文件尾换行 |
+| 来源 | 2026-10-02 02:44:10 完整构建的 `outflow/ti60f225_oob.bit` 逐字节副本，两份 SHA-256 相同 |
+| SHA-256 | `CF68BC71F186A1EB16DC90479E8E0D30479D83E44C7EF9B01421F70E42628D5B` |
+| 构建与时序 | Efinity 2026.1.132.4.5，map/interface/pnr/pgm 全 PASS，退出 0；19 组时钟关系的 setup/hold 最小 `+0.140/+0.027 ns`，342 条报告路径无负 slack；XLR `55196/60800`、RAM `251/256`、DSP `154/160`。IV 与组合环计时警告仍存在，不宣称全设计无条件签核 |
+| 功能 | 框闪烁滞回：检出帧把保持预算重置为 `HOLD-1`，空帧与整帧故障帧都只消耗 1 帧预算，预算耗尽后再来一个空/故障帧才清屏；替代旧版"故障帧单帧清屏 + 预算归零"。针对实拍"框闪现"（诊断台 `R` 在 `1↔3` 循环、`F` 多为 0 偶发 1）的根因修复，`HOLD` 默认 2→6 |
+| 离线验证 | `check_shape.py --all` 退出 0、`ALL PASS`（23 项 Python、10,381 组几何、18 个形状 RTL 台）；`tb_shp_lifecycle` 显式以 `HOLD=2` 通过，确认旧语义向后兼容；`tb_shp_throughput` 过载帧保持上一帧六框 |
+| 实板状态 | **2026-10-02 经板主明确要求"烧录"，已用板载 FT4232H、6 MHz JTAG 临时下载此归档位流**：下载前 SHA-256 核对一致，命令退出 0，器件 ID `0x10660A79`，日志以 `finished with JTAG programming` 结束；随后按板主惯例重新打开运行期调参台并连接 COM5（未代替板主调参）。**未写 Flash、未做画面验收**；不覆盖 `known_good/` 或最佳回退版，也不被认定为"最新版"。预期副作用：目标移走后框最多再停留约 6 帧（30fps 约 200ms），F 帧不再立即清框，需板主同场景对比"框闪是否减弱/消失"。下载日志见 [evidence/shape_hold_hysteresis_41a494a_20261002](../docs/evidence/shape_hold_hysteresis_41a494a_20261002/jtag_20261002.txt) |
+
+验证记录见 [R3 负载诊断验证记录](../docs/shape_r3_load_validation.md) 末节；原始构建与回归证据保存在 [evidence/shape_hold_hysteresis_41a494a_20261002](../docs/evidence/shape_hold_hysteresis_41a494a_20261002/)。
+
 ## 2026-10-02 故障分级候选（已 JTAG 临时下载，待实板效果验收）
 
 | 项 | 值 |

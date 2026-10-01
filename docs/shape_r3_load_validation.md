@@ -169,3 +169,35 @@
 - **2026-10-02 已经板主明确要求 JTAG 临时下载（见上节）；未写 Flash、未做屏幕肉眼验收**；本候选不覆盖 `known_good/` 或最佳回退版，不被认定为“最新版”，也不宣称实拍效果已改善，需板主上板确认“纸放上去是否还整屏不显示”。预期副作用：被丢槽裁短的目标顶边可能少几行像素。
 - 快照：改前 `20261002_012138_pre-shape-fault-policy`、提交前 `20261002_015347_post-shape-fault-grading`、归档前 `20261002_020546_pre-fault-grading-archive`、下载记录前 `20261002_020913_pre-fault-grading-jtag-record`，均已 `BACKUP VERIFIED RESTORABLE`。
 - 遗留：丢槽时目标顶边可能裁短；彻底消除需扩大槽位或提前过滤小目标，曾试“小目标让槽”会伤三角尖端已撤回（见 2026-10-01 记录）。
+
+## 2026-10-02 框闪烁滞回：故障帧不再单帧清屏（已 JTAG 临时下载，待实板效果验收）
+
+### 用户证据与根因判定
+
+- 板主在故障分级候选（`534a1d8`）实拍后的反馈：分类比旧版准、基本无误检，但**屏幕上的框在闪**；调参台诊断读数 `R` 在 `1↔3` 循环、`F` 多为 `0`、偶尔 `1`。
+- 读码证据：`R1`（槽位耗尽）与 `R3`（捕获期坏标记）是几乎每帧发生的高频事件；`F=1` 是低频的整帧故障帧。旧逻辑里 `frame_fault` 在提交时 `o_bval<=0` 且 `hold_cnt<=0`，也就是**故障帧单帧清屏并清掉保持预算**；叠加不含任何目标的空帧，框就会闪现一下。`HOLD=2` 的预算也偏短，连续两三帧空/故障就撑不住。
+- 结论：闪框 = 偶发故障帧的单帧清屏 + 保持预算过短 的叠加，与形状分类准确性无关（分类规则本身未改动）。
+
+### 改动（提交 `41a494a`，父 `56ef83d`）
+
+- `rtl/algo/shp_detect.v` 默认 `HOLD` 2→6；`HOLD5` 上限从 2 放宽到 16（5 位宽截断）。
+- 提交时序统一为滞回：检出帧（非故障）把保持预算重置为 `HOLD5-1`；空帧与故障帧同等只消耗 1 帧预算；预算为 0 后再来一个空/故障帧才清屏。故障帧不再即时清屏。
+- 向后兼容：`HOLD=2` 时保持旧语义，`tb_shp_lifecycle` 显式以 `HOLD=2` 通过；`tb_shp_diag` 中“预算 0 场景下 F 帧清屏”的断言仍通过。
+
+### 红绿证据
+
+- `check_shape.py --all` 退出 0、`ALL PASS`：23 项 Python 测试、10,381 组几何黄金对拍、18 个形状 RTL 台；`tb_shp_throughput` 验证过载帧保持上一帧六框，`tb_shp_r3_pressure` 仍要求过载台如实记录 R3 而不是整帧作废。
+- 完整构建（Efinity 2026.1.132.4.5）map/interface/pnr/pgm 全 PASS、退出 0；19 组时钟关系 setup/hold 最小 `+0.140/+0.027 ns`，342 条报告路径无负 slack；XLR `55196/60800`、RAM `251/256`、DSP `154/160`。IV 与组合环计时警告仍存在，不扩大为全设计无条件签核。
+- 位流归档 `candidate_bitstreams/shape_hold_hysteresis_41a494a_20261002.bit`，3,132,804 字节，SHA-256 `CF68BC71F186A1EB16DC90479E8E0D30479D83E44C7EF9B01421F70E42628D5B`，与 `outflow` 原件一致；证据目录 [evidence/shape_hold_hysteresis_41a494a_20261002](evidence/shape_hold_hysteresis_41a494a_20261002/) 含 `compile.txt`、`place.rpt`、`place.txt`、`route.txt`、`timing.rpt`、回归 stdout 与下载日志。
+- 快照（均 `BACKUP VERIFIED RESTORABLE`）：改前 `20261002_021941_pre-hold-hysteresis`（602 文件）、归档前 `20261002_025729_pre-hold-hysteresis-archive`（609 文件）。
+
+### 2026-10-02 框闪烁滞回候选 JTAG 下载
+
+- 板主在归档后明确要求“烧录”。下载前再次核验归档 SHA-256 为 `CF68BC71F186A1EB16DC90479E8E0D30479D83E44C7EF9B01421F70E42628D5B`，与本节构建记录一致；使用归档位流，不是可被后续编译覆盖的 `outflow/` 文件。
+- 运行 `tools\flash_candidate.bat candidate_bitstreams\shape_hold_hysteresis_41a494a_20261002.bit`，退出码 0；板载 FT4232H、6.0 MHz JTAG，器件 ID `0x10660A79`，日志以 `... finished with JTAG programming` 结束。[下载日志](evidence/shape_hold_hysteresis_41a494a_20261002/jtag_20261002.txt)已保存。
+- 下载前按惯例关闭旧调参台进程（PID 51120），下载后重新打开 `tools\alg_tuner.py --port COM5 --connect`（PID 54028，进程保持响应）；助手未代替板主拖动滑块或改任何参数值。**未写 Flash、未做画面验收。**
+- 更新本记录前，已创建并验证快照 `D:\FPGA_Project\_backups\20261002_025729_pre-hold-hysteresis-archive`，609 个文件、35 个引用，未覆盖项 0。
+
+### 状态与遗留
+
+- **2026-10-02 已经板主明确要求 JTAG 临时下载（见上节）；未写 Flash、未做屏幕肉眼验收**；本候选不覆盖 `known_good/` 或最佳回退版，不被认定为“最新版”。验收要点：同场景对比“框闪是否减弱/消失”；预期副作用 = 目标移走后框最多再停留约 6 帧（30fps 约 200ms）、F 帧不再立即清框。若要回退，用上一候选 `shape_fault_grading_534a1d8_20261002.bit`（或 `tools\flash_best.bat` 回最佳回退版）。

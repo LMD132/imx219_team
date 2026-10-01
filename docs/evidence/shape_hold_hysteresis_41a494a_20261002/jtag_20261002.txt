@@ -1,0 +1,9 @@
+=== flashing: candidate_bitstreams\shape_hold_hysteresis_41a494a_20261002.bit ===
+=== board profile: Generic Board Profile Using FT4232H, JTAG @ 6 MHz ===
+Using board profile: 'Generic Board Profile Using FT4232H' for pinout connection
+Connecting to JTAG_TAP: efx_ti
+jtag programming started!
+JTAG Programming on ftdi://0x0403:0x6011:2:21/2
+Programming 'candidate_bitstreams\shape_hold_hysteresis_41a494a_20261002.bit' via JTAG at freq 6.0 MHz
+Device ID read from JTAG: 0x10660A79
+... finished with JTAG programming
