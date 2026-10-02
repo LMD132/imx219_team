@@ -394,3 +394,26 @@ XLR 从原版 55196 增至 57919（95.26%）。该次构建已主动停止，
 本轮没有解决任意断边、强透视、遮挡、输入噪声或所有框闪烁原因。
 最终仿真、编译即使通过，也只允许交付候选；未烧录、未写 Flash、未做板上验收，
 不得把它标为最佳回退版。需要板主持有同场景测试结果后再评价闪烁是否改善。
+
+### 最终构建与归档
+
+源码提交 `b4392a7b107922e34a6c1d7acf2d90c931278dcc` 已推送到私有远端
+`shape-detect`。构建启动于该提交对应的工作区，期间没有继续修改综合源码；
+`rtl/algo/shp_geometry.v` 构建前后 SHA-256 都是
+`EE144CE35CCA4E5CC60179F5BB856FBA71D0F010E49969C79DB34B68F4A252C8`。
+工具最后删除的项目 XML 尾换行已恢复，配置内容与源提交完全一致。
+
+`tools/compile.bat` 退出 0；map/interface/pnr/pgm 全部 PASS。
+2026-10-02 11:33:19 生成位流 3167181 字节，复制至
+`candidate_bitstreams/shape_corner_recovery_b4392a7_20261002.bit`，两份 SHA-256 相同：
+`8E3D80E4383187AEB32226C212179158B08C9627537DB4D51695A391B1A907A1`。
+
+最终资源 XLR 55492/60800（91.27%），相比原版 55196 增加 296；
+RAM 251/256、DSP 154/160 均未增加。报告列出的 19 组时钟关系 setup/hold
+最小余量为 +0.118/+0.026 ns，HDMI 74.25 MHz 自时钟 setup +0.279 ns、
+hold +0.029 ns；342 条详细路径没有负 slack。余量仍偏紧。
+保留原有 IV、未匹配 SDC 与组合环相关警告，不据此宣称全设计无条件签核。
+`compile.txt`、`place.rpt`、`place.txt`、`route.txt`、`timing.rpt`
+与最终回归输出一起保存于 `docs/evidence/shape_corner_recovery_20261002/`。
+
+本次没有任何 JTAG、Flash、串口或调参操作，板上效果仍待另行验证。
