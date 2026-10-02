@@ -1,0 +1,46 @@
+2026-10-02 repeat JTAG download (Asia/Shanghai)
+
+User request: reprogram the last version from the thread
+"移植FPGA-Python边缘检测代码为Verilog" and show the tuning interface.
+The thread's latest archived/downloaded version was verified before this run.
+
+Source commit: 41a494a
+Repository HEAD before this record: c0f7ef7
+Bitstream: candidate_bitstreams/shape_hold_hysteresis_41a494a_20261002.bit
+Length: 3132804 bytes
+SHA-256 verified before programming:
+CF68BC71F186A1EB16DC90479E8E0D30479D83E44C7EF9B01421F70E42628D5B
+
+Command (repository root):
+cmd /c tools\flash_candidate.bat candidate_bitstreams\shape_hold_hysteresis_41a494a_20261002.bit
+
+Command output (initial output and completion output combined):
+=== flashing: candidate_bitstreams\shape_hold_hysteresis_41a494a_20261002.bit ===
+=== board profile: Generic Board Profile Using FT4232H, JTAG @ 6 MHz ===
+Using board profile: 'Generic Board Profile Using FT4232H' for pinout connection
+Connecting to JTAG_TAP: efx_ti
+jtag programming started!
+JTAG Programming on ftdi://0x0403:0x6011:2:3/2
+Programming 'candidate_bitstreams\shape_hold_hysteresis_41a494a_20261002.bit' via JTAG at freq 6.0 MHz
+Device ID read from JTAG: 0x10660A79
+... finished with JTAG programming
+
+Observed process exit code: 0
+Only volatile JTAG programming was requested/performed; no Flash operation.
+No RTL, bitstream, parameters or known_good files were changed.
+
+Tuning UI:
+Started tools/alg_tuner.py --port COM5 without --connect.
+Window was activated and visually verified at 10:43+ local time.
+It showed COM5 selected, disconnected, and board-value fields unset.
+No sliders, parameter buttons or connect button were operated by the agent.
+Reason: connect() automatically schedules send_all(), which would write the
+GUI's complete current parameter set; user retains control of parameter changes.
+Reprogramming itself may restore the FPGA's compiled default parameters.
+
+No camera capture was started. Screen/recognition quality remains unaccepted.
+This record does not promote the candidate to the best rollback version.
+
+Before adding this record, snapshot 20261002_104344_pre-reflash41-record
+was verified: 610 manifest entries, 0 uncovered files, 35 refs,
+RESULT: BACKUP VERIFIED RESTORABLE.
