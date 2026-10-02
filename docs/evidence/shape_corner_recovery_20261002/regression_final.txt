@@ -1,0 +1,218 @@
+FINAL PARALLEL GATE: unchanged run_model_gate(all_tests=True) and ALL_RTL, 3 workers
+test_font_slots (test_shape_compat.ShapeCompatibilityTests.test_font_slots) ... ok
+test_generator_keeps_unknown_indices (test_shape_compat.ShapeCompatibilityTests.test_generator_keeps_unknown_indices) ... ok
+test_tuner_preserves_legacy_protocol (test_shape_compat.ShapeCompatibilityTests.test_tuner_preserves_legacy_protocol) ... ok
+test_bevel_does_not_bypass_rectangle_geometry (test_shape_corners.ClippedCornerTests.test_bevel_does_not_bypass_rectangle_geometry) ... ok
+test_clipped_rectangle_corners_keep_rectangle_class (test_shape_corners.ClippedCornerTests.test_clipped_rectangle_corners_keep_rectangle_class) ... ok
+test_failed_rectangle_hypothesis_preserves_curve_fit (test_shape_corners.ClippedCornerTests.test_failed_rectangle_hypothesis_preserves_curve_fit) ... ok
+test_clean_rotation_matrix (test_shape_model.ShapeModelTests.test_clean_rotation_matrix) ... ok
+MODEL COUNTS ('contour', 'circle', 1.0, 'correct') 1296
+MODEL COUNTS ('contour', 'rectangle', 1.5, 'correct') 1296
+MODEL COUNTS ('contour', 'rectangle', 2.0, 'correct') 1296
+MODEL COUNTS ('contour', 'ring', 1.0, 'correct') 1296
+MODEL COUNTS ('contour', 'square', 1.0, 'correct') 1296
+MODEL COUNTS ('contour', 'triangle', 1.0, 'correct') 1296
+MODEL COUNTS ('fixed', 'circle', 1.0, 'correct') 1296
+MODEL COUNTS ('fixed', 'rectangle', 1.5, 'correct') 1296
+MODEL COUNTS ('fixed', 'rectangle', 2.0, 'correct') 1296
+MODEL COUNTS ('fixed', 'ring', 1.0, 'correct') 1296
+MODEL COUNTS ('fixed', 'square', 1.0, 'correct') 1296
+MODEL COUNTS ('fixed', 'triangle', 1.0, 'correct') 1296
+test_cross_rejected_all_angles (test_shape_model.ShapeModelTests.test_cross_rejected_all_angles) ... ok
+test_diagnostics_are_deterministic_and_cover_boundaries (test_shape_model.ShapeModelTests.test_diagnostics_are_deterministic_and_cover_boundaries) ... ok
+test_empty_and_invalid_runs_rejected (test_shape_model.ShapeModelTests.test_empty_and_invalid_runs_rejected) ... ok
+test_other_negative_shapes (test_shape_model.ShapeModelTests.test_other_negative_shapes) ... ok
+test_q8_directions_match_declared_sampling (test_shape_model.ShapeModelTests.test_q8_directions_match_declared_sampling) ... ok
+test_ring_hole_is_not_concavity (test_shape_model.ShapeModelTests.test_ring_hole_is_not_concavity) ... ok
+test_stroked_triangle_flat_apex (test_shape_model.ShapeModelTests.test_stroked_triangle_flat_apex) ... ok
+test_summary_projection_tie_and_strip_boundaries (test_shape_model.ShapeModelTests.test_summary_projection_tie_and_strip_boundaries) ... ok
+test_translation_and_mirror_equivalence (test_shape_model.ShapeModelTests.test_translation_and_mirror_equivalence) ... ok
+test_all_propagates_each_real_runner_failure (test_shape_runner.RunnerTests.test_all_propagates_each_real_runner_failure) ... ok
+test_all_propagates_model_failure (test_shape_runner.RunnerTests.test_all_propagates_model_failure) ... ok
+test_all_success_requires_real_assertion (test_shape_runner.RunnerTests.test_all_success_requires_real_assertion) ... ok
+test_compile_error_is_failure (test_shape_runner.RunnerTests.test_compile_error_is_failure) ... ok
+test_fatal_simulation_is_failure (test_shape_runner.RunnerTests.test_fatal_simulation_is_failure) ... ok
+test_missing_testbench_is_failure (test_shape_runner.RunnerTests.test_missing_testbench_is_failure) ... ok
+test_printed_failure_with_zero_exit_is_failure (test_shape_runner.RunnerTests.test_printed_failure_with_zero_exit_is_failure) ... ok
+test_silent_zero_exit_is_failure (test_shape_runner.RunnerTests.test_silent_zero_exit_is_failure) ... ok
+test_successful_real_assertions_return_zero (test_shape_runner.RunnerTests.test_successful_real_assertions_return_zero) ... ok
+test_timeout_is_failure (test_shape_runner.RunnerTests.test_timeout_is_failure) ... ok
+
+----------------------------------------------------------------------
+Ran 26 tests in 64.571s
+
+OK
+MODEL DIAGNOSTICS {"count": 66, "counts": [{"case": "clip10pct", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "decorative", "count": 6, "model": "contour", "outcome": "correct"}, {"case": "gap1", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "gap3", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "gap5", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "noise16", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "noise2", "count": 2, "model": "contour", "outcome": "correct"}, {"case": "noise2", "count": 4, "model": "contour", "outcome": "reject"}, {"case": "noise8", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "perspective15pct", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "perspective30pct", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "perspective5pct", "count": 6, "model": "contour", "outcome": "reject"}, {"case": "clip10pct", "count": 6, "model": "fixed", "outcome": "reject"}, {"case": "decorative", "count": 6, "model": "fixed", "outcome": "correct"}, {"case": "gap1", "count": 6, "model": "fixed", "outcome": "correct"}, {"case": "gap3", "count": 6, "model": "fixed", "outcome": "correct"}, {"case": "gap5", "count": 6, "model": "fixed", "outcome": "correct"}, {"case": "noise16", "count": 6, "model": "fixed", "outcome": "reject"}, {"case": "noise2", "count": 2, "model": "fixed", "outcome": "correct"}, {"case": "noise2", "count": 4, "model": "fixed", "outcome": "reject"}, {"case": "noise8", "count": 6, "model": "fixed", "outcome": "reject"}, {"case": "perspective15pct", "count": 3, "model": "fixed", "outcome": "correct"}, {"case": "perspective15pct", "count": 3, "model": "fixed", "outcome": "reject"}, {"case": "perspective30pct", "count": 1, "model": "fixed", "outcome": "correct"}, {"case": "perspective30pct", "count": 5, "model": "fixed", "outcome": "reject"}, {"case": "perspective5pct", "count": 6, "model": "fixed", "outcome": "correct"}], "params_sha256": "14ee97ae06492d91651db56e3376a5618fad34cf6bdf8d644e859fe28820d6f4", "seed": 20261001, "versions": {"numpy": "2.5.2", "opencv": "5.0.0", "python": "3.12.10"}}
+MODEL GATE PASS
+SHAPE_TEST_PASS tb_shp_recent scan merge gap and capacity
+GATE_RESULT tb_shp_recent exit=0
+SHAPE_TEST_PASS tb_shp_summary 11 phases 498 spans max_busy=34
+GATE_RESULT tb_shp_summary exit=0
+SHAPE_TEST_PASS tb_shp_corner_unit 23 directed checks
+GATE_RESULT tb_shp_corner_unit exit=0
+SHAPE_TEST_PASS tb_shp_connect historical bbox overlap stays separate
+GATE_RESULT tb_shp_connect exit=0
+VCD info: dumping is suppressed.
+  span y=118 x=200..200
+  span y=119 x=188..212
+  span y=120 x=182..218
+  span y=121 x=179..221
+  span y=122 x=175..225
+  span y=123 x=172..187
+  span y=123 x=213..228
+  span y=124 x=170..182
+  span y=124 x=218..230
+  span y=125 x=167..178
+  span y=125 x=222..233
+  span y=126 x=165..175
+  span y=126 x=225..235
+  span y=127 x=163..172
+  span y=127 x=228..237
+  span y=128 x=161..170
+  span y=128 x=230..239
+  span y=129 x=159..167
+  span y=129 x=233..241
+  span y=130 x=158..165
+  span y=130 x=235..242
+  span y=130 x=630..770
+  span y=131 x=156..163
+  span y=131 x=237..244
+  span y=131 x=630..770
+  span y=132 x=155..161
+  span y=132 x=239..245
+  span y=132 x=630..770
+  span y=133 x=153..160
+  span y=133 x=240..247
+  retire w=165 h=165 fill=21101 cls=1 qual=1
+  retire w=141 h=141 fill=19881 cls=2 qual=1
+  retire w=161 h=161 fill=11521 cls=0 qual=0
+  retire w=165 h=101 fill=8505 cls=3 qual=1
+--- ��״ʶ���� ---
+  box0 cls=1 bbox=(118,118)-(282,282) w=165 h=165
+  box1 cls=2 bbox=(630,130)-(770,270) w=141 h=141
+  box2 cls=3 bbox=(118,500)-(282,600) w=165 h=101
+  �ύ���� o_cnt=3  ��Ч����=3  FIFO���=0
+  ���: state=0 f_cnt=0 f_wp=15 ncommit=1 act0=0 act1=0 sum0=21100 lv0=0
+  ���: ��Ե����=17172 pix��=17172 �γ�=950 ���=950
+  ok   ��Ч���� = 3
+  ok   circle(hollow ring): cls=1
+  ok   rect(square frame): cls=1
+  ok   triangle: cls=1
+  ok   cross rejected: cls=0
+SHAPE_TEST_PASS tb_shp_detect three classes and cross rejection
+GATE_RESULT tb_shp_detect exit=0
+--- ֡ 1 ��� ---
+  box0 cls=1 bbox=(77,317)-(243,483) w=167 h=167
+  box1 cls=1 bbox=(397,317)-(563,483) w=167 h=167
+  box2 cls=1 bbox=(717,317)-(883,483) w=167 h=167
+  box3 cls=1 bbox=(1037,317)-(1203,483) w=167 h=167
+  o_cnt=4 ��Ч��=4 Բ��=4 ����=0 FIFO���=0 state=0 fend=0
+  ok ��Ч���� = 4
+  ok Բ�� = 4
+  ok ���� = 0
+  reject slot=4 bbox=(150,649)-(350,691) from_state=11 hn=6 pn=3 idx=2 sum_bad=0 recent_bad=0
+--- ֡ 2 ��� ---
+  box0 cls=1 bbox=(476,436)-(644,604) w=169 h=169
+  box1 cls=1 bbox=(117,437)-(283,603) w=167 h=167
+  box2 cls=1 bbox=(838,438)-(1002,602) w=165 h=165
+  box3 cls=2 bbox=(1049,599)-(1151,701) w=103 h=103
+  o_cnt=4 ��Ч��=4 Բ��=3 ����=1 FIFO���=0 state=0 fend=0
+  ok ��Ч���� = 4
+  ok Բ�� = 3
+  ok ���� = 1
+SHAPE_TEST_PASS tb_shp_ring
+GATE_RESULT tb_shp_ring exit=0
+VCD info: dumping is suppressed.
+--- frame 1 output ---
+  box0 cls=2 bbox=(733,493)-(847,607) w=115 h=115
+  box1 cls=2 bbox=(594,494)-(706,606) w=113 h=113
+  box2 cls=2 bbox=(457,497)-(563,603) w=107 h=107
+  box3 cls=2 bbox=(320,500)-(420,600) w=101 h=101
+  box4 cls=2 bbox=(184,504)-(276,596) w=93 h=93
+  box5 cls=2 bbox=(50,510)-(130,590) w=81 h=81
+  valid=6 (expect 6) circle=0 rect=6 tri=0 cross=0 fifo_ovf=0
+--- frame 2 output ---
+  box0 cls=2 bbox=(93,493)-(207,607) w=115 h=115
+  box1 cls=1 bbox=(290,510)-(370,590) w=81 h=81
+  box2 cls=2 bbox=(690,510)-(810,590) w=121 h=81
+  box3 cls=1 bbox=(480,520)-(540,580) w=61 h=61
+  valid=4 (expect 4) circle=2 rect=2 tri=0 cross=0 fifo_ovf=0
+SHAPE_TEST_PASS tb_shp_rot
+GATE_RESULT tb_shp_rot exit=0
+spacing gap=2 boxes=0 ovf=0
+spacing gap=4 boxes=0 ovf=0
+spacing gap=8 boxes=2 ovf=0
+spacing gap=16 boxes=2 ovf=0
+spacing gap=32 boxes=2 ovf=0
+SHAPE_TEST_PASS tb_shp_spacing 2/4/8/16/32 pixel gaps
+GATE_RESULT tb_shp_spacing exit=0
+SHAPE_TEST_PASS tb_shp_lifecycle bounded hold disable reject reset
+GATE_RESULT tb_shp_lifecycle exit=0
+EPOCH queued-edge reasons=4,2
+EPOCH lost-boundary reason=8
+EPOCH bad-marker reason=2
+SHAPE_TEST_PASS tb_shp_frame_epoch boundaries and deadline
+GATE_RESULT tb_shp_frame_epoch exit=0
+SHAPE_TEST_PASS tb_shp_throughput six targets and overload hold
+GATE_RESULT tb_shp_throughput exit=0
+VCD info: dumping is suppressed.
+--- ֡1 ��״ʶ���� ---
+  box0 cls=3 bbox=(118,450)-(282,555) w=165 h=106
+  box1 cls=3 bbox=(418,450)-(582,559) w=165 h=110
+  box2 cls=3 bbox=(718,450)-(882,559) w=165 h=110
+  ��Ч����=3 (����3) Բ=0 ��=0 ����=3 ʮ��=0  FIFO���=0
+  reject slot=0 bbox=(118,450)-(282,553) from_state=6 hn=5 pn=3 idx=0 bad=0
+  reject slot=2 bbox=(718,468)-(882,632) from_state=6 hn=10 pn=3 idx=7 bad=0
+--- ֡2 ��״ʶ���� ---
+  box0 cls=3 bbox=(417,450)-(583,556) w=167 h=107
+  box1 cls=2 bbox=(1070,500)-(1170,600) w=101 h=101
+  ��Ч����=2 (����2) Բ=0 ��=1 ����=1 ʮ��=0  FIFO���=0
+SHAPE_TEST_PASS tb_shp_tilt
+GATE_RESULT tb_shp_tilt exit=0
+SHAPE_TEST_PASS tb_shp_no_blank boxes=6 ovf=0
+GATE_RESULT tb_shp_no_blank exit=0
+CLUTTER_BOXES cnt=1 fault=0 reason=1 ovf=199 slots=199 drops=0 max_queue=22
+CLUTTER_BOX slot=0 cls=2 bx=520..680 by=210..360
+CLUTTER scene=2 spans=1120 fifo_drops=0 slot_drops=199 late=0 bad=0 max_queue=22 cnt=1 fault=0 reason=1 ovf=199
+SHAPE_TEST_PASS tb_shp_clutter eight-slot overload committed with R1 record
+GATE_RESULT tb_shp_clutter exit=0
+R3_PRESSURE P=1 S=202/202 Q=365/365 marker_bad=1/1 lost=0 pending=1 maxQ=24 CNT=1 F=0 R=3 OV=567
+R3_BOX slot=0 cls=2 bx=520..680 by=210..360
+SHAPE_TEST_PASS tb_shp_r3_pressure exact R3 without whole-frame void
+GATE_RESULT tb_shp_r3_pressure exit=0
+SUMMARY_LOAD S=0/0 Q=0/0 markers=1/1 lost=0 commits=1 pending=0 maxQ=6 CNT=6 F=0 R=0 OV=0 BVAL=111111
+SHAPE_TEST_PASS tb_shp_summary_load six classified squares without S/Q loss
+GATE_RESULT tb_shp_summary_load exit=0
+WARNING: D:\FPGA_Project\imx219_shape\rtl\simple_dual_port_ram.v:44: $readmemh: The behaviour for reg[...] mem[N:0]; $readmemh("...", mem); changed in the 1364-2005 standard. To avoid ambiguity, use mem[0:N] or explicit range parameters $readmemh("...", mem, start, stop);. Defaulting to 1364-2005 behavior.
+VCD info: dumping is suppressed.
+  ok   ��߿�(50,200) ����, ��
+  ok   �ϱ߿��������� 101/101
+  ok   �Ұ����߿�(690,200) ����
+  ok   ���ڿհ�(100,200) ������
+  ok   ����(400,400) ������
+  ��ǩ�� 32x16 (��Ļ x 50..81, y 82..97), ���� 195 ��:
+    y=82 |..############..................|
+    y=83 |.##############..########...##..|
+    y=84 |.##..######..##....#..#....##...|
+    y=85 |.##..######..##....#..#...##....|
+    y=86 |..#..######..#.....#..#..##.....|
+    y=87 |..#..........#.....#..#......#..|
+    y=88 |..#..######..#...########...##..|
+    y=89 |..#.##.#..##.#.....##.##...##...|
+    y=90 |..#..#.##.##.#.....#..#..###....|
+    y=91 |..#.##.#..#..#.....#..#..##..##.|
+    y=92 |..#...##.##..#....##..#.....###.|
+    y=93 |.##.###...##.##...##..#....##...|
+    y=94 |.##.#......#.##..##...##..##....|
+    y=95 |.##############..##...#..##.....|
+    y=96 |..#..........#..................|
+    y=97 |................................|
+  ok   ��ǩ���� 195 �ں�������(60..400)
+SHAPE_TEST_PASS tb_shp_overlay modes colors labels and two-cycle latency
+GATE_RESULT tb_shp_overlay exit=0
+SHAPE_TEST_PASS tb_shp_stream_matrix 304 cases
+GATE_RESULT tb_shp_stream_matrix exit=0
+SHAPE_TEST_PASS tb_shp_geometry 10566 golden cases
+GATE_RESULT tb_shp_geometry exit=0
+FINAL_RTL_COUNT 19 FAILED 0 elapsed=572.6s
+ALL PASS

@@ -89,6 +89,32 @@ def hull_strip_range(hull, low, high):
     return (min(xs), max(xs)) if xs else None
 
 
+def classify_polygon(poly, hull, scale, params):
+    """Validate every original support point and every retained polygon side."""
+    reject = lambda reason: ShapeResult(0, False, reason)
+    line_tolerance = max(1, scale * params['line_error_pct'] // 100)
+    for point in hull:
+        if all(cross(poly[i], poly[(i+1) % len(poly)], point)**2 > line_tolerance**2 *
+               ((poly[(i+1) % len(poly)][0]-poly[i][0])**2 + (poly[(i+1) % len(poly)][1]-poly[i][1])**2)
+               for i in range(len(poly))):
+            return reject('straight-edge residual')
+    sides = [(poly[(i+1) % len(poly)][0]-a[0], poly[(i+1) % len(poly)][1]-a[1])
+             for i, a in enumerate(poly)]
+    lens = [dx*dx+dy*dy for dx, dy in sides]
+    if min(lens) < params['min_side_pixels'] ** 2:
+        return reject('tiny side')
+    if len(poly) == 3:
+        return ShapeResult(3, True, 'three straight sides')
+    for i, (ax, ay) in enumerate(sides):
+        bx, by = sides[(i+1) % 4]
+        cx, cy = sides[(i+2) % 4]
+        if (ax*bx+ay*by)**2 * 10000 > lens[i]*lens[(i+1) % 4]*params['perpendicular_cos2_per_10000']:
+            return reject('non-rectangular quad')
+        if (ax*cy-ay*cx)**2 * 10000 > lens[i]*lens[(i+2) % 4]*params['parallel_sin2_per_10000']:
+            return reject('non-parallel quad')
+    return ShapeResult(2, True, 'four rectangular sides')
+
+
 def classify_summary(summary: ShapeSummary, params: dict) -> ShapeResult:
     reject = lambda reason: ShapeResult(0, False, reason)
     if summary.bad:
@@ -115,40 +141,27 @@ def classify_summary(summary: ShapeSummary, params: dict) -> ShapeResult:
         if max(left-expected[0], expected[1]-right) > tolerance:
             return reject('concavity/profile')
     poly = simplify_hull(hull, scale, params)
-    if len(poly) == 4:
-        lengths = [((poly[(i+1) % 4][0]-poly[i][0])**2 +
-                    (poly[(i+1) % 4][1]-poly[i][1])**2) for i in range(4)]
+    recovered_quad = False
+    if len(poly) in (4, 5):
+        count = len(poly)
+        lengths = [((poly[(i+1) % count][0]-poly[i][0])**2 +
+                    (poly[(i+1) % count][1]-poly[i][1])**2) for i in range(count)]
         short = [i for i, length in enumerate(lengths)
                  if length < params['min_side_pixels'] ** 2]
         if len(short) == 1:
             i = short[0]
-            a, b = poly[i], poly[(i+1) % 4]
+            a, b = poly[i], poly[(i+1) % count]
             midpoint = ((a[0]+b[0]) // 2, (a[1]+b[1]) // 2)
-            poly = [midpoint, poly[(i+2) % 4], poly[(i+3) % 4]]
+            poly = [midpoint] + [poly[(i+k) % count] for k in range(2, count)]
+            recovered_quad = count == 5
     # Every support point must lie near its simplified outline, not merely
     # survive a locally greedy corner removal.
-    line_tolerance = max(1, scale * params['line_error_pct'] // 100)
     if len(poly) in (3, 4):
-        for point in hull:
-            if all(cross(poly[i], poly[(i+1) % len(poly)], point)**2 > line_tolerance**2 *
-                   ((poly[(i+1) % len(poly)][0]-poly[i][0])**2 + (poly[(i+1) % len(poly)][1]-poly[i][1])**2)
-                   for i in range(len(poly))):
-                return reject('straight-edge residual')
-        sides = [(poly[(i+1) % len(poly)][0]-a[0], poly[(i+1) % len(poly)][1]-a[1])
-                 for i, a in enumerate(poly)]
-        lens = [dx*dx+dy*dy for dx, dy in sides]
-        if min(lens) < params['min_side_pixels'] ** 2:
-            return reject('tiny side')
-        if len(poly) == 3:
-            return ShapeResult(3, True, 'three straight sides')
-        for i, (ax, ay) in enumerate(sides):
-            bx, by = sides[(i+1) % 4]
-            cx, cy = sides[(i+2) % 4]
-            if (ax*bx+ay*by)**2 * 10000 > lens[i]*lens[(i+1) % 4]*params['perpendicular_cos2_per_10000']:
-                return reject('non-rectangular quad')
-            if (ax*cy-ay*cx)**2 * 10000 > lens[i]*lens[(i+2) % 4]*params['parallel_sin2_per_10000']:
-                return reject('non-parallel quad')
-        return ShapeResult(2, True, 'four rectangular sides')
+        result = classify_polygon(poly, hull, scale, params)
+        if result.valid or not recovered_quad:
+            return result
+        # This was only a rectangle hypothesis. Failed recovery must not remove
+        # the pre-existing ellipse path, which still uses the original summary.
     if scale * 100 > min(width, height) * params['max_ellipse_aspect_per_100']:
         return reject('ellipse aspect')
     target = width*width*height*height

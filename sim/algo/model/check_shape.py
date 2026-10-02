@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[3]
 RUN = ROOT / 'outflow/diagnostics'
 ALL_RTL = (
     'tb_shp_summary', 'tb_shp_recent', 'tb_shp_connect', 'tb_shp_geometry',
+    'tb_shp_corner_unit',
     'tb_shp_rot', 'tb_shp_detect', 'tb_shp_ring', 'tb_shp_tilt',
     'tb_shp_spacing', 'tb_shp_lifecycle', 'tb_shp_frame_epoch',
     'tb_shp_throughput', 'tb_shp_no_blank', 'tb_shp_stream_matrix',
@@ -22,6 +23,7 @@ def prepare_stream_vectors():
     """Exercise the full stream detector using model-independent class labels."""
     sys.path.insert(0, str(ROOT / 'sim/algo'))
     from model.shape_cases import make_case
+    from model.shape_corner_cases import clipped_corner_cases, corner_negative_cases
     cases = []
     for kind, aspect in (('ring', 1), ('triangle', 1),
                          ('square', 1), ('rectangle', 1.5), ('cross', 0.3)):
@@ -29,6 +31,8 @@ def prepare_stream_vectors():
             for size in (48, 80, 160):
                 cases.append(make_case(kind, angle, size, aspect,
                                        (640, 360), (0.5, 0.5)))
+    cases.extend(case for _, case in clipped_corner_cases())
+    cases.extend(case for _, case in corner_negative_cases())
     lines = [str(len(cases))]
     for index, case in enumerate(cases):
         x0, y0, x1, y1 = case.bounds
@@ -77,6 +81,7 @@ def prepare_geometry_vectors():
     sys.path.insert(0, str(ROOT / 'sim/algo'))
     from model.shape_cases import make_case
     from model.shape_fixed import summarize_runs, classify_summary, PARAMS
+    from model.shape_corner_cases import clipped_corner_cases, corner_negative_cases, curve_fallback_summary
     full = os.environ.get('SHAPE_GEOMETRY_FULL') == '1'
     angles = range(0, 360, 5) if full else (0, 15, 30, 40, 45, 60, 90, 135)
     cases = []
@@ -121,6 +126,20 @@ def prepare_geometry_vectors():
         result = classify_summary(summary, PARAMS)
         if (result.cls if result.valid else 0) != expected:
             raise AssertionError(f'software geometry gate failed for {kind} {angle}')
+        x0, y0, x1, y1 = summary.bounds
+        lines.append(f'{expected} {x0} {x1} {y0} {y1} {int(summary.bad)}')
+        lines.extend(f'{((int(v)<<25)|(y<<12)|x):07x}' for v, x, y in summary.support)
+        lines.extend(f'{((int(v)<<24)|(left<<12)|right):07x}'
+                     for v, left, right in summary.strips)
+    corner_cases = list(clipped_corner_cases()) + list(corner_negative_cases())
+    summary_cases = [(name, summarize_runs(case.runs), case.expected_cls)
+                     for name, case in corner_cases]
+    summary_cases.append(('controlled-curve-fallback', curve_fallback_summary(), 1))
+    lines[0] = str(len(cases) + len(summary_cases))
+    for name, summary, expected in summary_cases:
+        result = classify_summary(summary, PARAMS)
+        if (result.cls if result.valid else 0) != expected:
+            raise AssertionError(f'software corner gate failed for {name}: {result}')
         x0, y0, x1, y1 = summary.bounds
         lines.append(f'{expected} {x0} {x1} {y0} {y1} {int(summary.bad)}')
         lines.extend(f'{((int(v)<<25)|(y<<12)|x):07x}' for v, x, y in summary.support)

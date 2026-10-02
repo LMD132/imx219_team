@@ -1,5 +1,5 @@
 `timescale 1ns/1ps
-// Raster runs generated from deterministic shapes, 8 angles x 3 sizes.
+// Raster runs generated from clean rotations and clipped-corner regressions.
 // Every source run is driven at its real x coordinate.  A 370-clock horizontal
 // blanking interval gives the normal 1650-pixel line budget without spending
 // simulation time on unused columns outside each small ROI.
@@ -25,7 +25,7 @@ module tb_shp_stream_matrix;
   fd=$fopen(path,"r");
   if(fd==0)$fatal(1,"cannot open stream vectors");
   rv=$fscanf(fd,"%d",ncase);
-  if(rv!=1||ncase!=120)$fatal(1,"bad stream case count %0d",ncase);
+  if(rv!=1||ncase<1||ncase>4096)$fatal(1,"bad stream case count %0d",ncase);
   for(c=0;c<ncase;c=c+1)begin
    rv=$fscanf(fd,"%d %d %d %d %d %d %d",cid,expected,x0,y0,x1,y1,nrun);
    if(rv!=7||cid!=c||nrun<1||nrun>2048)$fatal(1,"bad case header %0d",c);

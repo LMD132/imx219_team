@@ -47,7 +47,8 @@ module shp_geometry(
  reg [46:0] curve_radial_limit;
  reg [2:0] accepted_cls;
  reg [2:0] short_count;
- reg [1:0] short_idx;
+ reg [2:0] short_idx;
+ reg recovered_quad;
  reg [21:0] side_len,side_nlen,side_olen;
  reg signed [29:0] side_dot,side_parallel;
  reg [49:0] side_perpendicular_lhs,side_perpendicular_rhs;
@@ -117,10 +118,18 @@ module shp_geometry(
  wire [49:0] perpendicular_rhs=side_len*side_nlen;
  wire [49:0] parallel_lhs=($signed(side_parallel)*$signed(side_parallel))*25;
  wire [49:0] parallel_rhs=side_len*side_olen;
- // A stroked raster triangle can have a roughly 9-pixel flat apex at
- // 160-pixel scale; merge exactly one side shorter than 12 pixels.
- wire [1:0] ci=(len<144)?idx[1:0]:short_idx;
- wire [1:0] ci1=ci+2'd1,ci2=ci+2'd2,ci3=ci+2'd3;
+ // Merge exactly one short raster corner: four vertices to a triangle,
+ // or five to a rectangle candidate.  The latter still has to pass every
+ // original-support straightness and rectangle-angle check below.
+ // Explicit cyclic indices are required for the fifth-to-first edge.
+ // SHORT_SCAN only visits four/five vertices. Keep the array selectors narrow
+ // so this recovery path does not synthesize four extra 32-way data muxes.
+ wire [2:0] short_last=(pn==5)?3'd4:3'd3;
+ wire [2:0] ci=(len<144)?idx[2:0]:short_idx;
+ wire [2:0] ci1=(ci==short_last)?3'd0:ci+3'd1;
+ wire [2:0] ci2=(ci1==short_last)?3'd0:ci1+3'd1;
+ wire [2:0] ci3=(ci2==short_last)?3'd0:ci2+3'd1;
+ wire [2:0] ci4=(ci3==short_last)?3'd0:ci3+3'd1;
 
  wire signed [14:0] rx=$signed({2'b0,hx[idx],1'b0})-$signed({2'b0,x0})-$signed({2'b0,x1});
  wire signed [14:0] ry=$signed({1'b0,hy[idx],1'b0})-$signed({2'b0,y0})-$signed({2'b0,y1});
@@ -154,7 +163,7 @@ module shp_geometry(
    scan_num<=0;scan_den<=0;scan_lhs<=0;scan_rhs<=0;
    cx2<=0;cy2<=0;radial_reg<=0;strip_min_reg<=0;strip_max_reg<=0;
    radial_diff_reg<=0;curve_radial_lhs<=0;curve_radial_limit<=0;
-   accepted_cls<=0;short_count<=0;short_idx<=0;
+   accepted_cls<=0;short_count<=0;short_idx<=0;recovered_quad<=0;
    side_len<=0;side_nlen<=0;side_olen<=0;side_dot<=0;side_parallel<=0;
    side_perpendicular_lhs<=0;side_perpendicular_rhs<=0;
    side_parallel_lhs<=0;side_parallel_rhs<=0;
@@ -165,7 +174,7 @@ module shp_geometry(
     IDLE:if(start)begin
      done<=0;valid<=0;cls<=0;held_slot<=slot;
      x0<=bbox_x0;x1<=bbox_x1;y0<=bbox_y0;y1<=bbox_y1;
-     ridx<=0;hn<=0;
+     ridx<=0;hn<=0;recovered_quad<=0;
      if(bad||bbox_x1<=bbox_x0||bbox_y1<=bbox_y0||bbox_x1>=1280||bbox_y1>=720)state<=REJECT;
      else state<=READ_REQ;
     end
@@ -242,21 +251,25 @@ module shp_geometry(
       for(j=0;j<31;j=j+1)if(j>=best_i)begin px[j]<=px[j+1];py[j]<=py[j+1];end
       pn<=pn-1'b1;idx<=0;best_i<=0;best_num<={44{1'b1}};best_den<=1;
       state<=SIM_SCAN;
-     end else if(pn==4)begin idx<=0;short_count<=0;short_idx<=0;state<=SHORT_SCAN;end
+     end else if(pn==4||pn==5)begin idx<=0;short_count<=0;short_idx<=0;state<=SHORT_SCAN;end
      else if(pn==3)begin idx<=0;ridx<=0;line_hit<=0;state<=LINE_CAPTURE;end
      else state<=CURVE_INIT;
     end
     SHORT_SCAN:begin
-     if(len<144)begin short_count<=short_count+1'b1;short_idx<=idx[1:0];end
-     if(idx==3)begin
+     if(len<144)begin short_count<=short_count+1'b1;short_idx<=idx[2:0];end
+     if(idx==pn-1'b1)begin
       if(short_count+(len<144)==1)begin
        px[0]<=({1'b0,px[ci]}+{1'b0,px[ci1]})>>1;
        py[0]<=({1'b0,py[ci]}+{1'b0,py[ci1]})>>1;
        px[1]<=px[ci2];py[1]<=py[ci2];
        px[2]<=px[ci3];py[2]<=py[ci3];
-       pn<=3;
+       if(pn==5)begin
+        px[3]<=px[ci4];py[3]<=py[ci4];pn<=4;recovered_quad<=1;
+       end else pn<=3;
       end
-      idx<=0;ridx<=0;line_hit<=0;state<=LINE_CAPTURE;
+      idx<=0;ridx<=0;line_hit<=0;
+      if(pn==5&&short_count+(len<144)!=1)state<=CURVE_INIT;
+      else state<=LINE_CAPTURE;
      end else idx<=idx+1'b1;
     end
     LINE_CAPTURE:begin
@@ -270,7 +283,9 @@ module shp_geometry(
     LINE_CHECK:begin
      if(line_residual2_reg<=line_limit_reg)line_hit<=1;
      if(idx==pn-1'b1||line_residual2_reg<=line_limit_reg)begin
-      if(!line_hit&&line_residual2_reg>line_limit_reg)state<=REJECT;
+      // A failed new rectangle hypothesis retains the original curve path;
+      // curve checks use unmodified hx/hy and bounding box, not px/py.
+      if(!line_hit&&line_residual2_reg>line_limit_reg)state<=recovered_quad?CURVE_INIT:REJECT;
       else if(ridx==hn-1'b1)begin idx<=0;state<=SIDE_CAPTURE;end
       else begin ridx<=ridx+1'b1;idx<=0;line_hit<=0;state<=LINE_CAPTURE;end
      end else begin idx<=idx+1'b1;state<=LINE_CAPTURE;end
@@ -290,7 +305,7 @@ module shp_geometry(
     SIDE_CHECK:begin
      if(side_len<144||
        (pn==4&&(side_perpendicular_lhs>side_perpendicular_rhs||
-                 side_parallel_lhs>side_parallel_rhs)))state<=REJECT;
+                 side_parallel_lhs>side_parallel_rhs)))state<=recovered_quad?CURVE_INIT:REJECT;
      else if(idx==pn-1'b1)begin accepted_cls<=(pn==3)?3:2;state<=ACCEPT;end
      else begin idx<=idx+1'b1;state<=SIDE_CAPTURE;end
     end
