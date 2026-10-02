@@ -1,0 +1,17 @@
+Capture date: 2026-10-02 (Asia/Shanghai), approximately 11:39
+Command: tools\flash_candidate.bat candidate_bitstreams\shape_corner_recovery_b4392a7_20261002.bit
+Observed process exit code: 0
+Pre-download SHA-256: 8E3D80E4383187AEB32226C212179158B08C9627537DB4D51695A391B1A907A1
+Scope: volatile JTAG only; no Flash write, GUI, serial or camera operation.
+
+Captured stdout:
+=== flashing: candidate_bitstreams\shape_corner_recovery_b4392a7_20261002.bit ===
+=== board profile: Generic Board Profile Using FT4232H, JTAG @ 6 MHz ===
+Using board profile: 'Generic Board Profile Using FT4232H' for pinout connection
+Connecting to JTAG_TAP: efx_ti
+jtag programming started!
+JTAG Programming on ftdi://0x0403:0x6011:2:3/2
+Programming 'candidate_bitstreams\shape_corner_recovery_b4392a7_20261002.bit' via JTAG at freq 6.0 MHz
+Device ID read from JTAG: 0x10660A79
+... finished with JTAG programming
+
